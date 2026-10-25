@@ -23,10 +23,8 @@ import {
   Phone,
   User,
   KeyRound,
-  ExternalLink,
-  Sparkles
+  ExternalLink
 } from 'lucide-react';
-import QRCode from 'qrcode';
 import { ApprovedUser, PendingUser, DriverSessionItem } from '../types.ts';
 import { 
   fetchUsersList, 
@@ -42,11 +40,10 @@ import {
   disconnectDriverApi,
   resetDriverAuthApi,
   sendSearchCommand,
-  stopSearch,
-  fetchPairingQrApi,
-  clearAllSessionsAndLidMapApi
+  stopSearch
 } from '../services/api.ts';
 import { ConfirmModal } from './ConfirmModal.tsx';
+import { DriverQrPanel } from './DriverQrPanel.tsx';
 
 interface UsersManagementModalProps {
   isOpen: boolean;
@@ -113,17 +110,10 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
   // Pairing code state
   const [pairingTarget, setPairingTarget] = useState<'bot' | 'driver'>('driver');
   const [pairingPhone, setPairingPhone] = useState('');
+  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('qr');
   const [generatedPairingCode, setGeneratedPairingCode] = useState<string | null>(null);
   const [pairingLoading, setPairingLoading] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
-
-  // Pairing method: 'code' (8-digit pairing code) or 'qr' (Live QR code scanner)
-  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('code');
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [qrRaw, setQrRaw] = useState<string | null>(null);
-  const [qrLoading, setQrLoading] = useState(false);
-  const [qrCountdown, setQrCountdown] = useState(20);
-  const [qrStatusText, setQrStatusText] = useState('סורק ברקוד חי מוואטסאפ ווב...');
 
   // Active Sessions
   const [sessionsData, setSessionsData] = useState<{
@@ -454,7 +444,20 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
     }
   };
 
+  // פותח את לשונית החיבור על שיטת QR עבור נהג מסוים (כפתור "QR" בשורת הנהג)
+  const openQrForDriver = (phone: string) => {
+    setPairingTarget('driver');
+    setPairingPhone(phone);
+    setPairingMethod('qr');
+    setActiveTab('pairing');
+  };
+
   const handleGeneratePairingCode = async (targetOverridePhone?: string, forceReset = false) => {
+    if (targetOverridePhone) {
+      setPairingTarget('driver');
+      setPairingPhone(targetOverridePhone);
+      setPairingMethod('code');
+    }
     setPairingLoading(true);
     setActionError(null);
     setGeneratedPairingCode(null);
@@ -481,91 +484,6 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
     navigator.clipboard.writeText(generatedPairingCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
-  };
-
-  // שליפת קוד QR חי מוואטסאפ ווב והמרתו לתמונה
-  const fetchLiveQr = async () => {
-    setQrLoading(true);
-    try {
-      const isBot = pairingTarget === 'bot';
-      const targetNum = isBot ? botPhone : (pairingPhone || adminPhone);
-      const res = await fetchPairingQrApi({ phone: isBot ? undefined : targetNum, isBot });
-      if (res.ok) {
-        if (res.connected) {
-          setQrStatusText('הוואטסאפ מחובר ומסונכרן בהצלחה! ✅');
-          setQrDataUrl(null);
-          setQrRaw(null);
-          await loadData();
-          onUserModified?.();
-        } else if (res.qr) {
-          setQrRaw(res.qr);
-          const dataUrl = await QRCode.toDataURL(res.qr, {
-            width: 260,
-            margin: 2,
-            color: { dark: '#000000', light: '#ffffff' },
-          });
-          setQrDataUrl(dataUrl);
-          setQrStatusText('הברקוד מוכן לסריקה בוואטסאפ!');
-          setQrCountdown(20);
-        } else {
-          setQrStatusText('ממתין להפקת ברקוד מוואטסאפ...');
-        }
-      } else {
-        setQrStatusText(res.error || 'לא התקבל ברקוד');
-      }
-    } catch (e: any) {
-      setQrStatusText(e.message || 'שגיאה בטעינת ברקוד');
-    } finally {
-      setQrLoading(false);
-    }
-  };
-
-  // רענון אוטומטי וספירה לאחור של קוד ה-QR בעת פתיחת לשונית ה-QR
-  useEffect(() => {
-    if (!isOpen || activeTab !== 'pairing' || pairingMethod !== 'qr') return;
-
-    fetchLiveQr();
-
-    const interval = setInterval(() => {
-      setQrCountdown((prev) => {
-        if (prev <= 1) {
-          fetchLiveQr();
-          return 20;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isOpen, activeTab, pairingMethod, pairingTarget, pairingPhone]);
-
-  // איפוס מוחלט של כל הקוקיז, תיקיות sessions ומיפויי ה-LID מהשרת
-  const promptClearAllSessions = () => {
-    setConfirmDialog({
-      isOpen: true,
-      title: 'איפוס מוחלט של כל הקוקיז ומיפויי ה-LID מהשרת',
-      message: 'פעולה זו תמחק את כל קובצי האימות (קוקיז/תיקיות sessions) של כל הנהגים בשרת, תאפס את כל מיפויי ה-LID הישנים, ותבטל זכירת כינויים או מספרים ישנים. הבוט הראשי (0555081810) יישאר שמור ולא ייפגע. האם אתה בטוח?',
-      confirmText: 'מחק ואפס את כל הקוקיז',
-      variant: 'danger',
-      onConfirm: async () => {
-        setConfirmLoading(true);
-        try {
-          const res = await clearAllSessionsAndLidMapApi();
-          if (res.ok) {
-            setActionSuccess('כל הקוקיז של הנהגים ומיפויי ה-LID נמחקו לחלוטין מהשרת! כעת המערכת נקייה לחלוטין.');
-            await loadData();
-            onUserModified?.();
-          } else {
-            setActionError(res.error || 'שגיאה באיפוס כללי');
-          }
-        } catch (e: any) {
-          setActionError(e.message);
-        } finally {
-          setConfirmLoading(false);
-          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
-        }
-      },
-    });
   };
 
   const filteredApproved = approvedUsers.filter((u) => {
@@ -643,7 +561,7 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
             }`}
           >
             <QrCode className="w-3.5 h-3.5" />
-            קישור מכשיר (Pairing Code)
+            חיבור וואטסאפ: סריקת QR / קוד צימוד
           </button>
           <button
             onClick={() => setActiveTab('sessions')}
@@ -844,6 +762,17 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                             הפעל חיפוש
                           </button>
 
+                          {/* Connect via live QR (scan from the computer screen) */}
+                          <button
+                            type="button"
+                            onClick={() => openQrForDriver(user.phone)}
+                            className="px-2 py-1 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/40 text-teal-200 hover:text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="חבר את הוואטסאפ של הנהג בסריקת קוד QR מהמסך"
+                          >
+                            <QrCode className="w-3 h-3 text-teal-300" />
+                            חיבור QR
+                          </button>
+
                           {/* Generate Pairing Code */}
                           <button
                             type="button"
@@ -1028,10 +957,7 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setPairingTarget('driver');
-                  if (pairingMethod === 'qr') setTimeout(() => fetchLiveQr(), 100);
-                }}
+                onClick={() => setPairingTarget('driver')}
                 className={`p-3 rounded-xl border text-right transition-all cursor-pointer ${
                   pairingTarget === 'driver'
                     ? 'bg-teal-500/15 border-teal-500/50 text-white shadow-inner'
@@ -1049,10 +975,7 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  setPairingTarget('bot');
-                  if (pairingMethod === 'qr') setTimeout(() => fetchLiveQr(), 100);
-                }}
+                onClick={() => setPairingTarget('bot')}
                 className={`p-3 rounded-xl border text-right transition-all cursor-pointer ${
                   pairingTarget === 'bot'
                     ? 'bg-amber-500/15 border-amber-500/50 text-white shadow-inner'
@@ -1069,209 +992,115 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
               </button>
             </div>
 
-            {/* Connection Method Selector */}
-            <div className="flex p-1 rounded-xl bg-[#080c13] border border-[#1b2636] gap-1">
-              <button
-                type="button"
-                onClick={() => setPairingMethod('code')}
-                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                  pairingMethod === 'code'
-                    ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <KeyRound className="w-4 h-4" />
-                קוד צימוד לטלפון (8 ספרות)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPairingMethod('qr');
-                  fetchLiveQr();
-                }}
-                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                  pairingMethod === 'qr'
-                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <QrCode className="w-4 h-4" />
-                סריקת קוד QR (וואטסאפ ווב)
-              </button>
-            </div>
-
-            {/* METHOD 1: 8-DIGIT PAIRING CODE */}
-            {pairingMethod === 'code' && (
-              <>
-                <div className="p-4 rounded-xl bg-[#090e15] border border-[#1b2636] space-y-3">
-                  {pairingTarget === 'driver' ? (
-                    <>
-                      <label className="text-slate-300 font-bold block">מספר הטלפון של הנהג לחיבור:</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={pairingPhone}
-                          onChange={(e) => setPairingPhone(e.target.value)}
-                          placeholder="למשל: 0515157166 או בחר מרשימת הנהגים"
-                          className="flex-1 px-3 py-2 rounded-xl bg-[#080c13] border border-[#223044] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-teal-400 font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleGeneratePairingCode()}
-                          disabled={pairingLoading}
-                          className="px-4 py-2 rounded-xl bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-md"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${pairingLoading ? 'animate-spin' : ''}`} />
-                          הפק קוד צימוד
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="text-slate-300 text-xs">
-                        חיבור הבוט הראשי במספר: <strong className="font-mono text-amber-400">{botPhone}</strong>
-                      </div>
+            {/* Phone Input & Generate */}
+            <div className="p-4 rounded-xl bg-[#090e15] border border-[#1b2636] space-y-3">
+              {pairingTarget === 'driver' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPairingMethod('code')}
+                      className={`py-2 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                        pairingMethod === 'code'
+                          ? 'bg-teal-500/20 border-teal-500/50 text-white'
+                          : 'bg-[#080c13] border-[#1d293a] text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      📱 קוד צימוד (Pairing Code)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPairingMethod('qr')}
+                      className={`py-2 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                        pairingMethod === 'qr'
+                          ? 'bg-teal-500/20 border-teal-500/50 text-white'
+                          : 'bg-[#080c13] border-[#1d293a] text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      📷 סריקת קוד QR
+                    </button>
+                  </div>
+                  <label className="text-slate-300 font-bold block">מספר הטלפון של הנהג לחיבור:</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={pairingPhone}
+                      onChange={(e) => setPairingPhone(e.target.value)}
+                      placeholder="למשל: 0515157166 או בחר מרשימת הנהגים"
+                      className="flex-1 px-3 py-2 rounded-xl bg-[#080c13] border border-[#223044] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-teal-400 font-mono"
+                    />
+                    {pairingMethod === 'code' && (
                       <button
                         type="button"
                         onClick={() => handleGeneratePairingCode()}
                         disabled={pairingLoading}
-                        className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-md"
+                        className="px-4 py-2 rounded-xl bg-teal-400 hover:bg-teal-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${pairingLoading ? 'animate-spin' : ''}`} />
-                        הפק קוד לבוט הראשי
+                        הפק קוד צימוד
                       </button>
-                    </div>
-                  )}
-
-                  {generatedPairingCode && (
-                    <div className="p-4 rounded-xl bg-teal-950/40 border border-teal-500/40 text-center space-y-2 mt-3 animate-in fade-in">
-                      <span className="text-xs text-teal-300 block font-bold">קוד הצימוד (הזן בוואטסאפ במכשירים מקושרים):</span>
-                      <div className="text-2xl font-mono font-black text-amber-300 tracking-widest bg-black/60 py-2.5 px-6 rounded-lg inline-block border border-amber-500/40 shadow-lg">
-                        {generatedPairingCode}
-                      </div>
-                      <div className="flex justify-center pt-1">
-                        <button
-                          type="button"
-                          onClick={copyCode}
-                          className="px-3.5 py-1.5 rounded-lg bg-teal-500/20 text-teal-300 hover:bg-teal-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-teal-500/30 transition-colors"
-                        >
-                          {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                          {copiedCode ? 'הקוד הועתק!' : 'העתק קוד'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Instruction Steps for Phone Code */}
-                <div className="rounded-xl border border-[#1a2534] bg-[#070b10] p-4 space-y-2 text-slate-300">
-                  <span className="font-bold text-white block">מדריך הזנה בטלפון הנהג (תוך 10 שניות):</span>
-                  <ol className="list-decimal list-inside space-y-1 text-slate-400 text-xs leading-relaxed">
-                    <li>פתח את הוואטסאפ בטלפון ⬅️ <strong>הגדרות</strong> ⬅️ <strong>מכשירים מקושרים</strong>.</li>
-                    <li>לחץ על <strong>קישור מכשיר</strong>.</li>
-                    <li>בתחתית המסך לחץ: <strong>"קישור עם מספר טלפון במקום"</strong>.</li>
-                    <li>הזן את הקוד שקיבלת למעלה.</li>
-                  </ol>
-                </div>
-              </>
-            )}
-
-            {/* METHOD 2: LIVE QR CODE SCANNER */}
-            {pairingMethod === 'qr' && (
-              <div className="p-4 rounded-xl bg-[#090e15] border border-[#1b2636] space-y-4 animate-in fade-in">
-                {pairingTarget === 'driver' && (
-                  <div>
-                    <label className="text-slate-300 font-bold block mb-1">מספר הטלפון של הנהג עבורו מופק קוד ה-QR:</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={pairingPhone}
-                        onChange={(e) => setPairingPhone(e.target.value)}
-                        placeholder="למשל: 0515157166 או בחר מרשימת הנהגים"
-                        className="flex-1 px-3 py-2 rounded-xl bg-[#080c13] border border-[#223044] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-purple-400 font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => fetchLiveQr()}
-                        disabled={qrLoading}
-                        className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-md"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${qrLoading ? 'animate-spin' : ''}`} />
-                        טען ברקוד
-                      </button>
-                    </div>
+                    )}
                   </div>
-                )}
-
-                <div className="p-4 sm:p-6 rounded-2xl bg-[#06090e] border border-purple-500/30 flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-bold text-purple-300">
-                    <QrCode className="w-4 h-4 text-purple-400" />
-                    <span>קוד QR חי לסריקה בוואטסאפ ווב ({pairingTarget === 'bot' ? 'בוט מרכזי' : (pairingPhone || 'נהג')})</span>
-                  </div>
-
-                  {qrDataUrl ? (
-                    <div className="relative p-3 bg-white rounded-2xl shadow-2xl border-4 border-purple-500/40 inline-block animate-in zoom-in-95 duration-200">
-                      <img
-                        src={qrDataUrl}
-                        alt="WhatsApp Web QR Code"
-                        className="w-56 h-56 sm:w-64 sm:h-64 object-contain rounded-lg"
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-56 h-56 sm:w-64 sm:h-64 rounded-2xl border-2 border-dashed border-purple-500/30 flex flex-col items-center justify-center p-4 text-slate-400 space-y-2">
-                      <RefreshCw className={`w-8 h-8 text-purple-400 ${qrLoading ? 'animate-spin' : ''}`} />
-                      <div className="text-xs font-medium">{qrStatusText}</div>
-                    </div>
+                  {pairingMethod === 'qr' && (
+                    <DriverQrPanel
+                      phone={pairingPhone || adminPhone}
+                      onConnected={() => setActionSuccess('הוואטסאפ של הנהג חובר בהצלחה דרך QR!')}
+                    />
                   )}
-
-                  <div className="flex items-center gap-2 flex-wrap justify-center text-[11px]">
-                    <span className="px-2.5 py-1 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 font-medium flex items-center gap-1.5">
-                      <Clock className="w-3 h-3" />
-                      מתרענן אוטומטית בעוד <strong>{qrCountdown}</strong> שניות
-                    </span>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-slate-300 text-xs">
+                    חיבור הבוט הראשי במספר: <strong className="font-mono text-amber-400">{botPhone}</strong>
+                  </div>
+                  {pairingMethod === 'code' ? (
                     <button
                       type="button"
-                      onClick={() => fetchLiveQr()}
-                      disabled={qrLoading}
-                      className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
+                      onClick={() => handleGeneratePairingCode()}
+                      disabled={pairingLoading}
+                      className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-md"
                     >
-                      <RefreshCw className={`w-3 h-3 ${qrLoading ? 'animate-spin' : ''}`} />
-                      רענן עכשיו
+                      <RefreshCw className={`w-3.5 h-3.5 ${pairingLoading ? 'animate-spin' : ''}`} />
+                      הפק קוד לבוט הראשי
+                    </button>
+                  ) : (
+                    <DriverQrPanel
+                      phone={botPhone}
+                      onConnected={() => setActionSuccess('הבוט המרכזי חובר בהצלחה דרך QR!')}
+                    />
+                  )}
+                </div>
+              )}
+
+              {generatedPairingCode && (pairingTarget === 'bot' || pairingMethod === 'code') && (
+                <div className="p-4 rounded-xl bg-teal-950/40 border border-teal-500/40 text-center space-y-2 mt-3 animate-in fade-in">
+                  <span className="text-xs text-teal-300 block font-bold">קוד הצימוד (הזן בוואטסאפ במכשירים מקושרים):</span>
+                  <div className="text-2xl font-mono font-black text-amber-300 tracking-widest bg-black/60 py-2.5 px-6 rounded-lg inline-block border border-amber-500/40 shadow-lg">
+                    {generatedPairingCode}
+                  </div>
+                  <div className="flex justify-center pt-1">
+                    <button
+                      type="button"
+                      onClick={copyCode}
+                      className="px-3.5 py-1.5 rounded-lg bg-teal-500/20 text-teal-300 hover:bg-teal-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-teal-500/30 transition-colors"
+                    >
+                      {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedCode ? 'הקוד הועתק!' : 'העתק קוד'}
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
 
-                {/* Instruction Steps for QR */}
-                <div className="rounded-xl border border-[#1a2534] bg-[#070b10] p-4 space-y-2 text-slate-300">
-                  <span className="font-bold text-white block">מדריך סריקה ישירה מהטלפון:</span>
-                  <ol className="list-decimal list-inside space-y-1 text-slate-400 text-xs leading-relaxed">
-                    <li>פתח את הוואטסאפ בטלפון ⬅️ <strong>הגדרות</strong> ⬅️ <strong>מכשירים מקושרים</strong>.</li>
-                    <li>לחץ על <strong>"קישור מכשיר"</strong>.</li>
-                    <li>כוון את מצלמת הטלפון אל הברקוד שלמעלה - החיבור יתבצע מידית!</li>
-                  </ol>
-                </div>
-              </div>
-            )}
-
-            {/* Quick Reset All Cookies Action */}
-            <div className="p-3.5 rounded-xl bg-rose-950/20 border border-rose-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-rose-300">
-              <div className="space-y-0.5">
-                <div className="font-bold flex items-center gap-1.5 text-rose-200">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                  נתקלת בקוקיז ישנים או במספרים שלא מתחברים?
-                </div>
-                <div className="text-[11px] text-rose-400/80">
-                  איפוס מוחלט של כל סשני הנהגים מנקה את תיקיית sessions ומאפס את כל מיפויי ה-LID מבלי לגעת בבוט הראשי.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={promptClearAllSessions}
-                className="px-3.5 py-2 rounded-xl bg-rose-500/25 hover:bg-rose-500/35 border border-rose-500/50 text-rose-200 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                איפוס מוחלט של כל הקוקיז
-              </button>
+            {/* Instruction Steps */}
+            <div className="rounded-xl border border-[#1a2534] bg-[#070b10] p-4 space-y-2 text-slate-300">
+              <span className="font-bold text-white block">מדריך הזנה בטלפון הנהג (תוך 10 שניות):</span>
+              <ol className="list-decimal list-inside space-y-1 text-slate-400 text-xs leading-relaxed">
+                <li>פתח את הוואטסאפ בטלפון ⬅️ <strong>הגדרות</strong> ⬅️ <strong>מכשירים מקושרים</strong>.</li>
+                <li>לחץ על <strong>קישור מכשיר</strong>.</li>
+                <li>בתחתית המסך לחץ: <strong>"קישור עם מספר טלפון במקום"</strong>.</li>
+                <li>הזן את הקוד שקיבלת למעלה.</li>
+              </ol>
             </div>
           </div>
         )}
@@ -1368,27 +1197,6 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Purge All Cookies & LID Mappings Action */}
-            <div className="p-3.5 rounded-xl bg-[#090e15] border border-rose-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-rose-300">
-              <div>
-                <div className="font-bold flex items-center gap-1.5 text-rose-200 text-xs">
-                  <Trash2 className="w-4 h-4 text-rose-400" />
-                  איפוס מוחלט של כל קובצי האימות (קוקיז) ומיפויי ה-LID מהשרת
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  מוחק את כל הסשנים מ-auth/sessions ומאפס את lid-map.json. הבוט הראשי (0555081810) נשמר תמיד.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={promptClearAllSessions}
-                className="px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors shadow-md"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                איפוס מוחלט של כל הקוקיז
-              </button>
-            </div>
           </div>
         )}
 
@@ -1447,22 +1255,13 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
               </div>
             </div>
 
-            <div className="pt-2 flex items-center justify-between gap-3">
+            <div className="pt-2">
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-md"
+                className="px-5 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
               >
                 שמור הגדרות מנהל
-              </button>
-
-              <button
-                type="button"
-                onClick={promptClearAllSessions}
-                className="px-4 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                איפוס מוחלט של כל הקוקיז
               </button>
             </div>
           </form>

@@ -311,21 +311,24 @@ export function startDashboard(runtime) {
     }
   });
 
-  // קבלת קוד QR חי לוואטסאפ ווב (לבוט או לנהג עם רענון אוטומטי)
-  app.get("/api/pairing/qr", async (req, res) => {
+  // קבלת קוד QR חי לוואטסאפ ווב (תומך ב-/api/driver/qr/:phone וכן ב-/api/pairing/qr)
+  const handleDriverQrRequest = async (req, res) => {
     const isBot = req.query.isBot === "true" || req.query.target === "bot";
-    const phone = req.query.phone;
+    const phone = req.params?.phone || req.query.phone;
 
     try {
       if (isBot) {
         const summary = ctx?.getAllSessions ? ctx.getAllSessions() : {};
+        const isConn = Boolean(summary.bot?.connected);
+        const qr = summary.bot?.qr || null;
         return res.json({
           ok: true,
           isBot: true,
           phone: summary.bot?.phone || "bot",
-          qr: summary.bot?.qr || null,
-          status: summary.bot?.connected ? "connected" : (summary.bot?.qr ? "qr_ready" : "connecting"),
-          connected: Boolean(summary.bot?.connected),
+          qr,
+          status: isConn ? "connected" : (qr ? "qr_ready" : "connecting"),
+          connected: isConn,
+          qrUpdatedAt: summary.bot?.qrTimestamp || Date.now(),
         });
       }
 
@@ -336,30 +339,39 @@ export function startDashboard(runtime) {
       const cleanP = cleanPhone(phone);
       if (ctx?.ensureDriverSessionForQr) {
         const sessionInfo = await ctx.ensureDriverSessionForQr(cleanP);
+        const isConn = sessionInfo.status === "connected" || Boolean(sessionInfo.registered);
         return res.json({
           ok: true,
           isBot: false,
           phone: cleanP,
           qr: sessionInfo.qr,
-          status: sessionInfo.status,
+          status: sessionInfo.status || (isConn ? "connected" : (sessionInfo.qr ? "qr_ready" : "connecting")),
           registered: sessionInfo.registered,
+          connected: isConn,
+          qrUpdatedAt: sessionInfo.qrTimestamp || Date.now(),
         });
       }
 
       const summary = ctx?.getAllSessions ? ctx.getAllSessions() : { drivers: [] };
       const drv = (summary.drivers || []).find((d) => cleanPhone(d.phone) === cleanP);
+      const isConn = drv?.status === "connected" || Boolean(drv?.registered);
       res.json({
         ok: true,
         isBot: false,
         phone: cleanP,
         qr: drv?.qr || null,
-        status: drv?.status || "connecting",
+        status: drv?.status || (isConn ? "connected" : (drv?.qr ? "qr_ready" : "connecting")),
         registered: Boolean(drv?.registered),
+        connected: isConn,
+        qrUpdatedAt: drv?.qrTimestamp || Date.now(),
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
-  });
+  };
+
+  app.get("/api/driver/qr/:phone", handleDriverQrRequest);
+  app.get("/api/pairing/qr", handleDriverQrRequest);
 
   // איפוס מלא של כל סשני הנהגים, מחיקת כל הקוקיז ואיפוס כל מיפויי ה-LID מהשרת (ללא פגיעה בבוט הראשי)
   app.post("/api/sessions/clear-all", (_req, res) => {

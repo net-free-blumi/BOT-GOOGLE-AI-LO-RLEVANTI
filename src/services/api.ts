@@ -528,29 +528,36 @@ export async function editUserDetailsApi(oldPhone: string, data: { name?: string
   });
 }
 
-// קבלת קוד QR חי לוואטסאפ ווב (לבוט או לנהג)
-export async function fetchPairingQrApi(params: { phone?: string; isBot?: boolean }): Promise<{
+
+
+
+// ===== חיבור נהג דרך QR (מתרענן אוטומטית; polling מהאתר) =====
+export interface DriverQrState {
   ok: boolean;
-  qr?: string | null;
-  phone?: string;
-  status?: string;
-  registered?: boolean;
-  connected?: boolean;
+  status: string;        // none | pairing_required | qr_ready | pairing_ready | connecting | connected | disconnected
+  connected: boolean;
+  qr: string | null;     // מחרוזת ה-QR הגולמית
+  qrImage?: string | null; // data:image/png;base64 (אם חבילת qrcode מותקנת בשרת)
+  qrUpdatedAt?: number | null;
+  lastDisconnectReason?: string;
   error?: string;
-}> {
+}
+
+let demoQrTick = 0;
+
+export async function fetchDriverQr(phone: string): Promise<DriverQrState> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) {
+    demoQrTick += 1;
     return {
       ok: true,
-      qr: '2@1ABcdEfG123456==,demoQR==,demoRef==',
-      status: 'qr_ready',
-      connected: false,
+      status: demoQrTick > 12 ? 'connected' : 'qr_ready',
+      connected: demoQrTick > 12,
+      qr: demoQrTick > 12 ? null : `DEMO-QR-${phone}-${Math.floor(demoQrTick / 3)}`,
+      qrUpdatedAt: Date.now(),
     };
   }
-  const query = new URLSearchParams();
-  if (params.phone) query.set('phone', params.phone);
-  if (params.isBot) query.set('isBot', 'true');
-  return await request<any>(`/api/pairing/qr?${query.toString()}`);
+  return await request<DriverQrState>(`/api/driver/qr/${encodeURIComponent(phone)}`);
 }
 
 // איפוס מוחלט של כל סשני הנהגים, הקוקיז ומיפויי ה-LID מהשרת
@@ -567,6 +574,3 @@ export async function clearAllSessionsAndLidMapApi(): Promise<{
     method: 'POST',
   });
 }
-
-
-

@@ -45,8 +45,15 @@ const DEBUG_FILTER = true;
 const DEDUPE_MINUTES = 15;
 const NOTIFY_ON_RESET = false;
 
+// קבוצת וואטסאפ ייעודית לתיקוני באגים ונסיעות לא רלוונטיות
+export const BUG_REPORT_GROUP_JID = "120363402521442927@g.us";
+
 const groupMetadataCache = new Map();
 const recentUnlinkedPrompts = new Map(); // senderPhone -> timestamp (צינון הודעות קישור)
+
+// מטמון התראות שנשלחו למעקב אחרי דיסלייקים (👍 / 👎)
+// מפתח: ID הודעת הבוט שנשלחה אל הנהג
+export const sentAlertsCache = new Map();
 
 const deduper = createDeduper(findPlaces, { windowMs: DEDUPE_MINUTES * 60 * 1000 });
 
@@ -82,13 +89,45 @@ cron.schedule("0 2 * * *", async () => {
   }
   deduper.clear();
   groupMetadataCache.clear();
+  // שמירת רק 100 הודעות אחרונות במטמון
+  if (sentAlertsCache.size > 100) {
+    const keys = Array.from(sentAlertsCache.keys());
+    for (let i = 0; i < keys.length - 100; i++) {
+      sentAlertsCache.delete(keys[i]);
+    }
+  }
   console.log("🌙 איפוס יומי (2:00): כל החיפושים הופסקו והזיכרון נוקה");
   recordEvent("system", "איפוס יומי ב-2:00: החיפושים הופסקו");
 }, { timezone: "Asia/Jerusalem" });
 
+// שליחת דיווח לקבוצת תיקוני הבוט הייעודית (120363402521442927@g.us)
+export async function sendBugReportToGroup(sock, reportText) {
+  // נסיון שליחה דרך הסוקט הנוכחי
+  if (sock) {
+    try {
+      await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
+      return true;
+    } catch (e) {
+      console.log("סוקט מקומי לא הצליח לשלוח לקבוצת הבאגים, מנסה סוקט ראשי:", e.message);
+    }
+  }
+
+  // נסיון גיבוי דרך הבוט הראשי
+  const mainSock = getMainBotSock();
+  if (mainSock && mainSock !== sock) {
+    try {
+      await mainSock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
+      return true;
+    } catch (e) {
+      console.error("שגיאה בשליחת דיווח באג דרך הבוט הראשי:", e.message);
+    }
+  }
+  return false;
+}
+
 // שליחת התראת נסיעה נקייה ומדויקת (ללא שורות מיותרות) עם ציטוט ההודעה המקורית
 async function sendRideAlertWithQuoted(sock, recipientJid, rideData, originalMsg) {
-  if (!sock) return;
+  if (!sock) return null;
 
   // הודעה נקייה וממוקדת בדיוק כפי שהמשתמש ביקש - ללא הוראות חוזרות בתחתית
   let alertMsg = `🚕 *נסיעה מתאימה נמצאה!*\n`;
@@ -99,18 +138,103 @@ async function sendRideAlertWithQuoted(sock, recipientJid, rideData, originalMsg
   alertMsg += `👤 *סדרן:* ${rideData.senderName} · ${rideData.senderPhone}\n`;
   alertMsg += `🔍 *חיפוש:* ${rideData.searchDesc}`;
 
+  let sentMsg = null;
   try {
     // שליחה עם ציטוט מלא של ההודעה מהקבוצה (מאפשר קפיצה ישירה לקבוצה בלחיצה)
     if (originalMsg) {
-      await sock.sendMessage(recipientJid, { text: alertMsg }, { quoted: originalMsg });
+      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg }, { quoted: originalMsg });
     } else {
-      await sock.sendMessage(recipientJid, { text: alertMsg });
+      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg });
     }
   } catch (err) {
     try {
-      await sock.sendMessage(recipientJid, { text: alertMsg });
+      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg });
     } catch (e) {
       console.error(`שגיאה בשליחת התראה ל-${recipientJid}:`, e.message);
+    }
+  }
+
+  // שמירה במטמון לזיהוי מהיר של דיסלייק (👎)
+  if (sentMsg?.key?.id) {
+    sentAlertsCache.set(sentMsg.key.id, {
+      msgId: sentMsg.key.id,
+      rideData,
+      rawText: rideData.rawText || rideData.cleanedText,
+      driverPhone: rideData.driverPhone || recipientJid.split("@")[0].split(":")[0],
+      groupName: rideData.groupName,
+      senderName: rideData.senderName,
+      senderPhone: rideData.senderPhone,
+      searchDesc: rideData.searchDesc,
+      sentAt: Date.now()
+    });
+
+    if (sentAlertsCache.size > 2000) {
+      const oldestKey = sentAlertsCache.keys().next().value;
+      sentAlertsCache.delete(oldestKey);
+    }
+  }
+
+  return sentMsg;
+}
+
+// טיפול בתגובות אימוג'י על הודעות (העברת דיסלייק 👎 לקבוצת התיקונים)
+export async function handleReaction(sock, reactions, sessionContext = {}) {
+  const items = Array.isArray(reactions) ? reactions : [reactions];
+
+  for (const item of items) {
+    if (!item) continue;
+    const reactionText = item.reaction?.text ?? item.text ?? "";
+    const targetMsgId = item.reaction?.key?.id || item.key?.id;
+
+    if (!targetMsgId) continue;
+
+    // האם נבחר אימוג'י דיסלייק (👎)?
+    if (reactionText === "👎" || reactionText.includes("👎")) {
+      console.log(`👎 [דיסלייק נלכד!] על הודעה ${targetMsgId} מנהג: ${sessionContext.driverPhone || "לא ידוע"}`);
+
+      const alertInfo = sentAlertsCache.get(targetMsgId);
+      const nowFormatted = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+
+      let reportMsg = `🐞 *דיווח תקלה / נסיעה לא רלוונטית (דיסלייק 👎)*\n`;
+      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+
+      if (alertInfo) {
+        reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData.cleanedText}\n`;
+        reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+        if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData.cleanedText) {
+          reportMsg += `📌 *טקסט גולמי מקורי:*\n${alertInfo.rawText}\n`;
+          reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+        }
+        reportMsg += `👤 *נהג מדווח:* ${alertInfo.driverPhone}\n`;
+        reportMsg += `📍 *קבוצה:* ${alertInfo.groupName}\n`;
+        reportMsg += `🏷️ *סדרן:* ${alertInfo.senderName} (${alertInfo.senderPhone})\n`;
+        reportMsg += `🔍 *חיפוש שהיה מוגדר:* ${alertInfo.searchDesc}\n`;
+      } else {
+        reportMsg += `⚠️ *מזהה הודעה:* ${targetMsgId}\n`;
+        reportMsg += `👤 *נהג מדווח:* ${sessionContext.driverPhone || "מחובר"}\n`;
+        reportMsg += `(פרטי הנסיעה המדויקים לא נמצאו במטמון - ייתכן שנשלחה לפני הפעלה מחדש)\n`;
+      }
+
+      reportMsg += `⏱️ *זמן הדיווח:* ${nowFormatted}\n`;
+      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+      reportMsg += `💡 המשתמש סימן 👎 ישירות על הודעת הבוט. הועבר אוטומטית לטיפול בבאג.`;
+
+      const sent = await sendBugReportToGroup(sock, reportMsg);
+      console.log(`📤 [דיווח לקבוצת תיקונים 120363402521442927@g.us]: ${sent ? "נשלח בהצלחה ✅" : "כשל בשליחה ❌"}`);
+      recordEvent("system", `נשלח דיווח 👎 לקבוצת התיקונים עבור הודעה ${targetMsgId}`);
+
+      // שליחת אישור חוזר לנהג (אימוג'י 🫡 או 👍 להודעה כדי שיידע שהדיווח נקלט)
+      try {
+        const remoteJid = item.reaction?.key?.remoteJid || item.key?.remoteJid;
+        if (remoteJid && sock) {
+          await sock.sendMessage(remoteJid, {
+            react: {
+              text: "🫡",
+              key: item.reaction?.key || item.key,
+            }
+          });
+        }
+      } catch (e) {}
     }
   }
 }
@@ -286,6 +410,20 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
   if (!messages || !messages.length) return;
 
   for (const m of messages) {
+    // 0. טיפול בתגובות אימוג'י (דיסלייק 👎 על הודעות הבוט להעברה לקבוצת התיקונים)
+    if (m.message?.reactionMessage) {
+      const rm = m.message.reactionMessage;
+      await handleReaction(sock, [{
+        key: m.key,
+        reaction: {
+          key: rm.key,
+          text: rm.text,
+          senderTimestampMs: rm.senderTimestampMs
+        }
+      }], sessionContext);
+      continue;
+    }
+
     if (m.key.fromMe) continue;
 
     const jid = m.key.remoteJid;
@@ -643,7 +781,9 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
-      const dup = deduper.check(text);
+      // בדיקת כפילות מבודדת לפי נהג (Driver-Scoped Deduplication)
+      // מונע מצב שנהג ב' נחסם מנסיעה בגלל שנהג א' סרק אותה ראשון!
+      const dup = deduper.check(text, driverPhone);
       if (dup.duplicate) {
         if (DEBUG_FILTER) console.log(`[כפילות ${driverPhone}] ${dup.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
         continue;
@@ -657,6 +797,8 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       const rideData = {
         cleanedText,
+        rawText: text,
+        driverPhone,
         groupName,
         senderName: rideSenderName,
         senderPhone: rideSenderPhone,
@@ -709,6 +851,7 @@ startDashboard({
       phone,
       {
         onRideMessage: handleIncomingMessage,
+        onReaction: handleReaction,
         onEvent: recordEvent,
       },
       options
@@ -727,6 +870,7 @@ startDashboard({
   ensureDriverSessionForQr: async (phone) => {
     return await ensureDriverSessionForQr(phone, {
       onRideMessage: handleIncomingMessage,
+      onReaction: handleReaction,
       onEvent: recordEvent,
     });
   }
@@ -739,6 +883,7 @@ async function boot() {
   // 1. הפעלת הבוט הראשי
   await startMainBot({
     onMessage: handleIncomingMessage,
+    onReaction: handleReaction,
     onStatusChange: (status) => {
       console.log(`[בוט ראשי] סטטוס חיבור: ${status.connected ? "מחובר ✅" : "מנותק ❌"}`);
     },
@@ -748,6 +893,7 @@ async function boot() {
   // 2. שחזור סשנים שמורים של נהגים
   await initSavedDriverSessions({
     onRideMessage: handleIncomingMessage,
+    onReaction: handleReaction,
     onEvent: recordEvent,
   });
 }

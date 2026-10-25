@@ -63,7 +63,7 @@ let mainBotStatus = {
 // ==========================================
 // 1. הפעלת הבוט הראשי (Main Bot - 0555081810)
 // ==========================================
-export async function startMainBot({ onMessage, onStatusChange, onEvent }) {
+export async function startMainBot({ onMessage, onReaction, onStatusChange, onEvent }) {
   const usersData = loadUsersData();
   const botPhone = cleanPhone(process.env.BOT_PHONE || usersData.botPhone || "972555081810");
   mainBotStatus.phone = botPhone;
@@ -138,9 +138,9 @@ export async function startMainBot({ onMessage, onStatusChange, onEvent }) {
         try {
           fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
         } catch (e) {}
-        setTimeout(() => startMainBot({ onMessage, onStatusChange, onEvent }), 4000);
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 4000);
       } else {
-        setTimeout(() => startMainBot({ onMessage, onStatusChange, onEvent }), 3000);
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 3000);
       }
     }
   });
@@ -148,6 +148,12 @@ export async function startMainBot({ onMessage, onStatusChange, onEvent }) {
   sock.ev.on("messages.upsert", async (upsert) => {
     if (onMessage) {
       await onMessage(sock, upsert, { isMainBot: true, botPhone });
+    }
+  });
+
+  sock.ev.on("messages.reaction", async (reactions) => {
+    if (onReaction) {
+      await onReaction(sock, reactions, { isMainBot: true, botPhone });
     }
   });
 
@@ -174,7 +180,7 @@ export async function requestMainBotPairingCode(customPhone) {
 // ==========================================
 // 2. ניהול סשנים של נהגים (Driver WhatsApp Sessions)
 // ==========================================
-export async function connectDriverSession(phone, { onRideMessage, onStatusChange, onEvent }) {
+export async function connectDriverSession(phone, { onRideMessage, onReaction, onStatusChange, onEvent } = {}) {
   const driverPhone = cleanPhone(phone);
   if (!driverPhone) throw new Error("מספר טלפון נהג לא תקין");
 
@@ -259,7 +265,7 @@ export async function connectDriverSession(phone, { onRideMessage, onStatusChang
         // חובה לבצע חיבור מחדש מיידי כדי להשלים את לחיצת היד (Handshake), אחרת הטלפון יסתובב וייכשל!
         console.log(`🔄 [נהג ${driverPhone}] חיבור נסגר (קוד: ${code || "לא ידוע"}). מתחבר מחדש אוטומטית להשלמת הקישור...`);
         setTimeout(() => {
-          connectDriverSession(driverPhone, { onRideMessage, onStatusChange, onEvent }).catch((err) => {
+          connectDriverSession(driverPhone, { onRideMessage, onReaction, onStatusChange, onEvent }).catch((err) => {
             console.error(`שגיאה בחיבור מחדש עבור נהג ${driverPhone}:`, err.message);
           });
         }, 2000);
@@ -270,6 +276,12 @@ export async function connectDriverSession(phone, { onRideMessage, onStatusChang
   sock.ev.on("messages.upsert", async (upsert) => {
     if (onRideMessage) {
       await onRideMessage(sock, upsert, { isMainBot: false, driverPhone });
+    }
+  });
+
+  sock.ev.on("messages.reaction", async (reactions) => {
+    if (onReaction) {
+      await onReaction(sock, reactions, { isMainBot: false, driverPhone });
     }
   });
 

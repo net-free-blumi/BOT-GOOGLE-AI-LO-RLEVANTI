@@ -28,6 +28,27 @@ export function normalizeText(text) {
     .trim();
 }
 
+// חילוץ מחיר נסיעה לצורך סינון מחירים חריגים
+export function extractPrice(text) {
+  const cleaned = String(text || "")
+    .replace(/(?:https?:\/\/|www\.|chat\.whatsapp\.com\/|wa\.me\/|waze\.com\/|maps\.app\.goo\.gl\/|goo\.gl\/)[^\s]+/gi, " ")
+    .replace(/(?:\+?972|0)[-\s]?5\d[-\s]?\d{3}[-\s]?\d{4}/g, " ")
+    .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
+    .replace(/\d{6,}/g, " ");
+
+  const withCurrency = cleaned.match(/(?<!\d)(\d{2,3})(?!\d)\s*(?:₪|שח|ש"ח|שקל|ש(?!\w))/);
+  if (withCurrency && +withCurrency[1] >= 20) return +withCurrency[1];
+
+  const re = /(?<!\d)(\d{2,3})(?!\d)(\s*(?:דק|דקות|דקה|שעות|שעה|קמ|ק"מ|km))?/gi;
+  let m;
+  while ((m = re.exec(cleaned))) {
+    if (m[2]) continue;
+    if (/שעה\s*$/.test(cleaned.slice(Math.max(0, m.index - 6), m.index))) continue;
+    if (+m[1] >= 20) return +m[1];
+  }
+  return null;
+}
+
 export function createMatcher(citiesData, streetsData = {}) {
   const phrases = new Map();
   const abbreviations = new Set();
@@ -148,27 +169,48 @@ export function createMatcher(citiesData, streetsData = {}) {
     };
   }
 
-  // בדיקת מעברים פנימיים מובהקים בבית שמש (כמו "רמה ד לב", "ד לג", "חפציבה לקריה")
+
+  // בדיקת מעברים פנימיים מובהקים בבית שמש (כמו "רמה ד לב", "רמה ד> ה", "רמה ד & נעימי", "חפציבה לקריה")
   function detectInternalTransitionBeitShemesh(text) {
-    const norm = normalizeText(text);
-    // דפוסים מובהקים של מעבר בין שכונות בבית שמש
-    const patterns = [
-      /(^|\s)(רמה\s+[א-ד]|חפציבה|קריה|ביג|נעימי|סאן מול|ישנה)\s+ל(רמה\s+[א-ד]|[א-ד]|חפציבה|קריה|ביג|נעימי|סאן מול|ישנה)/i,
-      /(^|\s)([א-ד])\s+ל([א-ד]|חפציבה|קריה)(\s|$)/i,
-      /(^|\s)בתוך\s+(רמה\s+[א-ד]|[א-ד]|שמש)(\s|$)/i,
-      /(^|\s)(פנימי\s+שמש|שמש\s+פנימי|פ\s+שמש|שמש\s+פ)(\s|$)/i
-    ];
-    return patterns.some((p) => p.test(norm));
+    const raw = String(text || "");
+    const norm = normalizeText(raw);
+
+    // 1. כינויים מפורשים של פנימי בית שמש
+    if (/(^|\s)(פנימי\s+שמש|שמש\s+פנימי|פ\s+שמש|שמש\s+פ|פנימי\s+בש|בש\s+פנימי|פ\s+בש|בש\s+פ)(\s|$)/i.test(norm)) {
+      return true;
+    }
+
+    // 2. מעבר בין רמות (רמה א-ה) ומוקדים בבית שמש עם חצים ומפרידים (>, ->, &, -, ל, אל, רווח)
+    const ramaKeywords = "רמה\\s+[א-ה]|רמת\\s+בית\\s+שמש\\s+[א-ה]";
+    const bsSpots = "רמה\\s+[א-ה]|[א-ה]|חפציבה|קריה|הקריה|ביג|נעימי|סאן\\s*מול|ישנה|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|מחסיה|אדרת|צרעה|הרטוב|ישעי|זכריה";
+
+    const symbolTransitionRe = new RegExp(`(${ramaKeywords}|${bsSpots})\\s*(?:>|->|&|-|ל|אל|ו)\\s*(${ramaKeywords}|${bsSpots})`, "i");
+    if (symbolTransitionRe.test(raw) || symbolTransitionRe.test(norm)) {
+      return true;
+    }
+
+    // מעבר קצר בין אותיות רמה עם חץ/רווח (למשל: "ד>ה", "ד -> ה", "ד לה", "ד > ב")
+    if (/(^|\s)[א-ה]\s*(?:>|->|&|-|ל|אל)\s*[א-ה](\s|$)/i.test(raw)) {
+      return true;
+    }
+
+    // "בתוך רמה ד", "בתוך שמש", "בתוך בית שמש"
+    if (/(^|\s)בתוך\s+(רמה\s+[א-ה]|[א-ה]|שמש|בית שמש)(\s|$)/i.test(norm)) {
+      return true;
+    }
+
+    return false;
   }
 
   // בדיקת מעבר פנימי מובהק בירושלים
   function detectInternalTransitionJerusalem(text) {
-    const norm = normalizeText(text);
+    const raw = String(text || "");
+    const norm = normalizeText(raw);
     const patterns = [
       /(^|\s)(פנימי\s+ים|ים\s+פנימי|פ\s+ים|ים\s+פ)(\s|$)/i,
-      /(^|\s)(הר נוף|גבעש|גבעת שאול|רמות|בית וגן|גילה|גאולה|מאה שערים|סנהדריה|בר אילן|טדי|קבר רחל|רוממה)\s+ל(הר נוף|גבעש|גבעת שאול|רמות|בית וגן|גילה|גאולה|מאה שערים|סנהדריה|בר אילן|טדי|קבר רחל|רוממה)/i
+      /(^|\s)(הר נוף|גבעש|גבעת שאול|רמות|בית וגן|גילה|גאולה|מאה שערים|סנהדריה|בר אילן|טדי|קבר רחל|רוממה)\s*(?:ל|>|->|&|-|אל)\s*(הר נוף|גבעש|גבעת שאול|רמות|בית וגן|גילה|גאולה|מאה שערים|סנהדריה|בר אילן|טדי|קבר רחל|רוממה)/i
     ];
-    return patterns.some((p) => p.test(norm));
+    return patterns.some((p) => p.test(raw) || p.test(norm));
   }
 
   function parseDriverCommand(text) {
@@ -192,8 +234,8 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
     }
 
-    // 3. פקודת פנימי: "פנוי שמש פנימי", "פנימי שמש", "פ שמש פ", "פנוי פנימי ים"
-    if (/(^|\s)(פנימי|פש|פ שמש|פ ים|שמש פ|ים פ)(\s|$)/.test(norm) || norm.includes("פנימי")) {
+    // 3. פקודת פנימי: "פנוי שמש פנימי", "פנימי שמש", "פ שמש פ", "פ שמש", "שמש פ", "פנוי פנימי ים"
+    if (/(^|\s)(פנימי|פש|פ שמש|פ ים|שמש פ|ים פ|פ בש|בש פ)(\s|$)/.test(norm) || norm.includes("פנימי")) {
       const places = findPlaces(clean);
       const city = places[0]?.city || DEFAULT_CITY;
       return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי)` };
@@ -224,23 +266,32 @@ export function createMatcher(citiesData, streetsData = {}) {
     // מצב 1: פנימי בלבד (internal)
     // ==========================================
     if (state.mode === "internal") {
-      // חוק ברזל: אם מופיעה עיר חיצונית כלשהי (למשל ביתר, בני ברק, ירושלים, חריש) - פוסלים מיד!
+      const norm = normalizeText(text);
+
+      // חוק ברזל 1: אם מופיעה עיר חיצונית כלשהי (למשל ביתר, בני ברק, ירושלים, כפר חב"ד, סביון, שוהם) - פוסלים מיד!
       if (externalCities.length > 0) {
         return no(`נפסל מפנימי: מופיעה עיר חיצונית (${externalCities.join(", ")})`);
+      }
+
+      // חוק ברזל 2: הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית אלא בין-עירונית
+      // (אלא אם צויין במפורש "פנימי" בהודעה)
+      const price = extractPrice(text);
+      if (price && price >= 130 && !norm.includes("פנימי")) {
+        return no(`נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)`);
+      }
+
+      // בדיקת מעברים פנימיים ספציפיים לפי עיר
+      if (home === "בית שמש" && detectInternalTransitionBeitShemesh(text)) {
+        return yes(`פנימי בית שמש: זוהה מעבר בין שכונות/רחובות בעיר`);
+      }
+      if (home === "ירושלים" && detectInternalTransitionJerusalem(text)) {
+        return yes(`פנימי ירושלים: זוהה מעבר פנימי בתוך ירושלים`);
       }
 
       // אם זוהה המקום של עיר הבית
       const mine = places.filter((p) => p.city === home);
       if (mine.length > 0) {
         return yes(`פנימי ${home}: זוהה "${mine[0].phrase}"`);
-      }
-
-      // בדיקת מעברים פנימיים ספציפיים לפי עיר גם אם שם העיר הושמט
-      if (home === "בית שמש" && detectInternalTransitionBeitShemesh(text)) {
-        return yes(`פנימי בית שמש: זוהה מעבר בין שכונות/רחובות בעיר`);
-      }
-      if (home === "ירושלים" && detectInternalTransitionJerusalem(text)) {
-        return yes(`פנימי ירושלים: זוהה מעבר פנימי בתוך ירושלים`);
       }
 
       // בדיקה לפי שם הקבוצה (אם הקבוצה ייעודית לפנימי שמש)
