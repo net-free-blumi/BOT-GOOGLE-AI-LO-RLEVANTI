@@ -1,0 +1,6 @@
+# Netlify Redirects for WhatsApp Rides Bot Dashboard
+# API calls are proxied to the real VPS server on port 3000:
+/api/*  http://82.70.210.206:3000/api/:splat  200!
+
+# SPA React routing fallback:
+/*      /index.html                           200

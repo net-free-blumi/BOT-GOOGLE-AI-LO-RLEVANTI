@@ -1,0 +1,6 @@
+{
+  "name": "מרכז שליטה · בוט נסיעות WhatsApp",
+  "description": "לוח בקרה וניטור מתקדם בזמן אמת לבוט נסיעות בוואטסאפ עם שליטה בפקודות, סנכרון שרת ויומן אירועים",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

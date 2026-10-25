@@ -1,0 +1,15 @@
+{
+  "botPhone": "972555081810",
+  "adminPhone": "972515157166",
+  "cooldownHours": 24,
+  "approvedUsers": [
+    {
+      "phone": "972515157166",
+      "name": "מנהל ראשי",
+      "role": "admin",
+      "addedAt": "2026-10-22T08:00:00.000Z",
+      "id": "appr-972515157166-mvkql0w3"
+    }
+  ],
+  "pendingUsers": []
+}

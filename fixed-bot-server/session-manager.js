@@ -1,0 +1,531 @@
+// session-manager.js - ניהול ריבוי חשבונות וואטסאפ (Multi-Session Baileys Manager)
+// מאפשר לבוט הראשי (0555081810) להישאר מחובר תמיד,
+// ובמקביל מחבר וואטסאפים נפרדים של נהגים לסריקת קבוצות הנסיעות שלהם ללא ניתוק הדדי!
+
+import makeWASocket, { 
+  useMultiFileAuthState, 
+  DisconnectReason, 
+  fetchLatestBaileysVersion 
+} from "@whiskeysockets/baileys";
+import pino from "pino";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings } from "./users-manager.js";
+import { recordError } from "./dashboard-api.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const AUTH_BASE_DIR = path.join(__dirname, "auth");
+const BOT_AUTH_DIR = path.join(AUTH_BASE_DIR, "bot");
+const SESSIONS_DIR = path.join(AUTH_BASE_DIR, "sessions");
+
+// יצירת תיקיות בסיס אם אינן קיימות
+if (!fs.existsSync(AUTH_BASE_DIR)) fs.mkdirSync(AUTH_BASE_DIR, { recursive: true });
+if (!fs.existsSync(BOT_AUTH_DIR)) fs.mkdirSync(BOT_AUTH_DIR, { recursive: true });
+if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
+// מיגרציה של קבצי auth ישנים מהשורש לתוך auth/bot אם קיימים
+try {
+  const oldCreds = path.join(AUTH_BASE_DIR, "creds.json");
+  const newCreds = path.join(BOT_AUTH_DIR, "creds.json");
+  if (fs.existsSync(oldCreds) && !fs.existsSync(newCreds)) {
+    const files = fs.readdirSync(AUTH_BASE_DIR);
+    for (const f of files) {
+      if (f !== "bot" && f !== "sessions") {
+        const src = path.join(AUTH_BASE_DIR, f);
+        const dest = path.join(BOT_AUTH_DIR, f);
+        try {
+          fs.renameSync(src, dest);
+        } catch (e) {}
+      }
+    }
+    console.log("🔄 הועברו נתוני אימות ישנים של הבוט אל auth/bot");
+  }
+} catch (e) {}
+
+// מפת חשבונות הנהגים הפעילים: phone -> session object
+const driverSessions = new Map();
+
+// מצב הבוט הראשי
+let mainBotSock = null;
+let mainBotStatus = {
+  phone: "972555081810",
+  connected: false,
+  registered: false,
+  pairingCode: null,
+  qr: null,
+  qrTimestamp: null,
+  lastDisconnectReason: "",
+};
+
+// ==========================================
+// 1. הפעלת הבוט הראשי (Main Bot - 0555081810)
+// ==========================================
+export async function startMainBot({ onMessage, onStatusChange, onEvent }) {
+  const usersData = loadUsersData();
+  const botPhone = cleanPhone(process.env.BOT_PHONE || usersData.botPhone || "972555081810");
+  mainBotStatus.phone = botPhone;
+
+  const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
+  let version;
+  try {
+    const v = await fetchLatestBaileysVersion();
+    version = v.version;
+  } catch {
+    version = [2, 3000, 1017531287];
+  }
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+  });
+
+  mainBotSock = sock;
+  mainBotStatus.registered = Boolean(sock.authState.creds.registered);
+
+  // הפקת קוד צימוד אוטומטי לבוט אם עדיין לא מחובר
+  if (!sock.authState.creds.registered) {
+    setTimeout(async () => {
+      try {
+        console.log(`🔑 מבקש קוד חיבור עבור הבוט הראשי (${botPhone})...`);
+        const code = await sock.requestPairingCode(botPhone);
+        mainBotStatus.pairingCode = code;
+        onStatusChange?.(mainBotStatus);
+        onEvent?.("system", `קוד צימוד לבוט הראשי (${botPhone}): ${code}`);
+        console.log("=========================================");
+        console.log(`🤖 קוד צימוד לבוט הראשי (${botPhone}): ${code}`);
+        console.log("=========================================");
+      } catch (err) {
+        console.log("ממתין להפקת קוד חיבור מהאתר עבור הבוט הראשי:", err.message);
+      }
+    }, 3500);
+  }
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      mainBotStatus.qr = qr;
+      mainBotStatus.qrTimestamp = Date.now();
+      onStatusChange?.(mainBotStatus);
+      onEvent?.("system", `הופק קוד QR חדש לוואטסאפ ווב של הבוט הראשי (${botPhone})`);
+    }
+
+    if (connection === "open") {
+      console.log(`✅ הבוט הראשי (${botPhone}) מחובר ופעיל בהצלחה לוואטסאפ!`);
+      mainBotStatus.connected = true;
+      mainBotStatus.registered = true;
+      mainBotStatus.pairingCode = null;
+      mainBotStatus.qr = null;
+      mainBotStatus.qrTimestamp = null;
+      mainBotStatus.lastDisconnectReason = "";
+      onStatusChange?.(mainBotStatus);
+      onEvent?.("system", `הבוט הראשי (${botPhone}) מחובר בהצלחה`);
+    }
+
+    if (connection === "close") {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      mainBotStatus.connected = false;
+      mainBotStatus.lastDisconnectReason = String(code || lastDisconnect?.error?.message || "closed");
+      onStatusChange?.(mainBotStatus);
+
+      if (code === DisconnectReason.loggedOut) {
+        console.log("⚠️ הבוט הראשי נותק (401 Logged Out). מאפס רק את auth/bot ומפעיל מחדש...");
+        try {
+          fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
+        } catch (e) {}
+        setTimeout(() => startMainBot({ onMessage, onStatusChange, onEvent }), 4000);
+      } else {
+        setTimeout(() => startMainBot({ onMessage, onStatusChange, onEvent }), 3000);
+      }
+    }
+  });
+
+  sock.ev.on("messages.upsert", async (upsert) => {
+    if (onMessage) {
+      await onMessage(sock, upsert, { isMainBot: true, botPhone });
+    }
+  });
+
+  return sock;
+}
+
+export function getMainBotSock() {
+  return mainBotSock;
+}
+
+export function getMainBotStatus() {
+  return mainBotStatus;
+}
+
+export async function requestMainBotPairingCode(customPhone) {
+  if (!mainBotSock) throw new Error("הבוט הראשי אינו מאותחל כעת");
+  const phone = cleanPhone(customPhone || mainBotStatus.phone);
+  mainBotStatus.phone = phone;
+  const code = await mainBotSock.requestPairingCode(phone);
+  mainBotStatus.pairingCode = code;
+  return code;
+}
+
+// ==========================================
+// 2. ניהול סשנים של נהגים (Driver WhatsApp Sessions)
+// ==========================================
+export async function connectDriverSession(phone, { onRideMessage, onStatusChange, onEvent }) {
+  const driverPhone = cleanPhone(phone);
+  if (!driverPhone) throw new Error("מספר טלפון נהג לא תקין");
+
+  // אם קיים כבר סשן פעיל ומחובר, נחזיר אותו
+  const existing = driverSessions.get(driverPhone);
+  if (existing && existing.sock && existing.status === "connected") {
+    return existing;
+  }
+
+  const driverAuthDir = path.join(SESSIONS_DIR, driverPhone);
+  if (!fs.existsSync(driverAuthDir)) fs.mkdirSync(driverAuthDir, { recursive: true });
+
+  const { state, saveCreds } = await useMultiFileAuthState(driverAuthDir);
+  let version;
+  try {
+    const v = await fetchLatestBaileysVersion();
+    version = v.version;
+  } catch {
+    version = [2, 3000, 1017531287];
+  }
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+  });
+
+  const sessionObj = {
+    phone: driverPhone,
+    sock,
+    status: sock.authState.creds.registered ? "connecting" : "pairing_required",
+    registered: Boolean(sock.authState.creds.registered),
+    pairingCode: null,
+    qr: null,
+    qrTimestamp: null,
+    lastDisconnectReason: "",
+    groupsCount: 0,
+    connectedAt: null,
+  };
+
+  driverSessions.set(driverPhone, sessionObj);
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      sessionObj.qr = qr;
+      sessionObj.qrTimestamp = Date.now();
+      sessionObj.status = "qr_ready";
+      onStatusChange?.(driverPhone, sessionObj);
+      onEvent?.("system", `הופק קוד QR חדש לסריקת וואטסאפ ווב עבור נהג ${driverPhone}`);
+    }
+
+    if (connection === "open") {
+      console.log(`🚕 [נהג ${driverPhone}] וואטסאפ מחובר ומסונכרן בהצלחה!`);
+      sessionObj.status = "connected";
+      sessionObj.registered = true;
+      sessionObj.pairingCode = null;
+      sessionObj.qr = null;
+      sessionObj.qrTimestamp = null;
+      sessionObj.lastDisconnectReason = "";
+      sessionObj.connectedAt = new Date().toISOString();
+      onStatusChange?.(driverPhone, sessionObj);
+      onEvent?.("system", `וואטסאפ נהג ${driverPhone} חובר בהצלחה`);
+    }
+
+    if (connection === "close") {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      sessionObj.status = "disconnected";
+      sessionObj.lastDisconnectReason = String(code || lastDisconnect?.error?.message || "closed");
+      onStatusChange?.(driverPhone, sessionObj);
+
+      if (code === DisconnectReason.loggedOut) {
+        console.log(`⚠️ [נהג ${driverPhone}] התנתק (401 Logged Out). מאפס תיקיית אימות של הנהג בלבד!`);
+        try {
+          fs.rmSync(driverAuthDir, { recursive: true, force: true });
+        } catch (e) {}
+        driverSessions.delete(driverPhone);
+      } else {
+        // קריטי ביותר: בעת הזנת קוד צימוד או סריקת QR, וואטסאפ סוגרת את הסוקט עם קוד 515 (restartRequired).
+        // חובה לבצע חיבור מחדש מיידי כדי להשלים את לחיצת היד (Handshake), אחרת הטלפון יסתובב וייכשל!
+        console.log(`🔄 [נהג ${driverPhone}] חיבור נסגר (קוד: ${code || "לא ידוע"}). מתחבר מחדש אוטומטית להשלמת הקישור...`);
+        setTimeout(() => {
+          connectDriverSession(driverPhone, { onRideMessage, onStatusChange, onEvent }).catch((err) => {
+            console.error(`שגיאה בחיבור מחדש עבור נהג ${driverPhone}:`, err.message);
+          });
+        }, 2000);
+      }
+    }
+  });
+
+  sock.ev.on("messages.upsert", async (upsert) => {
+    if (onRideMessage) {
+      await onRideMessage(sock, upsert, { isMainBot: false, driverPhone });
+    }
+  });
+
+  return sessionObj;
+}
+
+// מעקב בקשות קוד צימוד למניעת עומס וחסימות מוואטסאפ (Cooldown)
+const lastPairingRequestTimes = new Map(); // phone -> timestamp
+
+// מחיקה ואיפוס מוחלטים של כל קובצי האימות (קוקיז) וסשן ה-WebSocket של הנהג
+export function purgeDriverSessionAndAuth(phoneOrIdentifier) {
+  if (!phoneOrIdentifier) return { success: false, error: "נדרש מזהה נהג" };
+  const str = String(phoneOrIdentifier).trim();
+  const driverPhone = cleanPhone(str);
+  const rawDigits = str.split("@")[0].split(":")[0].replace(/\D/g, "");
+
+  // מניעת פגיעה בבוט הראשי
+  const usersData = loadUsersData();
+  if (driverPhone && driverPhone === cleanPhone(usersData.botPhone || "972555081810")) {
+    return { success: false, error: "לא ניתן למחוק את קובצי האימות של הבוט הראשי דרך פעולה זו" };
+  }
+
+  // 1. סגירת ה-Socket הפעיל וניתוק חיבורי WebSocket
+  for (const p of [driverPhone, rawDigits]) {
+    if (!p) continue;
+    const session = driverSessions.get(p);
+    if (session?.sock) {
+      try { session.sock.ev?.removeAllListeners?.(); } catch (e) {}
+      try { session.sock.ws?.close?.(); } catch (e) {}
+      try { session.sock.end?.(); } catch (e) {}
+    }
+    driverSessions.delete(p);
+    lastPairingRequestTimes.delete(p);
+  }
+
+  // 2. מחיקת תיקיות האימות (Sessions) של הנהג מהדיסק באופן מלא וללא שאריות
+  const deletedDirs = [];
+  for (const p of [driverPhone, rawDigits]) {
+    if (!p || p === cleanPhone(usersData.botPhone)) continue;
+    const dir = path.join(SESSIONS_DIR, p);
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        deletedDirs.push(p);
+        console.log(`🧹 נמחקה תיקיית אימות וקוקיז עבור נהג: ${dir}`);
+      }
+    } catch (err) {
+      console.error(`שגיאה במחיקת תיקיית אימות ${dir}:`, err.message);
+    }
+  }
+
+  // 3. הסרת כל המיפויים הישנים מ-lid-map.json כדי למנוע זכירת כינויים ומספרים ישנים
+  removeLidMapping(phoneOrIdentifier);
+  if (driverPhone) removeLidMapping(driverPhone);
+  if (rawDigits) removeLidMapping(rawDigits);
+
+  return { success: true, phone: driverPhone || rawDigits, deletedDirs };
+}
+
+// איפוס מלא של כל סשני הנהגים, מחיקת כל התיקיות ב-auth/sessions ואיפוס כל מיפויי ה-LID (ללא פגיעה בבוט הראשי!)
+export function purgeAllDriverSessions() {
+  const usersData = loadUsersData();
+  const botPhoneClean = cleanPhone(usersData.botPhone || "972555081810");
+
+  // 1. סגירת כל הסוקטים הפעילים של הנהגים
+  for (const [phone, session] of driverSessions.entries()) {
+    if (session?.sock) {
+      try { session.sock.ev?.removeAllListeners?.(); } catch (e) {}
+      try { session.sock.ws?.close?.(); } catch (e) {}
+      try { session.sock.end?.(); } catch (e) {}
+    }
+  }
+  driverSessions.clear();
+  lastPairingRequestTimes.clear();
+
+  // 2. מחיקת כל תיקיות הסשנים ב-auth/sessions (תיקיית auth/bot לא נמחקת לעולם!)
+  let deletedCount = 0;
+  if (fs.existsSync(SESSIONS_DIR)) {
+    const items = fs.readdirSync(SESSIONS_DIR);
+    for (const item of items) {
+      const p = path.join(SESSIONS_DIR, item);
+      try {
+        fs.rmSync(p, { recursive: true, force: true });
+        deletedCount++;
+        console.log(`🧹 נמחקה תיקיית סשן ישנה: ${p}`);
+      } catch (e) {}
+    }
+  }
+
+  // 3. איפוס מוחלט של lid-map.json
+  clearAllLidMappings();
+  console.log(`✅ איפוס מלא בוצע בהצלחה: ${deletedCount} תיקיות סשנים נמחקו, וכל מיפויי ה-LID אופסו.`);
+
+  return { success: true, deletedCount };
+}
+
+export function resetDriverAuth(phone) {
+  return purgeDriverSessionAndAuth(phone);
+}
+
+export async function requestDriverPairingCode(phone, callbacks = {}, options = {}) {
+  const driverPhone = cleanPhone(phone);
+  if (!driverPhone) throw new Error("מספר טלפון נהג לא תקין");
+
+  if (isLid(driverPhone) || isLid(phone)) {
+    const err = new Error("לא ניתן להפיק קוד צימוד למזהה חסוי (LID). וואטסאפ מחייבת מספר טלפון סלולרי רגיל (למשל: 0521234567)");
+    recordError("pairing_rejected_lid", err, { phone });
+    throw err;
+  }
+
+  // בדיקת תקינות מספר ישראלי (לפחות 9 ספרות, מקסימום 12 ספרות)
+  if (driverPhone.length < 9 || driverPhone.length > 12) {
+    const err = new Error(`מספר טלפון לא תקין (${driverPhone}). יש להזין מספר בפורמט 05XXXXXXXX`);
+    recordError("pairing_invalid_phone", err, { phone, driverPhone });
+    throw err;
+  }
+
+  const now = Date.now();
+  const lastTime = lastPairingRequestTimes.get(driverPhone) || 0;
+  const cooldownMs = 45 * 1000; // 45 שניות מרווח בין בקשות קוד
+
+  if (options.forceReset) {
+    purgeDriverSessionAndAuth(driverPhone);
+    await new Promise((r) => setTimeout(r, 600));
+  } else if (now - lastTime < cooldownMs) {
+    const waitSec = Math.ceil((cooldownMs - (now - lastTime)) / 1000);
+    throw new Error(`קוד צימוד כבר הופק עבור מספר זה. אנא המתן ${waitSec} שניות לפני בקשת קוד נוסף, או לחץ על "איפוס קוקיז".`);
+  }
+
+  // ניקוי סשן ישן ולא רשום למניעת תקיעות וקריסות Baileys
+  const existing = driverSessions.get(driverPhone);
+  if (existing?.sock && existing.status !== "connected") {
+    try { existing.sock.ev?.removeAllListeners?.(); } catch (e) {}
+    try { existing.sock.ws?.close?.(); } catch (e) {}
+    try { existing.sock.end?.(); } catch (e) {}
+    driverSessions.delete(driverPhone);
+  }
+
+  const driverAuthDir = path.join(SESSIONS_DIR, driverPhone);
+  const credsPath = path.join(driverAuthDir, "creds.json");
+  if (fs.existsSync(credsPath)) {
+    try {
+      const creds = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+      if (!creds.registered) {
+        fs.rmSync(driverAuthDir, { recursive: true, force: true });
+      }
+    } catch (e) {
+      fs.rmSync(driverAuthDir, { recursive: true, force: true });
+    }
+  }
+
+  lastPairingRequestTimes.set(driverPhone, now);
+
+  const session = await connectDriverSession(driverPhone, callbacks);
+
+  // המתנה של 2.2 שניות לייצוב חיבור ה-WebSocket של Baileys לפני בקשת הקוד (מונע 428 Precondition Required / Closed)
+  await new Promise((r) => setTimeout(r, 2200));
+
+  try {
+    const code = await session.sock.requestPairingCode(driverPhone);
+    session.pairingCode = code;
+    session.status = "pairing_ready";
+    return code;
+  } catch (err) {
+    recordError("pairing_code_request", err, { driverPhone });
+    console.error(`שגיאה בהפקת קוד צימוד לנהג ${driverPhone}:`, err.message);
+    // איפוס התיקייה במקרה של כשל כדי שהפעם הבאה תהיה נקייה
+    try {
+      if (fs.existsSync(driverAuthDir)) {
+        fs.rmSync(driverAuthDir, { recursive: true, force: true });
+      }
+    } catch (e) {}
+    throw err;
+  }
+}
+
+export function isDriverSessionConnected(phone) {
+  const driverPhone = cleanPhone(phone);
+  if (!driverPhone) return false;
+  const session = driverSessions.get(driverPhone);
+  return Boolean(session && session.status === "connected" && session.registered);
+}
+
+export function disconnectDriverSession(phone) {
+  return purgeDriverSessionAndAuth(phone);
+}
+
+export function getDriverSession(phone) {
+  return driverSessions.get(cleanPhone(phone)) || null;
+}
+
+// הפעלה / קבלת סשן לנהג לצורך הפקת והצגת קוד QR חי בוואטסאפ ווב
+export async function ensureDriverSessionForQr(phone, callbacks = {}) {
+  const driverPhone = cleanPhone(phone);
+  if (!driverPhone) throw new Error("מספר טלפון לא תקין");
+
+  let session = driverSessions.get(driverPhone);
+  if (!session || !session.sock) {
+    session = await connectDriverSession(driverPhone, callbacks);
+  }
+
+  return {
+    phone: driverPhone,
+    qr: session.qr || null,
+    qrTimestamp: session.qrTimestamp || null,
+    status: session.status,
+    registered: session.registered,
+  };
+}
+
+export function getAllSessionsSummary() {
+  const drivers = [];
+  for (const [phone, sess] of driverSessions.entries()) {
+    drivers.push({
+      phone,
+      status: sess.status,
+      registered: sess.registered,
+      pairingCode: sess.pairingCode,
+      qr: sess.qr || null,
+      qrTimestamp: sess.qrTimestamp || null,
+      lastDisconnectReason: sess.lastDisconnectReason,
+      connectedAt: sess.connectedAt,
+    });
+  }
+
+  return {
+    bot: {
+      phone: mainBotStatus.phone,
+      connected: mainBotStatus.connected,
+      registered: mainBotStatus.registered,
+      pairingCode: mainBotStatus.pairingCode,
+      qr: mainBotStatus.qr || null,
+      qrTimestamp: mainBotStatus.qrTimestamp || null,
+      lastDisconnectReason: mainBotStatus.lastDisconnectReason,
+    },
+    drivers,
+    totalConnectedDrivers: drivers.filter((d) => d.status === "connected").length,
+  };
+}
+
+export async function initSavedDriverSessions(callbacks) {
+  try {
+    if (!fs.existsSync(SESSIONS_DIR)) return;
+    const items = fs.readdirSync(SESSIONS_DIR);
+    for (const phone of items) {
+      const credPath = path.join(SESSIONS_DIR, phone, "creds.json");
+      if (fs.existsSync(credPath)) {
+        console.log(`🔄 משחזר חיבור וואטסאפ שמור עבור נהג: ${phone}...`);
+        try {
+          await connectDriverSession(phone, callbacks);
+        } catch (e) {
+          console.error(`שגיאה בשחזור סשן נהג ${phone}:`, e.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("שגיאה בסריקת תיקיות סשנים שמורים:", err.message);
+  }
+}
