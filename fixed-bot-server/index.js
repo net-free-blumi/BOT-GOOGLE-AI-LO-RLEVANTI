@@ -17,8 +17,6 @@ import {
   isLid,
   cleanPhone,
   getDestinationJid,
-  shouldNotifyAdminInitial,
-  shouldNotifyAdminPhoneProvided,
   getUserSearch,
   setUserSearch,
   stopUserSearch,
@@ -54,6 +52,32 @@ const recentUnlinkedPrompts = new Map(); // senderPhone -> timestamp (צינון
 // מטמון התראות שנשלחו למעקב אחרי דיסלייקים (👍 / 👎)
 // מפתח: ID הודעת הבוט שנשלחה אל הנהג
 export const sentAlertsCache = new Map();
+const ALERTS_CACHE_FILE = new URL("./alerts-cache.json", import.meta.url);
+const ALERTS_CACHE_MAX = 500;
+
+// המטמון נשמר לדיסק כדי שדיסלייק על הודעה יעבוד גם אחרי הפעלה מחדש של השרת
+try {
+  if (fs.existsSync(ALERTS_CACHE_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(ALERTS_CACHE_FILE, "utf8"));
+    for (const [id, info] of Object.entries(saved || {})) sentAlertsCache.set(id, info);
+  }
+} catch (e) {
+  console.error("שגיאה בקריאת alerts-cache.json:", e.message);
+}
+
+let alertsCacheTimer = null;
+function persistAlertsCacheSoon() {
+  if (alertsCacheTimer) return;
+  alertsCacheTimer = setTimeout(() => {
+    alertsCacheTimer = null;
+    try {
+      const keys = Array.from(sentAlertsCache.keys()).slice(-ALERTS_CACHE_MAX);
+      const obj = {};
+      for (const k of keys) obj[k] = sentAlertsCache.get(k);
+      fs.writeFileSync(ALERTS_CACHE_FILE, JSON.stringify(obj), "utf8");
+    } catch (e) {}
+  }, 3000);
+}
 
 const deduper = createDeduper(findPlaces, { windowMs: DEDUPE_MINUTES * 60 * 1000 });
 
@@ -81,28 +105,58 @@ function cleanSpamFromRide(rawText) {
   return s.split("\n").map(l => l.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// זיהוי הודעות שברור שאינן נסיעה: פרסומות, הזמנות לקבוצות, קישורי רכישה והודעות ארוכות במיוחד
+function detectNonRide(cleaned) {
+  const t = String(cleaned || "");
+  if (t.length > 700) return "הודעה ארוכה מדי - לא נסיעה";
+  if (/chat\.whatsapp\.com\//i.test(t)) return "קישור הזמנה לקבוצה - לא נסיעה";
+  if (/aliexpress|amazon\.|amzn\.to|s\.click\.|temu\.|shein\./i.test(t)) return "פרסומת / קישור רכישה - לא נסיעה";
+  return null;
+}
+
+// הודעת "ניתוק לילי" לנהג שהחיפוש שלו הופסק
+function buildNightlyStopMessage(displayText) {
+  return `🌙 *ניתוק לילי*\n\n` +
+    `החיפוש שלך: ${displayText || "פעיל"}\n` +
+    `הופסק כחלק מהתחזוקה הלילית שאנחנו מבצעים כל יום ב-02:00\n\n` +
+    `זה נועד למנוע חיפושים שנשארים דלוקים ימים בלי שאף אחד משתמש בהם.\n\n` +
+    `כדי לחזור לקבל נסיעות — הגדר חיפוש מחדש. 👇\n` +
+    `למשל: *פנוי שמש פנימי*`;
+}
+
 // איפוס יומי ב-2:00 בלילה
 cron.schedule("0 2 * * *", async () => {
+  const adminClean = cleanPhone(loadUsersData().adminPhone);
+  const searches = getAllUserSearches();
+  const mainSock = getMainBotSock();
+
+  for (const [phone, st] of Object.entries(searches)) {
+    if (!st?.active) continue;
+    const wasActive = st.displayText;
+    stopUserSearch(phone);
+
+    // מספר המנהל משמש לניהול בלבד - אליו לא שולחים; לכל נהג אחר עם חיפוש פעיל נשלחת הודעה
+    if (cleanPhone(phone) === adminClean || !mainSock) continue;
+    try {
+      await mainSock.sendMessage(getDestinationJid(phone), { text: buildNightlyStopMessage(wasActive) });
+    } catch (e) {
+      console.error(`שגיאה בשליחת הודעת ניתוק לילי ל-${phone}:`, e.message);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
   const users = loadUsersData();
   for (const u of users.approvedUsers || []) {
     stopUserSearch(u.phone);
   }
   deduper.clear();
   groupMetadataCache.clear();
-  // שמירת רק 100 הודעות אחרונות במטמון
-  if (sentAlertsCache.size > 100) {
-    const keys = Array.from(sentAlertsCache.keys());
-    for (let i = 0; i < keys.length - 100; i++) {
-      sentAlertsCache.delete(keys[i]);
-    }
-  }
   console.log("🌙 איפוס יומי (2:00): כל החיפושים הופסקו והזיכרון נוקה");
   recordEvent("system", "איפוס יומי ב-2:00: החיפושים הופסקו");
 }, { timezone: "Asia/Jerusalem" });
 
 // שליחת דיווח לקבוצת תיקוני הבוט הייעודית (120363402521442927@g.us)
 export async function sendBugReportToGroup(sock, reportText) {
-  // נסיון שליחה דרך הסוקט הנוכחי
   if (sock) {
     try {
       await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
@@ -112,7 +166,6 @@ export async function sendBugReportToGroup(sock, reportText) {
     }
   }
 
-  // נסיון גיבוי דרך הבוט הראשי
   const mainSock = getMainBotSock();
   if (mainSock && mainSock !== sock) {
     try {
@@ -125,59 +178,114 @@ export async function sendBugReportToGroup(sock, reportText) {
   return false;
 }
 
-// שליחת התראת נסיעה נקייה ומדויקת (ללא שורות מיותרות) עם ציטוט ההודעה המקורית
-async function sendRideAlertWithQuoted(sock, recipientJid, rideData, originalMsg) {
-  if (!sock) return null;
-
-  // הודעה נקייה וממוקדת בדיוק כפי שהמשתמש ביקש - ללא הוראות חוזרות בתחתית
-  let alertMsg = `🚕 *נסיעה מתאימה נמצאה!*\n`;
-  alertMsg += `──────────────────\n`;
-  alertMsg += `${rideData.cleanedText}\n`;
-  alertMsg += `──────────────────\n`;
-  alertMsg += `📍 *קבוצה:* ${rideData.groupName}\n`;
-  alertMsg += `👤 *סדרן:* ${rideData.senderName} · ${rideData.senderPhone}\n`;
-  alertMsg += `🔍 *חיפוש:* ${rideData.searchDesc}`;
-
-  let sentMsg = null;
-  try {
-    // שליחה עם ציטוט מלא של ההודעה מהקבוצה (מאפשר קפיצה ישירה לקבוצה בלחיצה)
-    if (originalMsg) {
-      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg }, { quoted: originalMsg });
-    } else {
-      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg });
-    }
-  } catch (err) {
-    try {
-      sentMsg = await sock.sendMessage(recipientJid, { text: alertMsg });
-    } catch (e) {
-      console.error(`שגיאה בשליחת התראה ל-${recipientJid}:`, e.message);
-    }
+// חילוץ טקסט מהודעה (כולל כיתוב של תמונה/וידאו ועטיפות של הודעות זמניות)
+function extractMessageText(m) {
+  let msg = m.message || {};
+  for (let i = 0; i < 4; i++) {
+    const inner =
+      msg.ephemeralMessage?.message ||
+      msg.viewOnceMessage?.message ||
+      msg.viewOnceMessageV2?.message ||
+      msg.documentWithCaptionMessage?.message ||
+      msg.editedMessage?.message?.protocolMessage?.editedMessage;
+    if (!inner) break;
+    msg = inner;
   }
-
-  // שמירה במטמון לזיהוי מהיר של דיסלייק (👎)
-  if (sentMsg?.key?.id) {
-    sentAlertsCache.set(sentMsg.key.id, {
-      msgId: sentMsg.key.id,
-      rideData,
-      rawText: rideData.rawText || rideData.cleanedText,
-      driverPhone: rideData.driverPhone || recipientJid.split("@")[0].split(":")[0],
-      groupName: rideData.groupName,
-      senderName: rideData.senderName,
-      senderPhone: rideData.senderPhone,
-      searchDesc: rideData.searchDesc,
-      sentAt: Date.now()
-    });
-
-    if (sentAlertsCache.size > 2000) {
-      const oldestKey = sentAlertsCache.keys().next().value;
-      sentAlertsCache.delete(oldestKey);
-    }
-  }
-
-  return sentMsg;
+  return String(
+    msg.conversation ||
+    msg.extendedTextMessage?.text ||
+    msg.imageMessage?.caption ||
+    msg.videoMessage?.caption ||
+    msg.documentMessage?.caption ||
+    msg.buttonsResponseMessage?.selectedButtonId ||
+    msg.templateButtonReplyMessage?.selectedId ||
+    ""
+  ).trim();
 }
 
-// טיפול בתגובות אימוג'י על הודעות (העברת דיסלייק 👎 לקבוצת התיקונים)
+// צ'אטים שאינם שיחה אמיתית: סטטוסים (סטוריז), רשימות תפוצה וערוצים - מתעלמים מהם לחלוטין
+function isIgnorableJid(jid) {
+  const j = String(jid || "");
+  return j === "status@broadcast" || j.endsWith("@broadcast") || j.endsWith("@newsletter");
+}
+
+const MAX_MESSAGE_AGE_SEC = 5 * 60; // הודעות ישנות (היסטוריה / סנכרון אחרי ניתוק) לא מטופלות
+
+function isStaleMessage(m) {
+  const ts = Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0);
+  if (!ts) return false;
+  return Date.now() / 1000 - ts > MAX_MESSAGE_AGE_SEC;
+}
+
+// פורמט התראת נסיעה נקי וממוקד - בלי כותרת מעצבנת ובלי קווים מפרידים
+function buildRideAlertText(rideData) {
+  let alertMsg = `${rideData.cleanedText}\n\n`;
+  alertMsg += `📍 ${rideData.groupName}\n`;
+  alertMsg += `👤 ${rideData.senderName} · ${rideData.senderPhone}`;
+  return alertMsg;
+}
+
+// שליחת הודעה עם ניסיון ציטוט, ובמקרה כשל - בלי ציטוט
+async function trySend(sock, jid, content, quoted) {
+  if (!sock) return null;
+  if (quoted) {
+    try {
+      return await sock.sendMessage(jid, content, { quoted });
+    } catch (e) {
+      console.log(`שליחה עם ציטוט נכשלה (${e.message}), מנסה בלי ציטוט`);
+    }
+  }
+  return await sock.sendMessage(jid, content);
+}
+
+// שליחת התראת נסיעה לנהג.
+// עדיפות 1: הבוט הראשי (הודעה רגילה שמקפיצה התראה וצליל לטלפון של הנהג).
+// עדיפות 2 (גיבוי): חשבון הנהג עצמו ל"הודעה לעצמי".
+async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
+  const alertMsg = buildRideAlertText(rideData);
+  const driverJid = getDestinationJid(driverPhone);
+  const attempts = [];
+
+  const mainSock = getMainBotSock();
+  if (mainSock && getMainBotStatus().connected) attempts.push({ via: "main", sock: mainSock });
+  if (driverSock) attempts.push({ via: "driver-self", sock: driverSock });
+
+  let lastError = null;
+  for (const a of attempts) {
+    try {
+      const sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
+      if (!sentMsg) continue;
+
+      if (sentMsg.key?.id) {
+        sentAlertsCache.set(sentMsg.key.id, {
+          msgId: sentMsg.key.id,
+          rideData,
+          rawText: rideData.rawText || rideData.cleanedText,
+          driverPhone,
+          groupName: rideData.groupName,
+          senderName: rideData.senderName,
+          senderPhone: rideData.senderPhone,
+          searchDesc: rideData.searchDesc,
+          sentAt: Date.now(),
+        });
+        if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
+          sentAlertsCache.delete(sentAlertsCache.keys().next().value);
+        }
+        persistAlertsCacheSoon();
+      }
+      return { ok: true, via: a.via };
+    } catch (err) {
+      lastError = err;
+      console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} נכשלה:`, err.message);
+    }
+  }
+
+  return { ok: false, error: lastError?.message || "אין סוקט זמין לשליחה" };
+}
+
+// מעקב דיסלייקים שכבר טופלו למניעת כפילויות (Baileys מפעיל גם upsert וגם reaction)
+const handledReactions = new Map();
+
 export async function handleReaction(sock, reactions, sessionContext = {}) {
   const items = Array.isArray(reactions) ? reactions : [reactions];
 
@@ -188,61 +296,69 @@ export async function handleReaction(sock, reactions, sessionContext = {}) {
 
     if (!targetMsgId) continue;
 
-    // האם נבחר אימוג'י דיסלייק (👎)?
-    if (reactionText === "👎" || reactionText.includes("👎")) {
-      console.log(`👎 [דיסלייק נלכד!] על הודעה ${targetMsgId} מנהג: ${sessionContext.driverPhone || "לא ידוע"}`);
+    // רק דיסלייק (👎)
+    if (!reactionText.includes("👎")) continue;
 
-      const alertInfo = sentAlertsCache.get(targetMsgId);
-      const nowFormatted = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+    // התעלמות מוחלטת מתגובות בתוך קבוצות (מונע לחלוטין דיווחי שווא מוקדם בבוקר כשמשתמשי קבוצות מסמנים דיסלייק!)
+    const reactionChat = item.reaction?.key?.remoteJid || item.key?.remoteJid || "";
+    if (String(reactionChat).endsWith("@g.us")) continue;
 
-      let reportMsg = `🐞 *דיווח תקלה / נסיעה לא רלוונטית (דיסלייק 👎)*\n`;
+    // רק תגובות על הודעות שהבוט עצמו שלח לנהג
+    const alertInfo = sentAlertsCache.get(targetMsgId);
+    if (!alertInfo) continue;
+
+    // צינון מניעת דיווח כפול
+    const dedupeKey = `${targetMsgId}|${reactionText}`;
+    const nowTs = Date.now();
+    if (handledReactions.has(dedupeKey) && nowTs - handledReactions.get(dedupeKey) < 30000) continue;
+    handledReactions.set(dedupeKey, nowTs);
+    if (handledReactions.size > 500) handledReactions.delete(handledReactions.keys().next().value);
+
+    console.log(`👎 [דיסלייק על הודעת בוט] ${targetMsgId} מנהג: ${alertInfo.driverPhone}`);
+    const nowFormatted = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
+
+    let reportMsg = `🐞 *דיווח תקלה / נסיעה לא רלוונטית (דיסלייק 👎)*\n`;
+    reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData.cleanedText}\n`;
+    reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData.cleanedText) {
+      reportMsg += `📌 *טקסט גולמי מקורי:*\n${alertInfo.rawText}\n`;
       reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-
-      if (alertInfo) {
-        reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData.cleanedText}\n`;
-        reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-        if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData.cleanedText) {
-          reportMsg += `📌 *טקסט גולמי מקורי:*\n${alertInfo.rawText}\n`;
-          reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-        }
-        reportMsg += `👤 *נהג מדווח:* ${alertInfo.driverPhone}\n`;
-        reportMsg += `📍 *קבוצה:* ${alertInfo.groupName}\n`;
-        reportMsg += `🏷️ *סדרן:* ${alertInfo.senderName} (${alertInfo.senderPhone})\n`;
-        reportMsg += `🔍 *חיפוש שהיה מוגדר:* ${alertInfo.searchDesc}\n`;
-      } else {
-        reportMsg += `⚠️ *מזהה הודעה:* ${targetMsgId}\n`;
-        reportMsg += `👤 *נהג מדווח:* ${sessionContext.driverPhone || "מחובר"}\n`;
-        reportMsg += `(פרטי הנסיעה המדויקים לא נמצאו במטמון - ייתכן שנשלחה לפני הפעלה מחדש)\n`;
-      }
-
-      reportMsg += `⏱️ *זמן הדיווח:* ${nowFormatted}\n`;
-      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-      reportMsg += `💡 המשתמש סימן 👎 ישירות על הודעת הבוט. הועבר אוטומטית לטיפול בבאג.`;
-
-      const sent = await sendBugReportToGroup(sock, reportMsg);
-      console.log(`📤 [דיווח לקבוצת תיקונים 120363402521442927@g.us]: ${sent ? "נשלח בהצלחה ✅" : "כשל בשליחה ❌"}`);
-      recordEvent("system", `נשלח דיווח 👎 לקבוצת התיקונים עבור הודעה ${targetMsgId}`);
-
-      // שליחת אישור חוזר לנהג (אימוג'י 🫡 או 👍 להודעה כדי שיידע שהדיווח נקלט)
-      try {
-        const remoteJid = item.reaction?.key?.remoteJid || item.key?.remoteJid;
-        if (remoteJid && sock) {
-          await sock.sendMessage(remoteJid, {
-            react: {
-              text: "🫡",
-              key: item.reaction?.key || item.key,
-            }
-          });
-        }
-      } catch (e) {}
     }
+    reportMsg += `👤 *נהג מדווח:* ${alertInfo.driverPhone}\n`;
+    reportMsg += `📍 *קבוצה:* ${alertInfo.groupName}\n`;
+    reportMsg += `🏷️ *סדרן:* ${alertInfo.senderName} (${alertInfo.senderPhone})\n`;
+    reportMsg += `🔍 *חיפוש שהיה מוגדר:* ${alertInfo.searchDesc}\n`;
+    reportMsg += `⏱️ *זמן הדיווח:* ${nowFormatted}\n`;
+    reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    reportMsg += `💡 המשתמש סימן 👎 ישירות על הודעת הבוט. הועבר אוטומטית לטיפול בבאג.`;
+
+    const sent = await sendBugReportToGroup(sock, reportMsg);
+    console.log(`📤 [דיווח לקבוצת תיקונים ${BUG_REPORT_GROUP_JID}]: ${sent ? "נשלח בהצלחה ✅" : "כשל בשליחה ❌"}`);
+    recordEvent("system", `נשלח דיווח 👎 לקבוצת התיקונים עבור הודעה ${targetMsgId}`);
+
+    // שליחת אישור חוזר לנהג (אימוג'י 🫡)
+    try {
+      const remoteJid = item.reaction?.key?.remoteJid || item.key?.remoteJid;
+      if (remoteJid && sock) {
+        await sock.sendMessage(remoteJid, {
+          react: {
+            text: "🫡",
+            key: item.reaction?.key || item.key,
+          }
+        });
+      }
+    } catch (e) {}
   }
 }
 
-// שליחת הודעת אישור הצטרפות והדרכת קישור ווב לנהג (תמיכה מלאה במספרי טלפון וב-Meta LID)
+// שליחת הודעת אישור הצטרפות והדרכת קישור ווב לנהג
 export async function sendApprovalAndOnboarding(targetPhone, targetName = "נהג") {
   const sock = getMainBotSock();
   if (!sock) return;
+
+  const adminClean = cleanPhone(loadUsersData().adminPhone);
+  if (adminClean && cleanPhone(targetPhone) === adminClean) return;
 
   const recipientJid = getDestinationJid(targetPhone);
   const isTargetLid = isLid(targetPhone) || recipientJid.endsWith("@lid");
@@ -252,13 +368,13 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
     `📲 *חיבור הוואטסאפ שלך לסריקת קבוצות הנסיעות:*\n`;
 
   if (isTargetLid) {
-    welcomeText += `כדי להפיק קוד צימוד מהיר למכשירים מקושרים, וואטסאפ דורשת מספר סלולרי רגיל (ולא מזהה חסוי).\n\n` +
-      `👉 *אנא השב עכשיו להודעה זו עם מספר הטלפון שלך* (למשל: 0521234567).\n` +
-      `מיד לאחר מכן נפיק עבורך את קוד הצימוד בן 8 ספרות והסבר פשוט לחיבור תוך 10 שניות!`;
+    welcomeText += `כדי להפיק קוד צימוד, וואטסאפ דורשת מספר סלולרי רגיל.\n\n` +
+      `👉 *שלח עכשיו:* חבר אותי 0521234567\n` +
+      `(במקום המספר הדוגמה - המספר שלך). מיד לאחר מכן תקבל קוד צימוד בן 8 תווים.`;
   } else {
     welcomeText += `כדי שהמערכת תסרוק נסיעות ישירות מכל קבוצות הנסיעות שאתה חבר בהן, השב עכשיו למספר זה:\n\n` +
       `👉 *"חבר אותי"*\n\n` +
-      `מיד תקבל קוד צימוד בן 8 ספרות והסבר פשוט איך להזין אותו בוואטסאפ במכשירים מקושרים (תוך 10 שניות וללא צורך במחשב!).\n\n` +
+      `מיד תקבל קוד צימוד בן 8 תווים והסבר פשוט איך להזין אותו בוואטסאפ במכשירים מקושרים.\n\n` +
       `💡 *לצפייה בפקודות חיפוש:* השב *"תפריט"*`;
   }
 
@@ -268,17 +384,6 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
   } catch (err) {
     console.error(`שגיאה בשליחת הודעת אישור ל-${recipientJid}:`, err.message);
     recordError("send_approval", err, { recipientJid, targetPhone, targetName });
-
-    // נסיון שליחה חלופי במידה ומדובר ב-LID שנכשל
-    try {
-      const altJid = recipientJid.endsWith("@lid") 
-        ? `${cleanPhone(targetPhone)}@s.whatsapp.net` 
-        : `${cleanPhone(targetPhone)}@lid`;
-      await sock.sendMessage(altJid, { text: welcomeText });
-      recordEvent("command", `הודעת אישור נשלחה ביעד חלופי: ${altJid}`);
-    } catch (err2) {
-      recordError("send_approval_alt", err2, { targetPhone, altJid: recipientJid });
-    }
   }
 }
 
@@ -288,39 +393,100 @@ async function sendHelpMenu(sock, jid, driverPhone) {
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
   menuText += `📊 *סטטוס נוכחי שלך:* ${search.active ? "🟢 פעיל (" + search.displayText + ")" : "🔴 מופסק (תפוס)"}\n\n`;
   menuText += `🔍 *פקודות חיפוש נפוצות:*\n`;
-  menuText += `• *פנוי שמש פנימי* (רק פנימי בית שמש)\n`;
-  menuText += `• *פנימי ים* (רק פנימי ירושלים)\n`;
+  menuText += `• *פנוי שמש* או *פנוי שמש פנימי* (פנימי בית שמש בלבד)\n`;
+  menuText += `• *פנימי ים* (פנימי ירושלים בלבד)\n`;
   menuText += `• *פ ים שמש* (מירושלים לבית שמש)\n`;
+  menuText += `• *פ שמש ים* (מבית שמש לירושלים)\n`;
   menuText += `• *שמש צמצם* (פנימי ויוצא מבית שמש)\n`;
   menuText += `• *תפוס* או *ת* (עצירת חיפוש מידית)\n\n`;
-  menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*\n`;
-  menuText += `📱 *לעדכון מספר טלפון:* שלח את מספרך (למשל: 0521234567)`;
+  menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*`;
 
   await sock.sendMessage(jid, { text: menuText });
 }
 
-// פענוח מותאם של פקודת נהג כולל טיפול בכינויים: ים, שמש, בב, מוע, תא, צמצם
-function processDriverCommand(text) {
-  let modifiedText = text;
-  
-  modifiedText = modifiedText.replace(/(^|\s)ים(\s|$)/gi, " ירושלים ");
-  modifiedText = modifiedText.replace(/(^|\s)שמש(\s|$)/gi, " בית שמש ");
-  modifiedText = modifiedText.replace(/(^|\s)בב(\s|$)/gi, " בני ברק ");
-  modifiedText = modifiedText.replace(/(^|\s)(מוע|מו"ע)(\s|$)/gi, " מודיעין עילית ");
-  modifiedText = modifiedText.replace(/(^|\s)(תא|ת"א)(\s|$)/gi, " תל אביב ");
-  modifiedText = modifiedText.replace(/(^|\s)(פת|פ"ת)(\s|$)/gi, " פתח תקווה ");
+// פענוח מדויק של פקודות הנהג - ללא שיבושים של שמות ערים מורכבים
+export function processDriverCommand(rawText) {
+  const raw = String(rawText || "").trim();
+  const norm = normalizeText(raw);
 
-  const shorthandRoute = modifiedText.match(/^(?:פ|פנוי)\s+([א-ת]+)\s+([א-ת]+)$/);
-  if (shorthandRoute) {
-    const o = shorthandRoute[1];
-    const d = shorthandRoute[2];
-    if (d === "פנימי") modifiedText = `פנוי פ ${o}`;
-    else if (o === "פנימי") modifiedText = `פנוי פ ${d}`;
-    else modifiedText = `פנוי ${o} ל${d}`;
+  // 1. פקודות פנימי ישירות:
+  // "פנוי שמש", "פנוי שמש פנימי", "פנימי שמש", "שמש פנימי", "פ שמש", "שמש פ"
+  if (
+    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פנימי\s+)?(?:בית\s+)?שמש$/.test(norm)
+  ) {
+    return { mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" };
   }
 
-  const parsed = parseDriverCommand(modifiedText);
-  return parsed;
+  // פנימי ירושלים: "פנוי ים פנימי", "פנימי ים", "ים פנימי", "פ ים", "ים פ"
+  if (
+    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פ|פנוי)\s+(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm)
+  ) {
+    return { mode: "internal", origin: "ירושלים", destination: null, displayText: "ירושלים (פנימי)" };
+  }
+
+  // פנימי בני ברק
+  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:בני\s+ברק|בב)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
+    return { mode: "internal", origin: "בני ברק", destination: null, displayText: "בני ברק (פנימי)" };
+  }
+
+  // פנימי מודיעין עילית
+  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:מודיעין\s+עילית|קרית\s+ספר|מוע)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
+    return { mode: "internal", origin: "מודיעין עילית", destination: null, displayText: "מודיעין עילית (פנימי)" };
+  }
+
+  // 2. מצב צמצום (פנימי + יוצא): "שמש צמצם", "צמצם שמש", "צמצום שמש", "ים צמצם"
+  if (/(^|\s)(צמצם|צמצום)(\s|$)/.test(norm)) {
+    let city = "בית שמש";
+    if (norm.includes("ים") || norm.includes("ירושלים")) city = "ירושלים";
+    else if (norm.includes("בב") || norm.includes("בני ברק")) city = "בני ברק";
+    else if (norm.includes("מוע") || norm.includes("ספר")) city = "מודיעין עילית";
+    return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
+  }
+
+  // 3. מסלול מקוצר עם כינויי ערים:
+  // "פ ים שמש", "פנוי ים שמש", "ים שמש" -> מירושלים לבית שמש
+  // "פ שמש ים", "פנוי שמש ים", "שמש ים" -> מבית שמש לירושלים
+  const cityAliasMap = {
+    "שמש": "בית שמש",
+    "בש": "בית שמש",
+    "בית שמש": "בית שמש",
+    "ים": "ירושלים",
+    "ירו": "ירושלים",
+    "ירושלים": "ירושלים",
+    "בב": "בני ברק",
+    "בני ברק": "בני ברק",
+    "מוע": "מודיעין עילית",
+    "ספר": "מודיעין עילית",
+    "קרית ספר": "מודיעין עילית",
+    "מודיעין עילית": "מודיעין עילית",
+    "תא": "תל אביב",
+    "תל אביב": "תל אביב",
+    "נתבג": "נתב\"ג",
+    "שדה": "נתב\"ג",
+    "ביתר": "ביתר עילית",
+    "אלעד": "אלעד",
+    "אשדוד": "אשדוד",
+    "חיפה": "חיפה",
+    "טבריה": "טבריה",
+    "צפת": "צפת",
+  };
+
+  const cleanCmd = norm.replace(/^(?:פ|פנוי)\s+/, "");
+  for (const [a1, c1] of Object.entries(cityAliasMap)) {
+    for (const [a2, c2] of Object.entries(cityAliasMap)) {
+      if (c1 === c2) continue;
+      const routeRe = new RegExp(`^${a1}\\s+(?:ל|אל|\\-|>|)?${a2}$`);
+      if (routeRe.test(cleanCmd)) {
+        return { mode: "route", origin: c1, destination: c2, displayText: `${c1} ⬅️ ${c2}` };
+      }
+    }
+  }
+
+  // 4. שימוש במפענח הכללי
+  return parseDriverCommand(raw);
 }
 
 // זיהוי ופענוח מספר טלפון אמיתי של סדרן/שולח (מניעת מזהי LID חסויים)
@@ -382,7 +548,6 @@ export function getPairingGuideInstructions() {
   return guide;
 }
 
-// שליחת הודעת מדריך ומייד לאחריה הודעה נפרדת עם הקוד בלבד להעתקה בלחיצה אחת
 export async function sendPairingCodeMessages(sock, jid, code, quotedMsg) {
   const instructions = getPairingGuideInstructions();
   if (quotedMsg) {
@@ -390,7 +555,6 @@ export async function sendPairingCodeMessages(sock, jid, code, quotedMsg) {
   } else {
     await sock.sendMessage(jid, { text: instructions });
   }
-  // שליחת הקוד בן 8 התווים בלבד כהודעה בודדת - מאפשר העתקה והדבקה ישירה בטאפ אחד!
   await sock.sendMessage(jid, { text: code });
 }
 
@@ -429,24 +593,22 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
     const jid = m.key.remoteJid;
     if (!jid) continue;
 
+    // התעלמות מסטטוסים, רשימות תפוצה וערוצים
+    if (isIgnorableJid(jid)) continue;
+
+    // התעלמות מהודעות היסטוריות ישנות בעת אתחול
+    if (upsert.type && upsert.type !== "notify") continue;
+    if (isStaleMessage(m)) continue;
+
     const isGroup = jid.endsWith("@g.us");
 
-    // ----------------------------------------------------------------------------------
-    // כלל מתכונת חדשה: הבוט הראשי אינו סורק קבוצות כלל! קבוצות נסרקות אך ורק ע"י חשבון הנהג!
-    // ----------------------------------------------------------------------------------
+    // הבוט הראשי אינו סורק קבוצות כלל! קבוצות נסרקות אך ורק ע"י חשבון הנהג
     if (isGroup && sessionContext.isMainBot) {
       continue;
     }
 
-    let text = (
-      m.message?.conversation || 
-      m.message?.extendedTextMessage?.text || 
-      m.message?.buttonsResponseMessage?.selectedButtonId ||
-      m.message?.templateButtonReplyMessage?.selectedId ||
-      ""
-    ).trim();
-
-    if (!text && !m.message?.contactMessage) continue;
+    const text = extractMessageText(m);
+    if (!text) continue;
 
     const pushName = m.pushName || "משתמש";
 
@@ -458,83 +620,30 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       let senderPhone = cleanPhone(jid);
       const isSenderLid = isLid(jid) || isLid(senderPhone);
 
-      // 1. טיפול בחילוץ מספר טלפון ישראלי אמיתי (פתרון Meta LID מלא ב-1 על 1)
-      let detectedPhone = null;
-
-      // בדיקה א': האם Baileys מספק את מספר הטלפון המקורי ב-m.key (remoteJidAlt, participantPN, participantAlt)
-      const key = m.key || {};
-      for (const candidate of [key.remoteJidAlt, key.participantAlt, key.participantPN, key.addressingIdentity, m.participant]) {
-        if (!candidate) continue;
-        const cPhone = cleanPhone(candidate);
-        if (cPhone && cPhone.length >= 9 && cPhone.length <= 12 && !isLid(candidate) && !isLid(cPhone)) {
-          detectedPhone = cPhone;
-          break;
-        }
-      }
-
-      // בדיקה ב': שאילתת signalRepository lidMapping של Baileys
-      if (!detectedPhone && (isSenderLid || isLid(jid))) {
-        try {
-          const pnFromLid = await sock.signalRepository?.lidMapping?.getPNForLID(jid);
-          if (pnFromLid) {
-            const num = cleanPhone(pnFromLid);
-            if (num && !isLid(num) && num.length >= 9 && num.length <= 12) {
-              detectedPhone = num;
-            }
+      // 1. זיהוי שקט של מספר אמיתי מתוך מזהה LID
+      if (isSenderLid) {
+        let detectedPhone = null;
+        const key = m.key || {};
+        for (const candidate of [key.remoteJidAlt, key.participantAlt, key.participantPN, m.participant]) {
+          if (!candidate) continue;
+          const cPhone = cleanPhone(candidate);
+          if (cPhone && cPhone.length >= 9 && cPhone.length <= 12 && !isLid(candidate) && !isLid(cPhone)) {
+            detectedPhone = cPhone;
+            break;
           }
-        } catch (e) {}
+        }
 
         if (!detectedPhone) {
           try {
-            const rawLid = String(jid).split("@")[0].split(":")[0];
-            const pnFromRaw = await sock.signalRepository?.lidMapping?.getPNForLID(rawLid);
-            if (pnFromRaw) {
-              const num = cleanPhone(pnFromRaw);
-              if (num && !isLid(num) && num.length >= 9 && num.length <= 12) {
-                detectedPhone = num;
-              }
-            }
+            const pnFromLid = await sock.signalRepository?.lidMapping?.getPNForLID(jid);
+            const num = cleanPhone(pnFromLid);
+            if (num && !isLid(num) && num.length >= 9 && num.length <= 12) detectedPhone = num;
           } catch (e) {}
         }
-      }
 
-      // בדיקה ג': כרטיס איש קשר (vCard)
-      if (!detectedPhone && m.message?.contactMessage?.vcard) {
-        const vcard = m.message.contactMessage.vcard;
-        const match = vcard.match(/waid=(\d+)/i) || vcard.match(/TEL[^:]*:([+\d\s-]+)/i);
-        if (match) detectedPhone = cleanPhone(match[1]);
-      }
-
-      // בדיקה ד': זיהוי גמיש ומדויק של מספר סלולרי ישראלי מתוך טקסט ההודעה
-      if (!detectedPhone) {
-        const phoneMatch = text.match(/(?:(?:\+?972|0)[\s-]?)?5\d(?:[\s-]?\d){7}/);
-        if (phoneMatch) {
-          detectedPhone = cleanPhone(phoneMatch[0]);
-        }
-      }
-
-      // אם זוהה מספר טלפון אמיתי: מבצעים מיפוי אוטומטי, מעדכנים את senderPhone, ומאפסים צינון
-      if (detectedPhone && isSenderLid) {
-        registerLidMapping(jid, detectedPhone);
-        resetUserCooldown(detectedPhone);
-        resetUserCooldown(jid);
-        senderPhone = detectedPhone;
-        recordEvent("system", `מספר טלפון זוהה ומופה אוטומטית מ-LID: ${jid} -> ${detectedPhone}`);
-
-        // אם המשתמש שלח טקסט ידני, נודיע לו שהמספר אומת
-        if (text && text.match(/(?:(?:\+?972|0)[\s-]?)?5\d(?:[\s-]?\d){7}/)) {
-          await sock.sendMessage(jid, { 
-            text: `✅ תודה ${pushName}! מספר הטלפון שלך (*${detectedPhone}*) אומת בהצלחה במערכת.` 
-          }, { quoted: m });
-        }
-
-        // התראה יחידה ומסודרת למנהל על עדכון מספר הטלפון
-        if (shouldNotifyAdminPhoneProvided(detectedPhone) && usersData.adminPhone && cleanPhone(usersData.adminPhone) !== detectedPhone) {
-          const adminAlert = `📱 *עדכון מספר טלפון לנהג חדש:*\n` +
-            `👤 *שם:* ${pushName}\n` +
-            `📞 *מספר מאומת:* ${detectedPhone}\n\n` +
-            `לאישור המשתמש, השב ישירות:\n*אשר ${detectedPhone}*`;
-          await sock.sendMessage(`${cleanPhone(usersData.adminPhone)}@s.whatsapp.net`, { text: adminAlert });
+        if (detectedPhone) {
+          registerLidMapping(jid, detectedPhone);
+          senderPhone = detectedPhone;
         }
       }
 
@@ -542,7 +651,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       const isApproved = isUserApproved(senderPhone);
       const norm = normalizeText(text);
 
-      // 2. פקודות מנהל ראשי (אישור / דחייה / עדכון)
+      // 2. מספר המנהל משמש לניהול בלבד
       if (isAdmin) {
         const approveMatch = text.match(/^(?:אשר|אשר משתמש)\s+([0-9+\s-]+)$/);
         if (approveMatch) {
@@ -571,160 +680,128 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           await sock.sendMessage(jid, { text: `✅ המספר עודכן בהצלחה מ-*${oldNum}* ל-*${newNum}*!` }, { quoted: m });
           continue;
         }
-      }
 
-      // 3. טיפול במשתמש שטרם אושר (מנגנון צינון מונע לולאות + הודעה אחת בלבד למנהל)
-      if (!isApproved) {
-        const canReply = canReplyToUnapproved(senderPhone);
-        if (!canReply) {
-          continue; // שקט מוחלט! מונע הצפת הודעות
-        }
-
-        addPendingUser(senderPhone, pushName);
-        recordEvent("system", `בקשת הצטרפות חדשה: ${pushName} (${senderPhone})`);
-
-        let unapprovedMsg = `שלום ${pushName}! 👋\n` +
-          `ברוך הבא ל*נסיעות בוט איכותי*.\n\n` +
-          `⚠️ מספרך (${senderPhone}) עדיין אינו מאושר במערכת.\n\n` +
-          `📩 *בקשת הצטרפות נשלחה כעת למנהל המערכת.*\n` +
-          `ברגע שיאושר חשבונך, תקבל הודעת עדכון עם הנחיות חיבור!`;
-
-        if (isSenderLid && !detectedPhone) {
-          unapprovedMsg += `\n\n📌 *שים לב:* חשבונך מוגדר עם מזהה חסוי (LID). אנא השב כאן עם מספר הטלפון שלך (למשל: 0521234567) כדי שהמנהל יזהה אותך.`;
-        }
-
-        await sock.sendMessage(jid, { text: unapprovedMsg }, { quoted: m });
-
-        // שליחת הודעה אחת ויחידה למנהל
-        if (shouldNotifyAdminInitial(senderPhone) && usersData.adminPhone && cleanPhone(usersData.adminPhone) !== senderPhone) {
-          let adminAlert = `🔔 *בקשת הצטרפות חדשה לבוט!*\n\n` +
-            `👤 *שם:* ${pushName}\n` +
-            `📱 *טלפון:* ${senderPhone}\n`;
-          if (isSenderLid) {
-            adminAlert += `⚠️ *מזהה LID חסוי.* המשתמש התבקש לשלוח טלפון.\n`;
-          }
-          adminAlert += `\nלאישור המשתמש, השב ישירות:\n*אשר ${senderPhone}*\n\nלדחייה, השב:\n*דחה ${senderPhone}*`;
-
-          const adminJid = `${cleanPhone(usersData.adminPhone)}@s.whatsapp.net`;
-          await sock.sendMessage(adminJid, { text: adminAlert });
+        if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
+          await sock.sendMessage(jid, {
+            text: `🛠️ *מספר ניהול*\n\nפקודות זמינות:\n• *אשר 972501234567*\n• *דחה 972501234567*\n• *עדכן 972501234567 ל 972507654321*`
+          }, { quoted: m });
         }
         continue;
       }
 
-      // 4. בדיקת סטטוס חיבור הנהג (האם סשן הוואטסאפ שלו מקושר ומחובר בפועל)
+      // 3. משתמש שטרם אושר
+      if (!isApproved) {
+        const canReply = canReplyToUnapproved(senderPhone);
+        if (!canReply) {
+          continue;
+        }
+
+        const pending = addPendingUser(senderPhone, pushName);
+        recordEvent("system", `בקשת הצטרפות: ${pushName} (${senderPhone})`);
+
+        const unapprovedMsg = `שלום ${pushName}! 👋\n` +
+          `ברוך הבא ל*נסיעות בוט איכותי*.\n\n` +
+          `⚠️ מספרך עדיין אינו מאושר במערכת.\n\n` +
+          `📩 *בקשת הצטרפות נשלחה למנהל המערכת.*\n` +
+          `ברגע שיאושר חשבונך, תקבל הודעה עם הנחיות חיבור.`;
+
+        await sock.sendMessage(jid, { text: unapprovedMsg }, { quoted: m });
+
+        const adminClean = cleanPhone(usersData.adminPhone);
+        if (pending?.isNew && adminClean && adminClean !== senderPhone) {
+          let adminAlert = `🔔 *בקשת הצטרפות חדשה לבוט!*\n\n` +
+            `👤 *שם:* ${pushName}\n` +
+            `📱 *טלפון:* ${senderPhone}\n`;
+          adminAlert += `\nלאישור המשתמש, השב:\n*אשר ${senderPhone}*\n\nלדחייה, השב:\n*דחה ${senderPhone}*`;
+          await sock.sendMessage(`${adminClean}@s.whatsapp.net`, { text: adminAlert });
+        }
+        continue;
+      }
+
+      // 4. נהג מאושר
       const isDriverConnected = isDriverSessionConnected(senderPhone);
+      const connectMatch = norm.match(/^(?:חבר אותי|קוד חדש|חיבור|קוד|ווב)(?: ([0-9 ]{9,15}))?$/);
 
-      // ==============================================================
-      // נהג מאושר שטרם חיבר את הוואטסאפ שלו (Unlinked Driver)
-      // מונע דימוי שווא של חיפוש נסיעות כשהסשן כלל אינו מחובר!
-      // ==============================================================
       if (!isDriverConnected) {
-        // א. אם הנהג סיפק עכשיו מספר טלפון: נפיק עבורו קוד צימוד אוטומטית!
-        if (detectedPhone) {
-          try {
-            await sock.sendMessage(jid, { text: `⏳ מפיק עבורך קוד צימוד ייעודי למספר *${detectedPhone}*...` });
-            const code = await requestDriverPairingCode(detectedPhone, {
-              onRideMessage: handleIncomingMessage,
-              onEvent: recordEvent,
-            });
-            await sendPairingCodeMessages(sock, jid, code, m);
-            recordEvent("system", `נוצר קוד צימוד אוטומטי בעקבות זיהוי טלפון ${detectedPhone}: ${code}`);
-          } catch (err) {
-            await sock.sendMessage(jid, { 
-              text: `⚠️ לא ניתן היה להפיק קוד חיבור כעת: ${err.message}\nוודא שהמספר תקין או פנה למנהל המערכת.` 
-            });
-          }
-          continue;
-        }
+        if (connectMatch) {
+          let phoneForPairing = senderPhone;
+          const explicit = connectMatch[1] ? cleanPhone(connectMatch[1].replace(/\s+/g, "")) : null;
 
-        // ב. בקשת קוד צימוד ידנית ("חבר אותי" / "חיבור" / "ווב" / "קוד")
-        if (norm.includes("חבר אותי") || norm.includes("קוד חדש") || norm.includes("חיבור") || norm.includes("ווב")) {
           if (isLid(senderPhone)) {
-            const promptPhoneMsg = `📱 *לחיבור הוואטסאפ נדרש מספר טלפון סלולרי:*\n\n` +
-              `חשבונך מזוהה כעת עם מזהה חסוי (LID). וואטסאפ מחייבת מספר טלפון רגיל להפקת קוד הצימוד.\n\n` +
-              `👉 *אנא השב כאן עם מספר הטלפון שלך* (למשל: 0521234567).\n` +
-              `מיד לאחר מכן נפיק עבורך את קוד הצימוד בן 8 ספרות!`;
-            await sock.sendMessage(jid, { text: promptPhoneMsg }, { quoted: m });
-            continue;
+            if (!explicit || !/^9725\d{8}$/.test(explicit)) {
+              await sock.sendMessage(jid, {
+                text: `📱 *לחיבור הוואטסאפ נדרש מספר סלולרי רגיל.*\n\n👉 שלח: *חבר אותי 0521234567*\n(במקום הדוגמה - המספר שלך)`
+              }, { quoted: m });
+              continue;
+            }
+            registerLidMapping(jid, explicit);
+            phoneForPairing = explicit;
+          } else if (explicit && /^9725\d{8}$/.test(explicit)) {
+            phoneForPairing = explicit;
           }
 
           try {
-            await sock.sendMessage(jid, { text: "⏳ מפיק קוד צימוד ייעודי לוואטסאפ שלך..." });
-            
-            const code = await requestDriverPairingCode(senderPhone, {
+            await sock.sendMessage(jid, { text: `⏳ מפיק קוד צימוד ייעודי לוואטסאפ שלך (${phoneForPairing})...` });
+            const code = await requestDriverPairingCode(phoneForPairing, {
               onRideMessage: handleIncomingMessage,
+              onReaction: handleReaction,
               onEvent: recordEvent,
             });
-
             await sendPairingCodeMessages(sock, jid, code, m);
-            recordEvent("system", `נוצר קוד חיבור נהג עבור ${senderPhone}: ${code}`);
+            recordEvent("system", `נוצר קוד חיבור נהג עבור ${phoneForPairing}`);
           } catch (err) {
-            await sock.sendMessage(jid, { 
-              text: `⚠️ לא ניתן היה להפיק קוד חיבור כעת: ${err.message}\nנסה שוב בעוד מספר רגעים או פנה למנהל.` 
+            await sock.sendMessage(jid, {
+              text: `⚠️ לא ניתן היה להפיק קוד חיבור כעת: ${err.message}\nנסה שוב בעוד מספר רגעים או פנה למנהל.`
             });
           }
           continue;
         }
 
-        // ג. תפריט לנהג שטרם התחבר
         if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
           let unlinkedMenu = `🚕 *נסיעות בוט איכותי - תפריט*\n\n`;
           unlinkedMenu += `📊 *סטטוס חשבון:* ✅ מאושר במערכת\n`;
           unlinkedMenu += `📲 *סטטוס וואטסאפ:* ⚪ לא מחובר (נדרש חיבור ראשוני)\n\n`;
-          unlinkedMenu += `כדי שנוכל לסרוק עבורך נסיעות ישירות מקבוצות הוואטסאפ שאתה חבר בהן:\n`;
-          unlinkedMenu += `👉 השב עכשיו *"חבר אותי"*\n\n`;
-          unlinkedMenu += `מיד תקבל קוד צימוד בן 8 ספרות והסבר פשוט לחיבור תוך 10 שניות ללא מחשב!`;
+          unlinkedMenu += `כדי שנוכל לסרוק עבורך נסיעות מקבוצות הוואטסאפ שלך:\n`;
+          unlinkedMenu += `👉 השב עכשיו *"חבר אותי"*`;
           await sock.sendMessage(jid, { text: unlinkedMenu }, { quoted: m });
           continue;
         }
 
-        // ד. כל הודעה אחרת (למשל "פנוי", "תפוס", "היי", "מה קורה"):
-        // לא מפעילים חיפוש! מציגים הנחיה ברורה ומנומסת (עם צינון של 45 שניות למניעת הפצצה)
         const lastPromptTime = recentUnlinkedPrompts.get(senderPhone) || 0;
         const now = Date.now();
-        if (now - lastPromptTime > 45000) {
+        if (now - lastPromptTime > 30 * 60 * 1000) {
           recentUnlinkedPrompts.set(senderPhone, now);
           const unlinkedPrompt = `שלום ${pushName}! 👋\n\n` +
-            `🎉 *חשבונך מאושר במערכת, אך הוואטסאפ שלך עדיין אינו מחובר לסריקת נסיעות.*\n\n` +
-            `כדי שהבוט יוכל לסרוק עבורך נסיעות מקבוצות הוואטסאפ שאתה חבר בהן בזמן אמת:\n` +
-            `👉 השב עכשיו *"חבר אותי"*\n\n` +
-            `מיד תקבל קוד צימוד בן 8 ספרות והסבר פשוט לחיבור מהיר מהטלפון.\n` +
-            `(לאחר החיבור תוכל להפעיל חיפוש ע"י שליחת "פנוי שמש", "פנוי ים" וכו')`;
+            `🎉 *חשבונך מאושר, אך הוואטסאפ שלך עדיין אינו מחובר לסריקת נסיעות.*\n\n` +
+            `👉 להתחלה השב *"חבר אותי"* ותקבל קוד צימוד בן 8 תווים.`;
           await sock.sendMessage(jid, { text: unlinkedPrompt }, { quoted: m });
         }
         continue;
       }
 
       // ==============================================================
-      // נהג מאושר שהוואטסאפ שלו מחובר (Connected Driver)
+      // נהג מאושר שהוואטסאפ שלו מחובר
       // ==============================================================
-
-      // אם כבר מחובר ומבקש שוב חיבור
-      if (norm.includes("חבר אותי") || norm.includes("קוד חדש") || norm.includes("חיבור") || norm.includes("ווב")) {
-        await sock.sendMessage(jid, { 
-          text: `✅ הוואטסאפ שלך כבר מחובר ומסונכרן בהצלחה למערכת!\nשלח פקודות חיפוש כגון *"פנוי שמש פנימי"*, *"פ ים שמש"*, או *"תפריט"* לצפייה בכל האפשרויות.` 
+      if (connectMatch) {
+        await sock.sendMessage(jid, {
+          text: `✅ הוואטסאפ שלך כבר מחובר ומסונכרן למערכת.\nשלח פקודות חיפוש כגון *"פנוי שמש"*, *"פנוי שמש פנימי"*, *"פ ים שמש"*, או *"תפריט"*.`
         }, { quoted: m });
         continue;
       }
 
-      // 5. תפריט ראשי
       if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
         await sendHelpMenu(sock, jid, senderPhone);
         continue;
       }
 
-      // 6. ביטול חיפוש ("תפוס" או "ת")
       if (norm === "ת" || /(^| )(תפוס|עצור|סגור)( |$)/.test(norm)) {
         stopUserSearch(senderPhone);
         recordEvent("command", `חיפוש הופסק ע"י ${pushName} (${senderPhone})`);
-        
-        const stopMsg = `🛑 *החיפוש הופסק בהצלחה!* (מצב תפוס)\nנסיעה טובה ובטוחה. לחזרה כתוב "פנוי..." או "תפריט".`;
-        await sock.sendMessage(jid, { text: stopMsg }, { quoted: m });
+        await sock.sendMessage(jid, { text: `🛑 *החיפוש הופסק בהצלחה!* (מצב תפוס)\nלחזרה כתוב "פנוי..." או "תפריט".` }, { quoted: m });
         continue;
       }
 
-      // 7. הפעלת חיפוש נסיעות לנהג הספציפי
-      if (norm.startsWith("פנוי") || norm.includes("מחפש") || norm.includes("צמצם") || norm.includes("פנימי")) {
+      if (norm.startsWith("פנוי") || norm.includes("מחפש") || norm.includes("צמצם") || norm.includes("פנימי") || /^פ /.test(norm) || / פ$/.test(norm) || norm === "שמש" || norm === "ים") {
         const parsed = processDriverCommand(text);
         const nextState = { active: true, ...parsed };
         setUserSearch(senderPhone, nextState);
@@ -736,16 +813,15 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
         console.log(`[פקודת נהג ${senderPhone}]: "${text}" -> ${nextState.mode} | ${nextState.displayText}`);
         recordEvent("command", `הופעל חיפוש עבור ${senderPhone}: ${nextState.displayText}`);
-        
+
         await sock.sendMessage(jid, { text: responseMsg }, { quoted: m });
         continue;
       }
 
-      // 8. מענה כללי למשתמש מאושר ומחובר
       const search = getUserSearch(senderPhone);
       let userDefaultMsg = `שלום ${pushName}! 👋\n\n`;
       userDefaultMsg += `סטטוס החיפוש שלך: ${search.active ? "🟢 סורק עבור: " + search.displayText : "🔴 מופסק (תפוס)"}\n\n`;
-      userDefaultMsg += `שלח למשל: *"פנוי שמש פנימי"*, *"פ ים שמש"*, או *"שמש צמצם"* כדי לקבל נסיעות.\n`;
+      userDefaultMsg += `שלח למשל: *"פנוי שמש"*, *"פנוי שמש פנימי"*, *"פ ים שמש"*, או *"שמש צמצם"* כדי לקבל נסיעות.\n`;
       userDefaultMsg += `להצגת כל האפשרויות שלח: *"תפריט"*.`;
 
       await sock.sendMessage(jid, { text: userDefaultMsg }, { quoted: m });
@@ -774,16 +850,24 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         groupName = meta?.subject || groupName;
       } catch (e) {}
 
-      const verdict = rideMatches(text, driverSearch, groupName);
+      // ניקוי פרסומות/פוטר דרייבוט לפני כל בדיקה
+      const cleanedText = cleanSpamFromRide(text);
+
+      const junk = detectNonRide(cleanedText);
+      if (junk) {
+        if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${junk} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
+        continue;
+      }
+
+      const verdict = rideMatches(cleanedText, driverSearch, groupName);
 
       if (!verdict.ok) {
         if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${verdict.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
         continue;
       }
 
-      // בדיקת כפילות מבודדת לפי נהג (Driver-Scoped Deduplication)
-      // מונע מצב שנהג ב' נחסם מנסיעה בגלל שנהג א' סרק אותה ראשון!
-      const dup = deduper.check(text, driverPhone);
+      // בדיקת כפילות מבודדת לפי נהג
+      const dup = deduper.check(cleanedText, driverPhone);
       if (dup.duplicate) {
         if (DEBUG_FILTER) console.log(`[כפילות ${driverPhone}] ${dup.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
         continue;
@@ -791,9 +875,6 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       const rideSenderPhone = await getRealSenderPhone(sock, jid, m);
       const rideSenderName = m.pushName || "סדרן";
-
-      // ניקוי ספאם וחפירות מההודעה
-      const cleanedText = cleanSpamFromRide(text);
 
       const rideData = {
         cleanedText,
@@ -805,16 +886,20 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         searchDesc: driverSearch.displayText,
       };
 
-      // שולחים לנהג ישירות עם ציטוט ההודעה מהקבוצה שלו!
-      const driverJid = `${driverPhone}@s.whatsapp.net`;
-      await sendRideAlertWithQuoted(sock, driverJid, rideData, m);
+      // שליחה לנהג: קודם דרך הבוט הראשי (עם התראה בטלפון), ובגיבוי דרך חשבון הנהג
+      const result = await deliverRideAlert(sock, driverPhone, rideData, m);
 
-      console.log(`[נשלח לנהג ${driverPhone}] (${verdict.reason}): "${cleanedText.replace(/\n/g, " / ").slice(0, 80)}" | קבוצה: ${groupName}`);
-      recordEvent("sent", `${groupName} ⬅️ ${driverPhone}`, { 
-        text: cleanedText.replace(/\n/g, " / ").slice(0, 80), 
-        reason: verdict.reason,
-        driver: driverPhone 
-      });
+      if (result.ok) {
+        console.log(`[נשלח לנהג ${driverPhone} דרך ${result.via}] (${verdict.reason}): "${cleanedText.replace(/\n/g, " / ").slice(0, 80)}" | קבוצה: ${groupName}`);
+        recordEvent("sent", `${groupName} ⬅️ ${driverPhone}`, {
+          text: cleanedText.replace(/\n/g, " / ").slice(0, 80),
+          reason: verdict.reason,
+          driver: driverPhone,
+          via: result.via,
+        });
+      } else {
+        recordError("ride_delivery_failed", new Error(result.error), { driverPhone, groupName });
+      }
     }
   }
 }

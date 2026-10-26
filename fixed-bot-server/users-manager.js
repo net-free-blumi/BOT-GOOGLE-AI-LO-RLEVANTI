@@ -23,7 +23,7 @@ const DEFAULT_USERS_DATA = {
   pendingUsers: [],
 };
 
-// מעקב בזיכרון של תגובות אחרונות למניעת לולאה אינסופית והפצצה (50,000 הודעות)
+// מעקב בזיכרון של תגובות אחרונות למניעת לולאה אינסופית והפצצה
 const recentReplies = new Map(); // phone -> timestamp
 
 // מעקב התראות למנהל: שולחים הודעה אחת בלבד בהצטרפות, והודעה אחת בלבד אם סיפק מספר טלפון
@@ -31,6 +31,27 @@ const adminAlertsSent = new Map(); // phone -> { initial: boolean, phoneProvided
 
 // חיפוש נסיעות מוגדר לפי כל נהג בנפרד (Per-User Search State)
 const userSearches = new Map(); // cleanPhone -> searchState
+const SEARCHES_FILE = path.join(__dirname, "searches.json");
+
+// חיפושים פעילים נשמרים לדיסק כדי ש-pm2 restart / עדכון שרת לא יאפסו את החיפוש של הנהגים
+try {
+  if (existsSync(SEARCHES_FILE)) {
+    const saved = JSON.parse(readFileSync(SEARCHES_FILE, "utf8"));
+    for (const [p, st] of Object.entries(saved || {})) userSearches.set(p, st);
+  }
+} catch (err) {
+  console.error("שגיאה בקריאת searches.json:", err.message);
+}
+
+function persistSearches() {
+  try {
+    const obj = {};
+    for (const [p, st] of userSearches.entries()) obj[p] = st;
+    writeFileSync(SEARCHES_FILE, JSON.stringify(obj, null, 2), "utf8");
+  } catch (err) {
+    console.error("שגיאה בשמירת searches.json:", err.message);
+  }
+}
 
 export function shouldNotifyAdminInitial(phoneOrLid) {
   const p = cleanPhone(phoneOrLid);
@@ -58,12 +79,14 @@ export function getUserSearch(phone) {
 export function setUserSearch(phone, searchState) {
   const p = cleanPhone(phone);
   userSearches.set(p, searchState);
+  persistSearches();
 }
 
 export function stopUserSearch(phone) {
   const p = cleanPhone(phone);
   const empty = { active: false, mode: null, origin: null, destination: null, displayText: "מופסק (תפוס)" };
   userSearches.set(p, empty);
+  persistSearches();
   return empty;
 }
 
@@ -120,14 +143,12 @@ export function clearAllLidMappings() {
   return true;
 }
 
-// זיהוי האם מזהה הוא Meta LID (למשל: 87467076137026, 150062449578160 או מכיל @lid)
+// זיהוי האם מזהה הוא Meta LID
 export function isLid(input) {
   if (!input) return false;
   const str = String(input);
   if (str.includes("@lid")) return true;
   const digits = str.replace(/\D/g, "");
-  // מספר סלולרי בישראל הוא בפורמט 05XXXXXXXX (10 ספרות) או 9725XXXXXXXX (12 ספרות)
-  // מזהי LID של מטא הם בדרך כלל 13-16 ספרות שאינם מתחילים ב-9725 או 05
   if (digits.length >= 13 && !digits.startsWith("9725") && !digits.startsWith("97205")) {
     return true;
   }
@@ -138,7 +159,6 @@ export function cleanPhone(input) {
   if (!input) return "";
   let str = String(input).split("@")[0].split(":")[0].replace(/\D/g, "");
   
-  // בדיקה האם קיים מיפוי מ-LID למספר אמיתי
   const lidMap = loadLidMap();
   if (lidMap[str]) {
     return lidMap[str];
@@ -148,7 +168,7 @@ export function cleanPhone(input) {
   return str;
 }
 
-// קביעת JID יעד מדויק לשליחת הודעת וואטסאפ (תמיכה מלאה ב-LID ובמספרים ישראליים)
+// קביעת JID יעד מדויק לשליחת הודעת וואטסאפ
 export function getDestinationJid(input) {
   if (!input) return "";
   const raw = String(input).trim();
@@ -159,19 +179,16 @@ export function getDestinationJid(input) {
   const digits = raw.replace(/\D/g, "");
   const lidMap = loadLidMap();
 
-  // אם יש מיפוי ידוע למספר סלולרי רגיל
   if (lidMap[digits]) {
     let p = lidMap[digits];
     if (p.startsWith("0")) p = "972" + p.slice(1);
     return `${p}@s.whatsapp.net`;
   }
 
-  // אם זה מזהה LID של מטא
   if (isLid(raw) || isLid(digits)) {
     return `${digits}@lid`;
   }
 
-  // מספר סלולרי רגיל
   let p = digits;
   if (p.startsWith("0")) p = "972" + p.slice(1);
   return `${p}@s.whatsapp.net`;
@@ -188,7 +205,6 @@ export function registerLidMapping(rawLid, realPhone) {
   map[lid] = clean;
   saveLidMap(map);
 
-  // עדכון אוטומטי של users.json במידה וה-LID מופיע ברשימות
   const users = loadUsersData();
   let changed = false;
 
@@ -253,7 +269,6 @@ export function updateUserPhone(oldIdentifier, newPhone) {
   return { success: true, oldPhone: oldClean, newPhone: newClean, updated: found };
 }
 
-// עריכת פרטי משתמש (שם, מספר טלפון לתצוגה ותפקיד)
 export function editUserDetails(oldPhone, { name, phone: newPhone, role }) {
   const users = loadUsersData();
   const oldClean = cleanPhone(oldPhone);
@@ -297,7 +312,6 @@ export function loadUsersData() {
       const lidMap = loadLidMap();
       let changed = false;
 
-      // הבטחת מזהה ייחודי (ID) ומיפוי טלפונים לכל המשתמשים המאושרים
       data.approvedUsers = (data.approvedUsers || []).map((u, i) => {
         const item = { ...u };
         if (!item.id) {
@@ -319,7 +333,6 @@ export function loadUsersData() {
         return item;
       });
 
-      // הבטחת מזהה ייחודי (ID) ומיפוי טלפונים לכל הבקשות הממתינות
       data.pendingUsers = (data.pendingUsers || []).map((u, i) => {
         const item = { ...u };
         if (!item.id) {
@@ -390,13 +403,12 @@ export function canReplyToUnapproved(phoneOrLid) {
   const now = Date.now();
 
   if (now - last < cooldownMs) {
-    return false; // חסום בגלל צינון - מונע לולאה!
+    return false;
   }
   recentReplies.set(p, now);
   return true;
 }
 
-// איפוס צינון ומעקב התראות למשתמש - מאפשר לו להגיב מיד ללא חסימה
 export function resetUserCooldown(phoneOrLid) {
   const p = cleanPhone(phoneOrLid);
   const raw = String(phoneOrLid || "").split("@")[0].split(":")[0].replace(/\D/g, "");
@@ -423,12 +435,14 @@ export function addPendingUser(phoneOrLid, name = "") {
            (raw && u.phone === raw)
   );
 
+  let isNew = false;
   if (existing) {
     existing.requestedAt = new Date().toISOString();
     if (name) existing.name = name;
     if (isIdentifierLid) existing.lid = raw;
     if (mappedPhone) existing.mappedPhone = mappedPhone;
   } else {
+    isNew = true;
     data.pendingUsers.push({
       id: `pend-${raw || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       phone: mappedPhone || p || raw || "ללא מספר",
@@ -439,7 +453,7 @@ export function addPendingUser(phoneOrLid, name = "") {
     });
   }
   saveUsersData(data);
-  return { success: true };
+  return { success: true, isNew };
 }
 
 export function approveUser(phoneOrLid, name = "") {
@@ -450,7 +464,6 @@ export function approveUser(phoneOrLid, name = "") {
   const lidMap = loadLidMap();
   const mappedPhone = lidMap[raw] || lidMap[p];
 
-  // הסרה מרשימת הממתינים לפי כל מזהה אפשרי
   data.pendingUsers = data.pendingUsers.filter((u) => {
     if (u.id && u.id === phoneOrLid) return false;
     if (raw && (u.phone === raw || u.lid === raw)) return false;
@@ -460,7 +473,6 @@ export function approveUser(phoneOrLid, name = "") {
 
   const effectivePhone = mappedPhone || p || raw;
 
-  // הוספה למאושרים אם עדיין לא שם
   const alreadyApproved = data.approvedUsers.some(
     (u) => (effectivePhone && cleanPhone(u.phone) === cleanPhone(effectivePhone)) || 
            (raw && u.lid === raw)
@@ -481,7 +493,6 @@ export function approveUser(phoneOrLid, name = "") {
   return { success: true, phone: effectivePhone };
 }
 
-// מחיקת / דחיית בקשה - תומך בכל מזהה (id, phone, lid, name) גם אם השדות ריקים או משובשים
 export function rejectUser(identifier) {
   if (!identifier) return { success: false, error: "נדרש מזהה למחיקה" };
   const strId = String(identifier).trim();
@@ -500,7 +511,7 @@ export function rejectUser(identifier) {
   });
 
   data.approvedUsers = data.approvedUsers.filter((u) => {
-    if (cleanPhone(u.phone) === cleanPhone(data.adminPhone)) return true; // הגנת מנהל
+    if (cleanPhone(u.phone) === cleanPhone(data.adminPhone)) return true;
     if (u.id && u.id === strId) return false;
     if (u.phone && (u.phone === strId || (cleanP && cleanPhone(u.phone) === cleanP))) return false;
     if (u.lid && (u.lid === strId || (rawDigits && u.lid === rawDigits))) return false;
@@ -508,7 +519,6 @@ export function rejectUser(identifier) {
     return true;
   });
 
-  // איפוס צינון ומחיקה ממיפוי LID
   if (cleanP) resetUserCooldown(cleanP);
   if (rawDigits) resetUserCooldown(rawDigits);
   removeLidMapping(identifier);
@@ -519,7 +529,6 @@ export function rejectUser(identifier) {
   return { success: true, removedCount: initialCount - (data.pendingUsers.length + data.approvedUsers.length) };
 }
 
-// מחיקת משתמש מאושר מכל סוג שהוא
 export function deleteApprovedUser(identifier) {
   if (!identifier) return { success: false, error: "נדרש מזהה למחיקה" };
   const strId = String(identifier).trim();
@@ -540,7 +549,6 @@ export function deleteApprovedUser(identifier) {
     return true;
   });
 
-  // איפוס צינון ומחיקה ממיפוי LID
   if (cleanP) resetUserCooldown(cleanP);
   if (rawDigits) resetUserCooldown(rawDigits);
   removeLidMapping(identifier);

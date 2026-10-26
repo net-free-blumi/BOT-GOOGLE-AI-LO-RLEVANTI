@@ -117,7 +117,6 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
     });
 
-    // מיון: ביטויים ארוכים מנצחים ביטויים קצרים (למשל "מגדל העמק" מנצח את "העמק")
     hits.sort(
       (a, b) =>
         b.end - b.start - (a.end - a.start) ||
@@ -169,8 +168,8 @@ export function createMatcher(citiesData, streetsData = {}) {
     };
   }
 
-
   // בדיקת מעברים פנימיים מובהקים בבית שמש (כמו "רמה ד לב", "רמה ד> ה", "רמה ד & נעימי", "חפציבה לקריה")
+  // מגן בצורה הרמטית מפני מילים עבריות תמימות (כמו "בלבד", "בדודיקה", "למאזדה", "מניות")
   function detectInternalTransitionBeitShemesh(text) {
     const raw = String(text || "");
     const norm = normalizeText(raw);
@@ -180,16 +179,16 @@ export function createMatcher(citiesData, streetsData = {}) {
       return true;
     }
 
-    // 2. מעבר בין רמות (רמה א-ה) ומוקדים בבית שמש עם חצים ומפרידים (>, ->, &, -, ל, אל, רווח)
-    const ramaKeywords = "רמה\\s+[א-ה]|רמת\\s+בית\\s+שמש\\s+[א-ה]";
-    const bsSpots = "רמה\\s+[א-ה]|[א-ה]|חפציבה|קריה|הקריה|ביג|נעימי|סאן\\s*מול|ישנה|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|מחסיה|אדרת|צרעה|הרטוב|ישעי|זכריה";
-
-    const symbolTransitionRe = new RegExp(`(${ramaKeywords}|${bsSpots})\\s*(?:>|->|&|-|ל|אל|ו)\\s*(${ramaKeywords}|${bsSpots})`, "i");
-    if (symbolTransitionRe.test(raw) || symbolTransitionRe.test(norm)) {
+    // 2. מעבר בין שני מוקדים בבית שמש עם גבולות מילה מחמירים
+    const NAMED = "רמת\\s*בית\\s*שמש\\s*[א-ה]|רמה\\s*[א-ה]|לב\\s*הרמה|חפציבה|קריה|הקריה|ביג|הביג|נעימי|הנעימי|סאן\\s*מול|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|הישנה|בית\\s*שמש\\s*הישנה|העיר\\s*הוותיקה|סמטת\\s*הגפן|מחסיה|אדרת|צרעה|הרטוב|ישעי|זכריה";
+    const spotRe = (inner) => `(?<![א-ת])[הבלמהוכש]?(?:${inner})(?![א-ת])`;
+    const sep = "\\s*(?:>|->|&|-|–|/|ל|אל|ו)?\\s*";
+    const transitionRe = new RegExp(`${spotRe(NAMED)}${sep}${spotRe(`${NAMED}|[א-ה]`)}`, "i");
+    if (transitionRe.test(raw) || transitionRe.test(norm)) {
       return true;
     }
 
-    // מעבר קצר בין אותיות רמה עם חץ/רווח (למשל: "ד>ה", "ד -> ה", "ד לה", "ד > ב")
+    // מעבר קצר בין אותיות רמה בלבד כמילים שלמות מבודדות: "ד>ה", "ד -> ה", "ד לה", "ד > ב"
     if (/(^|\s)[א-ה]\s*(?:>|->|&|-|ל|אל)\s*[א-ה](\s|$)/i.test(raw)) {
       return true;
     }
@@ -224,7 +223,19 @@ export function createMatcher(citiesData, streetsData = {}) {
       return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
     }
 
-    // 2. פקודת מסלול מקוצרת: "פ ים שמש" -> מירושלים לבית שמש
+    // 2. פקודת פנימי: "פנוי שמש פנימי", "פנימי שמש", "פ שמש פ", "פ שמש", "שמש פ", "שמש פנימי", "פנוי שמש"
+    if (
+      /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+      /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+      /(^|\s)(פנימי|פש|פ שמש|פ ים|שמש פ|ים פ|פ בש|בש פ)(\s|$)/.test(norm) ||
+      norm.includes("פנימי")
+    ) {
+      const places = findPlaces(clean);
+      const city = places[0]?.city || DEFAULT_CITY;
+      return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי)` };
+    }
+
+    // 3. פקודת מסלול מקוצרת
     const routeShorthand = norm.match(/^(?:פ|פנוי)\s+([א-ת]+)\s+([א-ת]+)$/);
     if (routeShorthand) {
       const p1 = findPlaces(routeShorthand[1])[0]?.city;
@@ -234,13 +245,6 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
     }
 
-    // 3. פקודת פנימי: "פנוי שמש פנימי", "פנימי שמש", "פ שמש פ", "פ שמש", "שמש פ", "פנוי פנימי ים"
-    if (/(^|\s)(פנימי|פש|פ שמש|פ ים|שמש פ|ים פ|פ בש|בש פ)(\s|$)/.test(norm) || norm.includes("פנימי")) {
-      const places = findPlaces(clean);
-      const city = places[0]?.city || DEFAULT_CITY;
-      return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי)` };
-    }
-
     // 4. פקודת מסלול רגילה: "פנוי בית שמש לירושלים"
     const { from, to } = resolveRoles(findPlaces(clean));
     const origin = from || DEFAULT_CITY;
@@ -248,7 +252,7 @@ export function createMatcher(citiesData, streetsData = {}) {
       return { mode: "route", origin, destination: to, displayText: `${origin} ⬅️ ${to}` };
     }
 
-    // 5. פקודת יציאה כללית: "פנוי בית שמש" (ליוצאים מבית שמש)
+    // 5. פקודת יציאה כללית: "פנוי בית שמש יוצא"
     return { mode: "from", origin, destination: null, displayText: origin };
   }
 
@@ -274,7 +278,6 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
 
       // חוק ברזל 2: הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית אלא בין-עירונית
-      // (אלא אם צויין במפורש "פנימי" בהודעה)
       const price = extractPrice(text);
       if (price && price >= 130 && !norm.includes("פנימי")) {
         return no(`נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)`);
@@ -385,3 +388,90 @@ function get() {
 export const parseDriverCommand = (text) => get().parseDriverCommand(text);
 export const rideMatches = (text, state, groupName = "") => get().rideMatches(text, state, groupName);
 export const findPlaces = (text) => get().findPlaces(text);
+export const detectInternalTransitionBeitShemesh = (text) => get().detectInternalTransitionBeitShemesh(text);
+export const detectInternalTransitionJerusalem = (text) => get().detectInternalTransitionJerusalem(text);
+
+export function processDriverCommand(rawText) {
+  const raw = String(rawText || "").trim();
+  const norm = normalizeText(raw);
+
+  // 1. פקודות פנימי ישירות:
+  // "פנוי שמש", "פנוי שמש פנימי", "פנימי שמש", "שמש פנימי", "פ שמש", "שמש פ"
+  if (
+    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פנימי\s+)?(?:בית\s+)?שמש$/.test(norm) ||
+    norm === "שמש"
+  ) {
+    return { mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" };
+  }
+
+  // פנימי ירושלים: "פנוי ים פנימי", "פנימי ים", "ים פנימי", "פ ים", "ים פ"
+  if (
+    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    /^(?:פ|פנוי)\s+(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
+    norm === "ים"
+  ) {
+    return { mode: "internal", origin: "ירושלים", destination: null, displayText: "ירושלים (פנימי)" };
+  }
+
+  // פנימי בני ברק
+  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:בני\s+ברק|בב)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
+    return { mode: "internal", origin: "בני ברק", destination: null, displayText: "בני ברק (פנימי)" };
+  }
+
+  // פנימי מודיעין עילית
+  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:מודיעין\s+עילית|קרית\s+ספר|מוע)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
+    return { mode: "internal", origin: "מודיעין עילית", destination: null, displayText: "מודיעין עילית (פנימי)" };
+  }
+
+  // 2. מצב צמצום (פנימי + יוצא): "שמש צמצם", "צמצם שמש", "צמצום שמש", "ים צמצם"
+  if (/(^|\s)(צמצם|צמצום)(\s|$)/.test(norm)) {
+    let city = "בית שמש";
+    if (norm.includes("ים") || norm.includes("ירושלים")) city = "ירושלים";
+    else if (norm.includes("בב") || norm.includes("בני ברק")) city = "בני ברק";
+    else if (norm.includes("מוע") || norm.includes("ספר")) city = "מודיעין עילית";
+    return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
+  }
+
+  // 3. מסלול מקוצר עם כינויי ערים:
+  const cityAliasMap = {
+    "שמש": "בית שמש",
+    "בש": "בית שמש",
+    "בית שמש": "בית שמש",
+    "ים": "ירושלים",
+    "ירו": "ירושלים",
+    "ירושלים": "ירושלים",
+    "בב": "בני ברק",
+    "בני ברק": "בני ברק",
+    "מוע": "מודיעין עילית",
+    "ספר": "מודיעין עילית",
+    "קרית ספר": "מודיעין עילית",
+    "מודיעין עילית": "מודיעין עילית",
+    "תא": "תל אביב",
+    "תל אביב": "תל אביב",
+    "נתבג": "נתב\"ג",
+    "שדה": "נתב\"ג",
+    "ביתר": "ביתר עילית",
+    "אלעד": "אלעד",
+    "אשדוד": "אשדוד",
+    "חיפה": "חיפה",
+    "טבריה": "טבריה",
+    "צפת": "צפת",
+  };
+
+  const cleanCmd = norm.replace(/^(?:פ|פנוי)\s+/, "");
+  for (const [a1, c1] of Object.entries(cityAliasMap)) {
+    for (const [a2, c2] of Object.entries(cityAliasMap)) {
+      if (c1 === c2) continue;
+      const routeRe = new RegExp(`^${a1}\\s+(?:ל|אל|\\-|>|)?${a2}$`);
+      if (routeRe.test(cleanCmd)) {
+        return { mode: "route", origin: c1, destination: c2, displayText: `${c1} ⬅️ ${c2}` };
+      }
+    }
+  }
+
+  // 4. שימוש במפענח הכללי
+  return get().parseDriverCommand(raw);
+}
+

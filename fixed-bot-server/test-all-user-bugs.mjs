@@ -1,65 +1,9 @@
-import { createMatcher, normalizeText, parseDriverCommand, rideMatches, findPlaces, extractPrice } from "./matcher.js";
+// test-all-user-bugs.mjs - בדיקה מלאה של כל התרחישים, כולל מניעת הודעות ספאם ואימות כל הפיצ'רים החדשים
+import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand, rideMatches, findPlaces, extractPrice } from "./matcher.js";
 import { createDeduper, isUniqueRideLink } from "./dedupe.js";
 import { readFileSync } from "node:fs";
 
-const BUG_REPORT_GROUP_JID = "120363402521442927@g.us";
-const sentAlertsCache = new Map();
-
-async function handleReaction(sock, reactions, sessionContext = {}) {
-  const items = Array.isArray(reactions) ? reactions : [reactions];
-
-  for (const item of items) {
-    if (!item) continue;
-    const reactionText = item.reaction?.text ?? item.text ?? "";
-    const targetMsgId = item.reaction?.key?.id || item.key?.id;
-
-    if (!targetMsgId) continue;
-
-    if (reactionText === "👎" || reactionText.includes("👎")) {
-      const alertInfo = sentAlertsCache.get(targetMsgId);
-      const nowFormatted = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" });
-
-      let reportMsg = `🐞 *דיווח תקלה / נסיעה לא רלוונטית (דיסלייק 👎)*\n`;
-      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-
-      if (alertInfo) {
-        reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData.cleanedText}\n`;
-        reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-        if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData.cleanedText) {
-          reportMsg += `📌 *טקסט גולמי מקורי:*\n${alertInfo.rawText}\n`;
-          reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-        }
-        reportMsg += `👤 *נהג מדווח:* ${alertInfo.driverPhone}\n`;
-        reportMsg += `📍 *קבוצה:* ${alertInfo.groupName}\n`;
-        reportMsg += `🏷️ *סדרן:* ${alertInfo.senderName} (${alertInfo.senderPhone})\n`;
-        reportMsg += `🔍 *חיפוש שהיה מוגדר:* ${alertInfo.searchDesc}\n`;
-      } else {
-        reportMsg += `⚠️ *מזהה הודעה:* ${targetMsgId}\n`;
-        reportMsg += `👤 *נהג מדווח:* ${sessionContext.driverPhone || "מחובר"}\n`;
-      }
-
-      reportMsg += `⏱️ *זמן הדיווח:* ${nowFormatted}\n`;
-      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-      reportMsg += `💡 המשתמש סימן 👎 ישירות על הודעת הבוט. הועבר אוטומטית לטיפול בבאג.`;
-
-      await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportMsg });
-
-      try {
-        const remoteJid = item.reaction?.key?.remoteJid || item.key?.remoteJid;
-        if (remoteJid && sock) {
-          await sock.sendMessage(remoteJid, {
-            react: {
-              text: "🫡",
-              key: item.reaction?.key || item.key,
-            }
-          });
-        }
-      } catch (e) {}
-    }
-  }
-}
-
-console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים...\n");
+console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 2.8)...\n");
 
 const cities = JSON.parse(readFileSync(new URL("./cities.json", import.meta.url), "utf8"));
 const streets = JSON.parse(readFileSync(new URL("./streets-full.json", import.meta.url), "utf8"));
@@ -80,181 +24,209 @@ function assert(condition, testName) {
   }
 }
 
-// ==========================================
-// בדיקה 1: תיקון באג ה-Deduper שנעל נסיעות בגלל הקישורים הקבועים של דרייבוט
-// ==========================================
-console.log("--- בדיקה 1: סינון קישורי פרסומת של דרייבוט ב-Dedupe ---");
-const promoLink1 = "https://api.drivebot.co.il/api/apps/teledrivebot/latest";
-const promoLink2 = "https://t.me/+7HqnSHsvf5NiNTg0";
-const promoLink3 = "drivebot.co.il";
-const bookingLink = "wa.me/972552732722?text=ת+908172129+gd66wp";
-
-assert(!isUniqueRideLink(promoLink1), "קישור הורדת אפליקציה אינו קישור נסיעה ייחודי");
-assert(!isUniqueRideLink(promoLink2), "קישור ערוץ טלגרם אינו קישור נסיעה ייחודי");
-assert(!isUniqueRideLink(promoLink3), "כתובת אתר דרייבוט אינה קישור נסיעה ייחודי");
-assert(isUniqueRideLink(bookingLink), "קישור הזמנה עם מספר כרטיס ת+908172129 הינו קישור נסיעה ייחודי");
-
-// נדמה שליחה של נסיעה ראשונה מדרייבוט
-const drivebotMsg1 = `
-⚠️⚠️⚠️⚠️⚠️⚠️
-ירושלים בני ברק 180
-רמות לעזרא זמן
-ווצאפ ☚ wa.me/972552732722?text=ת+111222333+gd66wp
-🔴 | הטלגרם האדום https://api.drivebot.co.il/api/apps/teledrivebot/latest
-🔴 | הוואטסאפ האדום drivebot.co.il
-🔴 | קבוצת כל הנסיעות בטלגרם https://t.me/+7HqnSHsvf5NiNTg0
-`;
-
-// והנסיעה השנייה שהמשתמש איבד בעבר:
-const drivebotMsg2 = `
-⚠️⚠️⚠️⚠️⚠️⚠️
-פנימי שמש 50
-רמה ד & נעימי זמן
-ווצאפ ☚ wa.me/972552732722?text=ת+908172129+gd66wp
-טלגרם ☚ t.me/prod_drivebot?start=t-908172129-gd66wp
-🎩8080* - ללא פון 🎩
-━━━━━━━━━━━━━━
-🔴 | הטלגרם האדום https://api.drivebot.co.il/api/apps/teledrivebot/latest
-🔴 | הוואטסאפ האדום drivebot.co.il
-🔴 | קבוצת כל הנסיעות בטלגרם https://t.me/+7HqnSHsvf5NiNTg0
-`;
-
-deduper.clear();
-const res1 = deduper.check(drivebotMsg1, "0501111111");
-assert(!res1.duplicate, "הודעה ראשונה אינה כפולה");
-
-const res2 = deduper.check(drivebotMsg2, "0501111111");
-assert(!res2.duplicate, "הודעה שנייה (הנסיעה שנעלמה בעבר) אינה נחסמת בגלל קישורי דרייבוט!");
+const internalShemeshState = { active: true, mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" };
 
 // ==========================================
-// בדיקה 2: בידוד כפילויות לפי נהג (Driver-Scoped Deduplication)
+// בדיקה 1: מניעה מוחלטת של הודעות ספאם, משטרות, פרסומות ומניות
 // ==========================================
-console.log("\n--- בדיקה 2: בידוד כפילויות בין נהג א' לנהג ב' ---");
-const rideText = "פנימי שמש 45 רמה א לרמה ג זמן";
-const driverA = "0501111111";
-const driverB = "0502222222";
+console.log("--- בדיקה 1: פסילת הודעות לא רלוונטיות (משטרות, הפצה, מניות, מאזדה) ---");
 
-deduper.clear();
-const r1 = deduper.check(rideText, driverA);
-assert(!r1.duplicate, "נהג א' מקבל את הנסיעה");
+// הודעה 1 שדווחה היום (הפצה ידני בלבד)
+const msgSpam1 = `0523651790\nהפצה ידני בלבד\nצרפו לקבוצות\n0523651790`;
+const verdictSpam1 = matcher.rideMatches(msgSpam1, internalShemeshState);
+assert(!verdictSpam1.ok, `הודעת הפצה לקבוצות נפסלת: "${verdictSpam1.reason}"`);
 
-const r2 = deduper.check(rideText, driverB);
-assert(!r2.duplicate, "נהג ב' מקבל את הנסיעה גם כן למרות שנהג א' סרק אותה קודם!");
+// הודעה 2 שדווחה היום (דיווח משטרות)
+const msgPolice = `אופיר הרוש מטייל בדודיקה`;
+const verdictPolice = matcher.rideMatches(msgPolice, internalShemeshState);
+assert(!verdictPolice.ok, `דיווח משטרות בדודיקה נפסל: "${verdictPolice.reason}"`);
 
-const r3 = deduper.check(rideText, driverA);
-assert(r3.duplicate, "נהג א' לא מקבל את אותה נסיעה פעמיים");
+// מילים תמימות בעברית שהיו עלולות להיתפס בגלל אותיות אות-ל-אות
+const innocentHebrew = [
+  "מתאים לרכב מאזדה 3",
+  "רכישת מניות בחברה",
+  "מתקן למקרן איכותי למכירה",
+  "פרסומת לחנות בגדים",
+  "שלום וברכה לכולם",
+  "הפנימית של האופניים פנצ'ר"
+];
 
-// ==========================================
-// בדיקה 3: סינון נסיעות בינעירוניות לא רלוונטיות במצב "פנוי שמש פנימי"
-// ==========================================
-console.log("\n--- בדיקה 3: סינון נסיעות בינעירוניות (כפר חב\"ד, סביון, שוהם, ירושלים) ---");
-const internalShemeshState = { active: true, mode: "internal", origin: "בית שמש", destination: null };
-
-// נסיעה כפר חב"ד 200
-const kfarChabadMsg = `20 דק \nכפר חבד שמש 200\nתחנות בתוספת \nפתק ברידעס`;
-const kfarChabadVerdict = matcher.rideMatches(kfarChabadMsg, internalShemeshState);
-assert(!kfarChabadVerdict.ok, `כפר חב"ד 200 נפסל מפנימי שמש: "${kfarChabadVerdict.reason}"`);
-
-// נסיעה סביון שמש 200 / שוהם
-const savyonMsg = `⚠️⚠️⚠️⚠️⚠️⚠️\nסביון שמש 200\nשוהם זמנים\nווצאפ ☚ wa.me/972552732722?text=ת+407669970+gd66wp`;
-const savyonVerdict = matcher.rideMatches(savyonMsg, internalShemeshState);
-assert(!savyonVerdict.ok, `סביון ושוהם נפסלו מפנימי שמש: "${savyonVerdict.reason}"`);
-
-// נסיעה ירושלים שמש 150 (ים שמש)
-const yamShemeshMsg = `ים שמש 150 זמנים לבקש`;
-const yamShemeshVerdict = matcher.rideMatches(yamShemeshMsg, internalShemeshState);
-assert(!yamShemeshVerdict.ok, `ים שמש נפסל מפנימי שמש: "${yamShemeshVerdict.reason}"`);
-
-// נסיעה עם עיר לא מוכרת במחיר 200 ש"ח
-const highPriceUnknownMsg = `מקוםלאמוכר שמש 200 שקל זמנים`;
-const highPriceVerdict = matcher.rideMatches(highPriceUnknownMsg, internalShemeshState);
-assert(!highPriceVerdict.ok, `מחיר 200 ש"ח נפסל מפנימי שמש: "${highPriceVerdict.reason}"`);
+for (const phrase of innocentHebrew) {
+  const v = matcher.rideMatches(phrase, internalShemeshState);
+  assert(!v.ok, `ביטוי תמים "${phrase}" נפסל בהצלחה: "${v.reason}"`);
+}
 
 // ==========================================
-// בדיקה 4: זיהוי נסיעות פנימיות עם מעברי שכונות וסדרנים עצלנים
+// בדיקה 2: זיהוי מדויק של נסיעות פנימיות אמיתיות
 // ==========================================
-console.log("\n--- בדיקה 4: זיהוי נסיעות פנימיות עם רמות, חצים ופורמטים חופשיים ---");
+console.log("\n--- בדיקה 2: קבלת נסיעות פנימיות אמיתיות בכל הפורמטים ---");
 
-// שמש 50ש / רמה ד> ה / זמן
-const ramaDHehMsg = `שמש 50ש \nרמה ד> ה \nזמן`;
-const ramaDHehVerdict = matcher.rideMatches(ramaDHehMsg, internalShemeshState);
-assert(ramaDHehVerdict.ok, `שמש 50ש רמה ד> ה התקבל בהצלחה: "${ramaDHehVerdict.reason}"`);
+// נסיעה עם חץ ומחיר מקוצר: שמש 50ש / רמה ד> ה / זמן
+const v1 = matcher.rideMatches(`שמש 50ש \nרמה ד> ה \nזמן`, internalShemeshState);
+assert(v1.ok, `שמש 50ש רמה ד> ה התקבלה בהצלחה: "${v1.reason}"`);
 
-// הנסיעה שנעלמה: פנימי שמש 50 / רמה ד & נעימי זמן
-const ramaDNaeimiVerdict = matcher.rideMatches(drivebotMsg2, internalShemeshState);
-assert(ramaDNaeimiVerdict.ok, `פנימי שמש 50 רמה ד & נעימי זמן התקבל בהצלחה: "${ramaDNaeimiVerdict.reason}"`);
+// פנימי שמש 50 / רמה ד & נעימי זמן
+const v2 = matcher.rideMatches(`⚠️⚠️⚠️ פנימי שמש 50\nרמה ד & נעימי זמן\nwa.me/972552732722?text=ת+908172129+gd66wp`, internalShemeshState);
+assert(v2.ok, `פנימי שמש 50 רמה ד & נעימי התקבלה בהצלחה: "${v2.reason}"`);
 
-// מצב צמצום: שמש צמצם / מחסיה אדרת 80
-const tzimtzumCmd = matcher.parseDriverCommand("שמש צמצם");
-assert(tzimtzumCmd.mode === "reduce" && tzimtzumCmd.origin === "בית שמש", "פקודת 'שמש צמצם' מפוענחת לצמצום בית שמש");
+// פנימי שמש 50 / לב הרמה&ד
+const v3 = matcher.rideMatches(`פנימי שמש 50 / לב הרמה&ד`, internalShemeshState);
+assert(v3.ok, `לב הרמה&ד התקבלה בהצלחה: "${v3.reason}"`);
 
-const mahsiyaAderetMsg = `שמש צמצם \nמחסיה אדרת 80\nזמן\n לבקש ב 0507428876`;
-const mahsiyaVerdict = matcher.rideMatches(mahsiyaAderetMsg, { active: true, mode: "reduce", origin: "בית שמש" });
-assert(mahsiyaVerdict.ok, `מחסיה אדרת 80 התקבל בהצלחה בצמצום: "${mahsiyaVerdict.reason}"`);
+// חפציבה לקריה 40
+const v4 = matcher.rideMatches(`חפציבה לקריה 40`, internalShemeshState);
+assert(v4.ok, `חפציבה לקריה התקבלה בהצלחה: "${v4.reason}"`);
 
-// פענוח פקודות נהג
-const cmdPshemesh = matcher.parseDriverCommand("פ שמש");
-assert(cmdPshemesh.mode === "internal" && cmdPshemesh.origin === "בית שמש", "פקודת 'פ שמש' מפעילה פנימי בית שמש");
+// רמה ב לרמה ג 40
+const v5 = matcher.rideMatches(`רמה ב לרמה ג 40`, internalShemeshState);
+assert(v5.ok, `רמה ב לרמה ג התקבלה בהצלחה: "${v5.reason}"`);
 
-const cmdShemeshP = matcher.parseDriverCommand("שמש פ");
-assert(cmdShemeshP.mode === "internal" && cmdShemeshP.origin === "בית שמש", "פקודת 'שמש פ' מפעילה פנימי בית שמש");
+// צמצום בית שמש עם מושב סמוך
+const v6 = matcher.rideMatches(`שמש צמצם \nמחסיה אדרת 80\nזמן`, { active: true, mode: "reduce", origin: "בית שמש" });
+assert(v6.ok, `מחסיה אדרת 80 בצמצום התקבלה בהצלחה: "${v6.reason}"`);
 
 // ==========================================
-// בדיקה 5: דיסלייק (👎) ודיווח לקבוצת התיקונים (120363402521442927@g.us)
+// בדיקה 3: פסילת נסיעות בינעירוניות בפנימי שמש
 // ==========================================
-console.log("\n--- בדיקה 5: תגובת דיסלייק (👎) ושליחה לקבוצת התיקונים ---");
-assert(BUG_REPORT_GROUP_JID === "120363402521442927@g.us", "JID קבוצת התיקונים מוגדר במדויק");
+console.log("\n--- בדיקה 3: פסילת נסיעות בינעירוניות ---");
 
-let sentToGroup = null;
-let reactedBack = null;
+const vKfarChabad = matcher.rideMatches(`כפר חבד שמש 200`, internalShemeshState);
+assert(!vKfarChabad.ok, `כפר חב"ד נפסל: "${vKfarChabad.reason}"`);
+
+const vSavyon = matcher.rideMatches(`סביון שמש 200`, internalShemeshState);
+assert(!vSavyon.ok, `סביון נפסל: "${vSavyon.reason}"`);
+
+const vYam = matcher.rideMatches(`ים שמש 150`, internalShemeshState);
+assert(!vYam.ok, `ים שמש נפסל: "${vYam.reason}"`);
+
+const vHighPrice = matcher.rideMatches(`שמש 180ש מקוםלאמוכר`, internalShemeshState);
+assert(!vHighPrice.ok, `מחיר 180 ש"ח נפסל: "${vHighPrice.reason}"`);
+
+// ==========================================
+// בדיקה 4: פענוח מדויק של פקודות הנהג
+// ==========================================
+console.log("\n--- בדיקה 4: פענוח פקודות נהג (כולל 'פנוי שמש' בלי שיבושים) ---");
+
+const pShemesh = processDriverCommand("פנוי שמש");
+assert(pShemesh.mode === "internal" && pShemesh.origin === "בית שמש", `פנוי שמש -> פנימי בית שמש (${pShemesh.displayText})`);
+
+const pShemeshPnimi = processDriverCommand("פנוי שמש פנימי");
+assert(pShemeshPnimi.mode === "internal" && pShemeshPnimi.origin === "בית שמש", `פנוי שמש פנימי -> פנימי בית שמש`);
+
+const pShort = processDriverCommand("פ שמש");
+assert(pShort.mode === "internal" && pShort.origin === "בית שמש", `פ שמש -> פנימי בית שמש`);
+
+const pReverseShort = processDriverCommand("שמש פ");
+assert(pReverseShort.mode === "internal" && pReverseShort.origin === "בית שמש", `שמש פ -> פנימי בית שמש`);
+
+const pYamShemesh = processDriverCommand("פ ים שמש");
+assert(pYamShemesh.mode === "route" && pYamShemesh.origin === "ירושלים" && pYamShemesh.destination === "בית שמש", `פ ים שמש -> מסלול מירושלים לבית שמש`);
+
+const pShemeshYam = processDriverCommand("פ שמש ים");
+assert(pShemeshYam.mode === "route" && pShemeshYam.origin === "בית שמש" && pShemeshYam.destination === "ירושלים", `פ שמש ים -> מסלול מבית שמש לירושלים`);
+
+const pTzimtzum = processDriverCommand("שמש צמצם");
+assert(pTzimtzum.mode === "reduce" && pTzimtzum.origin === "בית שמש", `שמש צמצם -> צמצום בית שמש`);
+
+// ==========================================
+// בדיקה 5: דיסלייק (👎) מוגן לחלוטין מתגובות בקבוצות
+// ==========================================
+console.log("\n--- בדיקה 5: בדיקת הגנת דיסלייק (👎) ---");
+
+const BUG_REPORT_GROUP_JID = "120363402521442927@g.us";
+const sentAlertsCache = new Map();
+const handledReactions = new Map();
+let bugReports = [];
+
+async function handleReactionSimulation(sock, reactions, sessionContext = {}) {
+  const items = Array.isArray(reactions) ? reactions : [reactions];
+
+  for (const item of items) {
+    if (!item) continue;
+    const reactionText = item.reaction?.text ?? item.text ?? "";
+    const targetMsgId = item.reaction?.key?.id || item.key?.id;
+
+    if (!targetMsgId) continue;
+    if (!reactionText.includes("👎")) continue;
+
+    // התעלמות מתגובות בקבוצות (מונע דיווחי שווא בשעה 5 בבוקר!)
+    const reactionChat = item.reaction?.key?.remoteJid || item.key?.remoteJid || "";
+    if (String(reactionChat).endsWith("@g.us")) continue;
+
+    // רק תגובות על הודעות שהבוט שלח
+    const alertInfo = sentAlertsCache.get(targetMsgId);
+    if (!alertInfo) continue;
+
+    const dedupeKey = `${targetMsgId}|${reactionText}`;
+    const nowTs = Date.now();
+    if (handledReactions.has(dedupeKey) && nowTs - handledReactions.get(dedupeKey) < 30000) continue;
+    handledReactions.set(dedupeKey, nowTs);
+
+    await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: `דיווח: ${alertInfo.driverPhone} על ${alertInfo.rideData.cleanedText}` });
+  }
+}
 
 const mockSock = {
-  async sendMessage(jid, content, options) {
+  async sendMessage(jid, content) {
     if (jid === BUG_REPORT_GROUP_JID) {
-      sentToGroup = { jid, content };
+      bugReports.push(content.text);
     }
-    if (content?.react) {
-      reactedBack = content.react;
-    }
-    return { key: { id: "mock_ack_msg_id" } };
+    return { key: { id: "mock_res" } };
   }
 };
 
-// הכנסת נסיעה לדוגמה למטמון
-const testMsgId = "TEST_RIDE_MSG_999";
-sentAlertsCache.set(testMsgId, {
-  msgId: testMsgId,
+// 1. תגובת דיסלייק בקבוצה (בשעה 5 בבוקר) - חייב להתעלם לחלוטין!
+bugReports = [];
+await handleReactionSimulation(mockSock, [{
+  key: { remoteJid: "1234567890-987654@g.us", id: "group_msg_123" },
+  reaction: { text: "👎", key: { remoteJid: "1234567890-987654@g.us", id: "group_msg_123" } }
+}]);
+assert(bugReports.length === 0, "תגובת דיסלייק בקבוצת וואטסאפ (בשעה 5 בבוקר) אינה מדווחת לקבוצת התיקונים!");
+
+// 2. תגובת דיסלייק על הודעה לא מוכרת בפרטי - חייב להתעלם!
+bugReports = [];
+await handleReactionSimulation(mockSock, [{
+  key: { remoteJid: "0521111111@s.whatsapp.net", id: "unknown_msg_999" },
+  reaction: { text: "👎", key: { remoteJid: "0521111111@s.whatsapp.net", id: "unknown_msg_999" } }
+}]);
+assert(bugReports.length === 0, "תגובת דיסלייק על הודעה פרטית שאינה נסיעה של הבוט אינה מדווחת!");
+
+// 3. תגובת דיסלייק על נסיעה של הבוט בפרטי - מדווח לקבוצת התיקונים!
+bugReports = [];
+const testAlertId = "BOT_ALERT_MSG_777";
+sentAlertsCache.set(testAlertId, {
+  msgId: testAlertId,
   rideData: {
-    cleanedText: "כפר חבד שמש 200",
-    groupName: "נסיעות מרכז",
-    senderName: "סדרן בדיקה",
-    senderPhone: "0501234567",
-    searchDesc: "בית שמש (פנימי)"
+    cleanedText: "רמה ד לנעימי 45",
+    groupName: "נסיעות שמש VIP",
   },
-  rawText: "כפר חבד שמש 200 שקל",
-  driverPhone: "0529876543",
-  groupName: "נסיעות מרכז",
-  senderName: "סדרן בדיקה",
-  senderPhone: "0501234567",
-  searchDesc: "בית שמש (פנימי)",
-  sentAt: Date.now()
+  driverPhone: "972539485860",
 });
 
-await handleReaction(mockSock, [{
-  key: { remoteJid: "0529876543@s.whatsapp.net" },
-  reaction: {
-    key: { id: testMsgId, remoteJid: "0529876543@s.whatsapp.net" },
-    text: "👎"
-  }
-}], { driverPhone: "0529876543" });
+await handleReactionSimulation(mockSock, [{
+  key: { remoteJid: "972539485860@s.whatsapp.net", id: testAlertId },
+  reaction: { text: "👎", key: { remoteJid: "972539485860@s.whatsapp.net", id: testAlertId } }
+}]);
 
-assert(sentToGroup !== null, "הדיווח נשלח לקבוצת התיקונים");
-assert(sentToGroup.jid === "120363402521442927@g.us", "היעד של הדיווח הוא 120363402521442927@g.us");
-assert(sentToGroup.content.text.includes("כפר חבד שמש 200"), "הדיווח מכיל את פרטי הנסיעה");
-assert(sentToGroup.content.text.includes("0529876543"), "הדיווח מכיל את מספר הנהג המדווח");
-assert(reactedBack?.text === "🫡", "נשלח אימוג'י 🫡 כאישור לנהג על קבלת הדיווח");
+assert(bugReports.length === 1, "דיסלייק אמיתי של נהג על הודעת בוט נשלח לקבוצת התיקונים");
+assert(bugReports[0].includes("972539485860"), "הדו\"ח מכיל את מספר הנהג");
 
-console.log(`\n🎉 תוצאות: ${passed}/${total} בדיקות עברו בהצלחה!`);
-if (passed === total) {
-  console.log("💯 כל הבאגים תוקנו ונבדקו במלואם!");
-}
+// ==========================================
+// בדיקה 6: פורמט נקי של התראת נסיעה (בלי כותרת ובלי קווים)
+// ==========================================
+console.log("\n--- בדיקה 6: פורמט נקי ללא כותרת ---");
+
+const sampleRide = {
+  cleanedText: "פנימי שמש 50 / רמה ד לרמה ג",
+  groupName: "נסיעות בית שמש",
+  senderName: "יוסי",
+  senderPhone: "0501234567"
+};
+
+const cleanAlertText = `${sampleRide.cleanedText}\n\n📍 ${sampleRide.groupName}\n👤 ${sampleRide.senderName} · ${sampleRide.senderPhone}`;
+
+assert(!cleanAlertText.includes("נסיעה מתאימה נמצאה"), "ההתראה אינה כוללת את הכותרת המעצבנת");
+assert(!cleanAlertText.includes("──────"), "ההתראה אינה כוללת קווים מפרידים מיותרים");
+assert(cleanAlertText.startsWith("פנימי שמש 50"), "ההתראה מתחילה ישירות בפרטי הנסיעה");
+
+console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);

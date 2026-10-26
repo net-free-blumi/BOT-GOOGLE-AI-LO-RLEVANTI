@@ -78,15 +78,13 @@ export function createDeduper(findPlaces, { windowMs = 15 * 60 * 1000 } = {}) {
     const phones = extractPhones(text);
     const places = findPlaces(text);
     const streets = [...new Set(places.filter((p) => p.kind === "street").map((p) => p.phrase))].sort();
-    const hoods = [...new Set(places.filter((p) => p.kind === "neighborhood").map((p) => p.phrase))].sort();
 
     const phoneTag = phones.length ? `|${phones.join(",")}` : "";
     if (price) {
       if (streets.length) {
         for (const s of streets) keys.push({ key: `${prefix}street:${price}|${s}${phoneTag}`, label: `אותו מחיר (${price}) ואותו רחוב (${s})` });
-      } else if (hoods.length) {
-        keys.push({ key: `${prefix}hood:${price}|${hoods.join(",")}${phoneTag}`, label: `אותו מחיר (${price}) ואותה שכונה (${hoods.join(", ")})` });
       }
+      // שכונה + מחיר בלבד (בלי רחוב/טלפון) הוסרה: שתי נסיעות שונות באותה שכונה באותו מחיר אינן כפילות!
     }
 
     for (const phone of phones) keys.push({ key: `${prefix}phone:${phone}|${price ?? ""}`, label: "אותו טלפון ואותו מחיר" });
