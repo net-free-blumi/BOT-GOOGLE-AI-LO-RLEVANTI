@@ -49,6 +49,59 @@ export function extractPrice(text) {
   return null;
 }
 
+// בדיקה האם יש הצהרת פנימי מפורשת לעיר הבית (כמו "פ שמש", "פנימי שמש", "שמש פ", "פ ים", "פ בב")
+export function isExplicitInternal(text, home = "בית שמש") {
+  const norm = normalizeText(text);
+  if (home === "בית שמש") {
+    return (
+      /(^|\s)(?:פנימי\s+שמש|שמש\s+פנימי|פ\s+שמש|שמש\s+פ|פנימי\s+בש|בש\s+פנימי|פ\s+בש|בש\s+פ|פנימי\s+בית\s+שמש|בית\s+שמש\s+פנימי)(\s|$)/i.test(norm) ||
+      /^(?:פ|פנימי)\s+(?:בית\s+)?שמש(?:\s|$)/i.test(norm)
+    );
+  }
+  if (home === "ירושלים") {
+    return (
+      /(^|\s)(?:פנימי\s+ים|ים\s+פנימי|פ\s+ים|ים\s+פ|פנימי\s+ירושלים|ירושלים\s+פנימי)(\s|$)/i.test(norm) ||
+      /^(?:פ|פנימי)\s+(?:ירושלים|ים)(?:\s|$)/i.test(norm)
+    );
+  }
+  if (home === "בני ברק") {
+    return (
+      /(^|\s)(?:פנימי\s+בב|בב\s+פנימי|פ\s+בב|בב\s+פ|פנימי\s+בני\s+ברק|בני\s+ברק\s+פנימי)(\s|$)/i.test(norm) ||
+      /^(?:פ|פנימי)\s+(?:בני\s+ברק|בב)(?:\s|$)/i.test(norm)
+    );
+  }
+  if (home === "מודיעין עילית") {
+    return (
+      /(^|\s)(?:פנימי\s+ספר|ספר\s+פנימי|פ\s+ספר|ספר\s+פ|פנימי\s+מודיעין\s+עילית)(\s|$)/i.test(norm) ||
+      /^(?:פ|פנימי)\s+(?:ספר|קרית\s+ספר|מודיעין\s+עילית)(?:\s|$)/i.test(norm)
+    );
+  }
+  if (home === "ביתר עילית") {
+    return (
+      /(^|\s)(?:פנימי\s+ביתר|ביתר\s+פנימי|פ\s+ביתר|ביתר\s+פ)(\s|$)/i.test(norm) ||
+      /^(?:פ|פנימי)\s+ביתר(?:\s|$)/i.test(norm)
+    );
+  }
+  return norm.includes("פנימי");
+}
+
+// סינון שורות חתימת תחנה וקישורים (למשל "⛔אור החיים🏅⛔ללא פון🏅" או "🎩8080*🎩")
+// כדי ששם תחנת המוניות לא יזוהה בטעות כעיר או רחוב של הנסיעה
+export function stripStationAndLinks(text) {
+  return String(text || "")
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (/^(?:⛔|🎩|🏆|🎖️|🏅|👑|⭐️|🌟).*?(?:⛔|🎩|🏆|🎖️|🏅|👑|⭐️|🌟|פון)/.test(trimmed)) return false;
+      if (/ללא\s+פון|לתחנת\s+|כוכבית\s+שמונת|8080\*/.test(trimmed)) return false;
+      if (/^(?:ווצאפ|טלגרם|וואטסאפ|לינק|קישור)\s*☚/i.test(trimmed)) return false;
+      if (/(?:wa\.me|t\.me|chat\.whatsapp\.com)/i.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n");
+}
+
 export function createMatcher(citiesData, streetsData = {}) {
   const phrases = new Map();
   const abbreviations = new Set();
@@ -180,7 +233,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     }
 
     // 2. מעבר בין שני מוקדים בבית שמש עם גבולות מילה מחמירים
-    const NAMED = "רמת\\s*בית\\s*שמש\\s*[א-ה]|רמה\\s*[א-ה]|לב\\s*הרמה|חפציבה|קריה|הקריה|ביג|הביג|נעימי|הנעימי|סאן\\s*מול|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|הישנה|בית\\s*שמש\\s*הישנה|העיר\\s*הוותיקה|סמטת\\s*הגפן|מחסיה|אדרת|צרעה|הרטוב|ישעי|זכריה";
+    const NAMED = "רמת\\s*בית\\s*שמש\\s*[א-ה]|רמה\\s*[א-ה]|לב\\s*הרמה|חפציבה|קריה|הקריה|ביג|הביג|מרכז\\s*ביג|אזור\\s*התעשייה\\s*ביג|אזור\\s*תעשיה\\s*ביג|אזה\"ת\\s*ביג|נעימי|הנעימי|סאן\\s*מול|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|הישנה|בית\\s*שמש\\s*הישנה|העיר\\s*הוותיקה|סמטת\\s*הגפן|כינור\\s*דוד|הר\\s*מירון|חבקוק\\s*הנביא|ריבל|תלמוד\\s*בבלי|אור\\s*שמח|נהר\\s*הירדן|הירדן|נחל\\s*קישון|מחסיה|אדרת|צרעה|הרטוב|הר\\s*טוב|אזה\"ת\\s*הרטוב|איזור\\s*תעשיה\\s*הרטוב|ישעי|זכריה";
     const spotRe = (inner) => `(?<![א-ת])[הבלמהוכש]?(?:${inner})(?![א-ת])`;
     const sep = "\\s*(?:>|->|&|-|–|/|ל|אל|ו)?\\s*";
     const transitionRe = new RegExp(`${spotRe(NAMED)}${sep}${spotRe(`${NAMED}|[א-ה]`)}`, "i");
@@ -259,7 +312,10 @@ export function createMatcher(citiesData, streetsData = {}) {
   function rideMatches(text, state, groupName = "") {
     const yes = (reason) => ({ ok: true, reason });
     const no = (reason) => ({ ok: false, reason });
-    const places = findPlaces(text);
+
+    // ניקוי חתימת תחנה וקישורים כדי ששם התחנה בתחתית ההודעה לא יזהם את זיהוי המקומות
+    const matchText = stripStationAndLinks(text) || text;
+    const places = findPlaces(matchText);
     const home = state.origin;
 
     // רשימת כל הערים שזוהו בהודעה
@@ -271,16 +327,33 @@ export function createMatcher(citiesData, streetsData = {}) {
     // ==========================================
     if (state.mode === "internal") {
       const norm = normalizeText(text);
+      const isExplicitHomeInternal = isExplicitInternal(text, home);
+      const price = extractPrice(text);
 
-      // חוק ברזל 1: אם מופיעה עיר חיצונית כלשהי (למשל ביתר, בני ברק, ירושלים, כפר חב"ד, סביון, שוהם) - פוסלים מיד!
-      if (externalCities.length > 0) {
-        return no(`נפסל מפנימי: מופיעה עיר חיצונית (${externalCities.join(", ")})`);
+      // הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית רגילה
+      // (אלא אם צוין מפורשות הוש/הלוש/מיניק/לפיש/לפי שעה/נגרר עד 230 ש"ח)
+      const isMultiOrHourly = /(^|\s)(?:הוש|הלוש|הלוך\s+ושוב|מיניק|לפיש|לפי\s+שעה|לפי\s+שעות|נגרר)(\s|$)/i.test(text);
+      const maxInternalPrice = isMultiOrHourly ? 230 : 125;
+      if (price && price > maxInternalPrice && !norm.includes("פנימי")) {
+        return no(`נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)`);
       }
 
-      // חוק ברזל 2: הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית אלא בין-עירונית
-      const price = extractPrice(text);
-      if (price && price >= 130 && !norm.includes("פנימי")) {
-        return no(`נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)`);
+      // בדיקת מסלול בינעירוני מובהק:
+      // אם מזוהות שתי ערים ראשיות (או יותר) שהן שונות, כמו "סבא שמש", "שמש ים", "ים שמש", "ביתר שמש", "בב שמש"
+      const detectedCityAliases = places.filter((p) => p.kind === "alias").map((p) => p.city);
+      const distinctCities = [...new Set(detectedCityAliases)];
+      if (distinctCities.length >= 2) {
+        return no(`נפסל מפנימי: מזוהה מסלול בינעירוני בין ${distinctCities.join(" ל-")}`);
+      }
+
+      // טיפול בערים חיצוניות
+      if (externalCities.length > 0) {
+        // אם הנסיעה מוגדרת מפורשות כפנימי בעיר הבית (למשל "פ שמש 50 ש") והמחיר סביר (<= 110 ש"ח),
+        // ייתכן שמדובר ברחוב/מוקד מקומי ששמו מתנגש עם עיר (למשל "הר מירון", "רחוב ירושלים", "רחוב חיפה")
+        if (isExplicitHomeInternal && (!price || price <= 110 || isMultiOrHourly)) {
+          return yes(`פנימי ${home}: הוגדר מפורשות כפנימי (${price ? price + " ש\"ח" : "מחיר מקומי"})`);
+        }
+        return no(`נפסל מפנימי: מופיעה עיר חיצונית (${externalCities.join(", ")})`);
       }
 
       // בדיקת מעברים פנימיים ספציפיים לפי עיר
@@ -291,10 +364,21 @@ export function createMatcher(citiesData, streetsData = {}) {
         return yes(`פנימי ירושלים: זוהה מעבר פנימי בתוך ירושלים`);
       }
 
-      // אם זוהה המקום של עיר הבית
-      const mine = places.filter((p) => p.city === home);
-      if (mine.length > 0) {
-        return yes(`פנימי ${home}: זוהה "${mine[0].phrase}"`);
+      // אם זוהתה הצהרת פנימי מפורשת של עיר הבית
+      if (isExplicitHomeInternal) {
+        return yes(`פנימי ${home}: צוין מפורשות`);
+      }
+
+      // אם זוהתה שכונה / רחוב / מושב של עיר הבית (חייב מוקד ספציפי, לא סתם הכינוי "שמש"!)
+      const localSpots = places.filter((p) => p.city === home && p.kind !== "alias");
+      if (localSpots.length > 0) {
+        // חייב להיות מלווה במחיר מקומי, מעבר, הצהרת פנימי, או "בתוך"
+        if (price && (price <= 90 || isMultiOrHourly)) {
+          return yes(`פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}" עם מחיר (${price} ש"ח)`);
+        }
+        if (norm.includes("בתוך") || isExplicitHomeInternal) {
+          return yes(`פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}"`);
+        }
       }
 
       // בדיקה לפי שם הקבוצה (אם הקבוצה ייעודית לפנימי שמש)
@@ -455,9 +539,30 @@ export function processDriverCommand(rawText) {
     "ביתר": "ביתר עילית",
     "אלעד": "אלעד",
     "אשדוד": "אשדוד",
+    "סבא": "כפר סבא",
+    "כפר סבא": "כפר סבא",
+    "פת": "פתח תקווה",
+    "פתח": "פתח תקווה",
+    "פתח תקווה": "פתח תקווה",
+    "ראשון": "ראשון לציון",
+    "ראשלצ": "ראשון לציון",
+    "ראשון לציון": "ראשון לציון",
+    "גבעז": "גבעת זאב",
+    "גבעת זאב": "גבעת זאב",
+    "גת": "קריית גת",
+    "קרית גת": "קריית גת",
+    "טלז": "טלזסטון",
+    "טלזסטון": "טלזסטון",
     "חיפה": "חיפה",
     "טבריה": "טבריה",
     "צפת": "צפת",
+    "רחובות": "רחובות",
+    "חולון": "חולון",
+    "בת ים": "בת ים",
+    "לוד": "לוד",
+    "רמלה": "רמלה",
+    "עפולה": "עפולה",
+    "נתיבות": "נתיבות",
   };
 
   const cleanCmd = norm.replace(/^(?:פ|פנוי)\s+/, "");

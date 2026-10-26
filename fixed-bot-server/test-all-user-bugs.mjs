@@ -85,10 +85,54 @@ assert(v5.ok, `רמה ב לרמה ג התקבלה בהצלחה: "${v5.reason}"`)
 const v6 = matcher.rideMatches(`שמש צמצם \nמחסיה אדרת 80\nזמן`, { active: true, mode: "reduce", origin: "בית שמש" });
 assert(v6.ok, `מחסיה אדרת 80 בצמצום התקבלה בהצלחה: "${v6.reason}"`);
 
+// חבקוק הנביא להר מירון
+const vHarMeron = matcher.rideMatches(`פ שמש 50 ש\nחבקוק הנביא להר מירון`, internalShemeshState);
+assert(vHarMeron.ok, `חבקוק הנביא להר מירון התקבלה בהצלחה: "${vHarMeron.reason}"`);
+
+// שמש פנימי הוש 80ש / כינור דוד רמה ג
+const vKinor = matcher.rideMatches(`שמש פנימי הוש 80ש \n כינור דוד רמה ג`, internalShemeshState);
+assert(vKinor.ok, `כינור דוד רמה ג התקבלה בהצלחה: "${vKinor.reason}"`);
+
+// שמש 80 בתוך ד / שתי נקודות נהג עולה למסור
+const vBetochD = matcher.rideMatches(`שמש 80 בתוך ד \n שתי נקודות נהג עולה למסור`, internalShemeshState);
+assert(vBetochD.ok, `שמש 80 בתוך ד התקבלה בהצלחה: "${vBetochD.reason}"`);
+
+// שמש פנימי 80 / קריה לרמה א / הלוש
+const vKriyaRamaA = matcher.rideMatches(`שמש פנימי 80\nקריה לרמה א \n הלוש`, internalShemeshState);
+assert(vKriyaRamaA.ok, `קריה לרמה א הלוש התקבלה בהצלחה: "${vKriyaRamaA.reason}"`);
+
+// פ שמש 70 / רמה ה להר טוב
+const vHarTov = matcher.rideMatches(`פ שמש 70 \n רמה ה להר טוב \n משלמת ביט`, internalShemeshState);
+assert(vHarTov.ok, `רמה ה להר טוב התקבלה בהצלחה: "${vHarTov.reason}"`);
+
+// פ שמש 50 / מנחם פורוש לישעי
+const vYishi = matcher.rideMatches(`פ שמש 50 \n מנחם פורוש לישעי \n זמנים`, internalShemeshState);
+assert(vYishi.ok, `מנחם פורוש לישעי התקבלה בהצלחה: "${vYishi.reason}"`);
+
+// שמש פ 50ש / ד להישנה / שד' האמוראים / אור החיים דרייבוט
+const vDrivebotDToYeshana = matcher.rideMatches(`שמש פ 50ש\nא 1 משלמת בביט\nד להישנה\nשד' האמוראים זמן\nwa.me/972552732722?text=ת+852897622+gd66wp\n⛔אור החיים🏅⛔ללא פון🏅`, internalShemeshState);
+assert(vDrivebotDToYeshana.ok, `שמש פ 50ש ד להישנה ושד' האמוראים התקבלה בהצלחה: "${vDrivebotDToYeshana.reason}"`);
+
 // ==========================================
 // בדיקה 3: פסילת נסיעות בינעירוניות בפנימי שמש
 // ==========================================
 console.log("\n--- בדיקה 3: פסילת נסיעות בינעירוניות ---");
+
+// סבא שמש 100 היוצרים (כפר סבא - בית שמש)
+const vSaba = matcher.rideMatches(`סבא שמש 100\nהיוצרים\nלבקש 0504357919`, internalShemeshState);
+assert(!vSaba.ok, `סבא שמש 100 נפסל מפנימי בהצלחה: "${vSaba.reason}"`);
+
+// שמש ים 50 בדיקה
+const vShemeshYam = matcher.rideMatches(`שמש ים \n 50 \n בדיקה`, internalShemeshState);
+assert(!vShemeshYam.ok, `שמש ים 50 בדיקה נפסל מפנימי: "${vShemeshYam.reason}"`);
+
+// ים שמש 50 עזרה
+const vYamShemesh50 = matcher.rideMatches(`ים שמש \n 50 \n עזרה`, internalShemeshState);
+assert(!vYamShemesh50.ok, `ים שמש 50 עזרה נפסל מפנימי: "${vYamShemesh50.reason}"`);
+
+// חולון תא 100ש משלוח
+const vHolon = matcher.rideMatches(`חולון תא 100ש משלוח \n שמעון אבידן`, internalShemeshState);
+assert(!vHolon.ok, `חולון תא נפסל מפנימי בית שמש: "${vHolon.reason}"`);
 
 const vKfarChabad = matcher.rideMatches(`כפר חבד שמש 200`, internalShemeshState);
 assert(!vKfarChabad.ok, `כפר חב"ד נפסל: "${vKfarChabad.reason}"`);
