@@ -352,4 +352,35 @@ const connectedTargets = mockApprovedUsers.filter((u) => connectedPhones.has(u.p
 assert(allTargets.length === 2, "שידור לכל הנהגים כולל את כל המאושרים");
 assert(connectedTargets.length === 1 && connectedTargets[0].phone === "972515157166", "שידור למחוברים בלבד מסנן בהצלחה ללא שגיאת sessions.filter");
 
+// ==========================================
+// בדיקה 8: תרחישי הגרסה החדשה (מניעת כפילויות DriveBot ופסילת נסיעות חוץ)
+// ==========================================
+console.log("\n--- בדיקה 8: תרחישי הגרסה החדשה (DriveBot כפילויות ונסיעות חוץ) ---");
+
+// 1. פסילת נסיעת חוץ מגבעתיים (למרות שמוזכרת 'רמה ד' ו'גנסין')
+const vGivatayim = matcher.rideMatches(`גבעתיים שמש נחת 100\nגנסין 👈 רמה ד`, internalShemeshState);
+assert(!vGivatayim.ok, `נסיעת חוץ מגבעתיים נפסלת מפנימי בית שמש: "${vGivatayim.reason}"`);
+
+// 2. זיהוי 'רמה ד' כשלעצמו שאינו מהווה מעבר פנימי
+const vRamatDAlone = matcher.detectInternalTransitionBeitShemesh("רמה ד");
+assert(!vRamatDAlone, "שכונת 'רמה ד' לבדה אינה מעבר פנימי");
+
+// 3. מניעת כפילות DriveBot בין קבוצות וואטסאפ שונות עם סיומת קישור שונה (+vkvdnj מול +hwrp6k)
+const msgDriveBotGroup1 = `⚠️⚠️⚠️⚠️⚠️⚠️\nפ שמש\nעלית הנוער לרמה א\n50 זמן\nווצאפ ☚ wa.me/972552732722?text=ת+973865848+vkvdnj\nטלגרם ☚ t.me/prod_drivebot?start=t-973865848-vkvdnj\n😁 קרליבך 😁\n━━━━━━━━━━━━━━━━━━━\n⚠️ | חשוב: התחברו כבר עכשיו לפלטפורמות החדשות של דרייבוט!`;
+const msgDriveBotGroup2 = `⚠️⚠️⚠️⚠️⚠️⚠️\nפ שמש\nעלית הנוער לרמה א\n50 זמן\nווצאפ ☚ wa.me/972552732722?text=ת+973865848+hwrp6k\nטלגרם ☚ t.me/prod_drivebot?start=t-973865848-hwrp6k\n😁 קרליבך 😁\n━━━━━━━━━━━━━━━━━━━\n⚠️ | חשוב: התחברו כבר עכשיו לפלטפורמות החדשות של דרייבוט!`;
+
+const testDeduper = createDeduper(matcher.findPlaces);
+const chk1 = testDeduper.check(msgDriveBotGroup1, "972539485860");
+const chk2 = testDeduper.check(msgDriveBotGroup2, "972539485860");
+
+assert(!chk1.duplicate, "הודעה ראשונה של דרייבוט מקבוצה א מאושרת כנסיעה חדשה");
+assert(chk2.duplicate, `הודעה שנייה של אותה נסיעה מקבוצה ב נחסמת ככפילות: "${chk2.reason}"`);
+
+// 4. קבלת נסיעות בית שמש פנימיות חדשות
+const vAliyatHanoar = matcher.rideMatches(`פ שמש\nעלית הנוער לרמה א\n50 זמן\nלבקש פה`, internalShemeshState);
+assert(vAliyatHanoar.ok, `עלית הנוער לרמה א התקבלה: "${vAliyatHanoar.reason}"`);
+
+const vPoliceCollege = matcher.rideMatches(`פ שמש 50\nהמכללה לשוטרים & ד\nזמנים\nלבקש פה 0552683249`, internalShemeshState);
+assert(vPoliceCollege.ok, `המכללה לשוטרים & ד התקבלה: "${vPoliceCollege.reason}"`);
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);

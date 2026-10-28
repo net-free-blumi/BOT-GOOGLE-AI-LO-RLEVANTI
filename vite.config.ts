@@ -22,6 +22,26 @@ export default defineConfig(() => {
           target: 'http://82.70.210.206:3000',
           changeOrigin: true,
           secure: false,
+          configure: (proxy) => {
+            proxy.on('error', (err, _req, res) => {
+              // Gracefully handle ECONNREFUSED when remote VPS is unreachable
+              const httpRes = res as any;
+              if (httpRes && !httpRes.headersSent && typeof httpRes.writeHead === 'function') {
+                httpRes.writeHead(503, {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'Cache-Control': 'no-store',
+                });
+                httpRes.end(
+                  JSON.stringify({
+                    ok: false,
+                    isOffline: true,
+                    error: 'שרת הבוט (82.70.210.206:3000) אינו זמין כרגע. הפעל את השרת ב-VPS או השתמש במצב דמו.',
+                    code: (err as any)?.code || 'ECONNREFUSED',
+                  })
+                );
+              }
+            });
+          },
         },
       },
     },

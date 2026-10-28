@@ -38,6 +38,57 @@ export function isUniqueRideLink(link) {
   return false;
 }
 
+// מחלץ מזהה כרטיס/נסיעה ייחודי מקישורי בוטים (כמו DriveBot, TaxiBot)
+// פותר לחלוטין את הבעיה שכל קבוצת וואטסאפ מקבלת קוד מעקב שונה (כמו +vkvdnj מול +hwrp6k מול +3xasiz)
+export function extractRideTicket(text) {
+  const s = String(text || "");
+
+  // 1. קישורי WhatsApp של בוטים: wa.me/972552732722?text=ת+973865848+vkvdnj
+  const waMatch = s.match(/wa\.me\/\d+\?text=[^&\s]*?(?:[^\d\w]|^)(\d{6,12})(?:[^\d\w]|$)/i);
+  if (waMatch) return waMatch[1];
+
+  // 2. קישורי Telegram של בוטים: t.me/prod_drivebot?start=t-973865848-vkvdnj
+  const tgMatch = s.match(/t\.me\/[a-z0-9_]+bot\?start=(?:[a-z0-9_-]*?)(\d{6,12})/i);
+  if (tgMatch) return tgMatch[1];
+
+  // 3. קישורי אתרים ייעודיים של בוטים
+  const linkMatch = s.match(/(?:drivebot|taxibot)[^&\s]*?(?:id=|\/|t-)(\d{6,12})/i);
+  if (linkMatch) return linkMatch[1];
+
+  // 4. מזהה כרטיס מפורש בטקסט
+  const textMatch = s.match(/(?:נסיעה|כרטיס|הזמנה|order|ticket|ride\s*id)[:\s#]*(\d{6,12})/i);
+  if (textMatch) return textMatch[1];
+
+  return null;
+}
+
+// מחלץ טקסט ליבה של הנסיעה (מנקה קישורים משתנים, שורות פרסומת וקודים רנדומליים של קבוצות)
+export function extractCoreRideText(text) {
+  return String(text || "")
+    .split("\n")
+    .filter((line) => {
+      const l = line.trim();
+      if (!l) return false;
+      if (/^(?:⚠️|🔴|📌|📍|👤|🏷️|⏱️|💡|━|─|=|-)+/.test(l)) return false;
+      if (
+        /התחברו\s+כבר\s+עכשיו|הבוט\s+בוואטסאפ\s+ייסגר|הטלגרם\s+האדום|הוואטסאפ\s+האדום|קבוצת\s+כל\s+הנסיעות|מספרי\s+הפצה|הפצה\s+לצרף|לבקש\s+במס|ללא\s+פון|סדרן\s*:/i.test(
+          l
+        )
+      ) {
+        return false;
+      }
+      if (/(?:https?:\/\/|wa\.me|t\.me|drivebot\.co\.il|chat\.whatsapp\.com)/i.test(l)) return false;
+      return true;
+    })
+    .join(" ")
+    .toLowerCase()
+    .replace(/[֑-ׇ]/g, "")
+    .replace(/["'`´׳״“”‘’]/g, "")
+    .replace(/[^א-ת0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function extractPrice(text) {
   const cleaned = String(text).replace(URL_RE, " ").replace(PHONE_RE, " ").replace(TIME_RE, " ").replace(/\d{6,}/g, " ");
 
@@ -62,29 +113,44 @@ export function createDeduper(findPlaces, { windowMs = 15 * 60 * 1000 } = {}) {
     const keys = [];
     const prefix = driverScope ? `${driverScope}:` : "";
 
-    // קישור נסיעה ייחודי בלבד (מזהה הזמנה/טיקט ספציפי)
+    // 1. מזהה כרטיס נסיעה ייחודי מקישורי בוטים (מזהה זהה בין קבוצות שונות!)
+    const ticket = extractRideTicket(text);
+    if (ticket) {
+      keys.push({ key: `${prefix}ticket:${ticket}`, label: `אותו מספר נסיעה (${ticket}) מקבוצות שונות` });
+    }
+
+    // 2. קישור נסיעה ייחודי ישיר
     for (const link of extractLinks(text)) {
       if (isUniqueRideLink(link)) {
         keys.push({ key: `${prefix}link:${link}`, label: "אותו קישור הזמנה ייחודי" });
       }
     }
 
+    // 3. טקסט ליבה נקי (זהה גם כשהסיומת של הקישור או האימוג'ים שונים בין קבוצות)
+    const coreText = extractCoreRideText(text);
+    if (coreText.length >= 12) {
+      keys.push({ key: `${prefix}core:${coreText}`, label: "אותם פרטי נסיעה בדיוק (בלי קישורים משתנים)" });
+    }
+
+    // 4. טקסט גולמי מנורמל
     const norm = normalizeText(text);
     if (norm.length >= MIN_EXACT_TEXT_LENGTH) {
       keys.push({ key: `${prefix}text:${norm}`, label: "אותה הודעה בדיוק" });
     }
 
+    // 5. רחובות + מחיר
     const price = extractPrice(text);
     const phones = extractPhones(text);
-    const places = findPlaces(text);
+    const places = findPlaces ? findPlaces(text) : [];
     const streets = [...new Set(places.filter((p) => p.kind === "street").map((p) => p.phrase))].sort();
 
     const phoneTag = phones.length ? `|${phones.join(",")}` : "";
     if (price) {
       if (streets.length) {
-        for (const s of streets) keys.push({ key: `${prefix}street:${price}|${s}${phoneTag}`, label: `אותו מחיר (${price}) ואותו רחוב (${s})` });
+        for (const s of streets) {
+          keys.push({ key: `${prefix}street:${price}|${s}${phoneTag}`, label: `אותו מחיר (${price}) ואותו רחוב (${s})` });
+        }
       }
-      // שכונה + מחיר בלבד (בלי רחוב/טלפון) הוסרה: שתי נסיעות שונות באותה שכונה באותו מחיר אינן כפילות!
     }
 
     // בדיקת טלפון+מחיר בלבד הוסרה: טלפון בהודעה הוא מספר הסדרן שמפרסם עשרות נסיעות שונות באותו מחיר!

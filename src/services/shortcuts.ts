@@ -46,6 +46,16 @@ export const DEFAULT_SHORTCUTS: CityAlias[] = [
   { id: '39', shortcut: 'לוזית', city: 'בית שמש', note: 'מושב סמוך לבית שמש' },
   { id: '40', shortcut: 'בית גמאל', city: 'בית שמש', note: 'מנזר / מושב סמוך' },
   { id: '41', shortcut: 'רמת לחי', city: 'בית שמש', note: 'אזור סמוך' },
+  { id: '42', shortcut: 'גבעתיים', city: 'גבעתיים', note: 'גוש דן' },
+  { id: '43', shortcut: 'הוד השרון', city: 'הוד השרון', note: 'שרון' },
+  { id: '44', shortcut: 'רמת השרון', city: 'רמת השרון', note: 'שרון' },
+  { id: '45', shortcut: 'רמה ד', city: 'בית שמש', note: 'שכונה בבית שמש' },
+  { id: '46', shortcut: 'כינור דוד', city: 'בית שמש', note: 'מוקד בבית שמש' },
+  { id: '47', shortcut: 'ביג', city: 'בית שמש', note: 'מרכז ביג בית שמש' },
+  { id: '48', shortcut: 'אזור התעשייה ביג', city: 'בית שמש', note: 'אזה"ת ביג בית שמש' },
+  { id: '49', shortcut: 'חבקוק הנביא', city: 'בית שמש', note: 'רחוב ראשי בבית שמש' },
+  { id: '50', shortcut: 'עליית הנוער', city: 'בית שמש', note: 'רחוב בבית שמש' },
+  { id: '51', shortcut: 'שדרות האמוראים', city: 'בית שמש', note: 'שדרה ברמה ד בית שמש' },
 ];
 
 export function loadShortcuts(): CityAlias[] {
