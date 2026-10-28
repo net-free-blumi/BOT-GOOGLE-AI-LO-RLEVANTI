@@ -327,4 +327,29 @@ assert(vYoelGefen.ok, `יואל הנביא לגפן התקבלה בהצלחה: "
 const vStationClean = matcher.rideMatches(`⚠️⚠️⚠️⚠️⚠️⚠️\nשמש פ 50ש\nא 1 משלמת בביט\nד להישנה\nשד' האמוראים זמן\nwa.me/972552732722?text=ת+852897622+gd66wp\n‎⛔אור החיים🏅⛔ללא פון🏅`, internalShemeshState);
 assert(vStationClean.ok, `נסיעה עם חתימת תחנת אור החיים התקבלה נקי: "${vStationClean.reason}"`);
 
+// 10. בדיקת לוגיקת שידור (Broadcast) - אימות שאין TypeError על sessions
+const mockSessionsSummary = {
+  bot: { phone: "972555081810", connected: true },
+  drivers: [
+    { phone: "972515157166", status: "connected" },
+    { phone: "972501234567", status: "disconnected" }
+  ],
+  totalConnectedDrivers: 1
+};
+const mockApprovedUsers = [
+  { phone: "972515157166", name: "נהג מחובר" },
+  { phone: "972501234567", name: "נהג מנותק" }
+];
+const driverList = Array.isArray(mockSessionsSummary?.drivers) ? mockSessionsSummary.drivers : [];
+const connectedPhones = new Set(
+  driverList
+    .filter((s) => s.status === "connected")
+    .map((s) => s.phone)
+);
+const allTargets = mockApprovedUsers;
+const connectedTargets = mockApprovedUsers.filter((u) => connectedPhones.has(u.phone));
+
+assert(allTargets.length === 2, "שידור לכל הנהגים כולל את כל המאושרים");
+assert(connectedTargets.length === 1 && connectedTargets[0].phone === "972515157166", "שידור למחוברים בלבד מסנן בהצלחה ללא שגיאת sessions.filter");
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);

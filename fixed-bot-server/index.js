@@ -973,16 +973,17 @@ startDashboard({
 
     const usersData = loadUsersData();
     const approved = usersData.approvedUsers || [];
-    const sessions = getAllSessionsSummary();
+    const sessionsSummary = getAllSessionsSummary();
+    const driverList = Array.isArray(sessionsSummary?.drivers) ? sessionsSummary.drivers : [];
     const connectedPhones = new Set(
-      sessions
+      driverList
         .filter((s) => s.status === "connected" && !s.isMainBot)
         .map((s) => cleanPhone(s.phone))
     );
 
     let targets = [];
     if (targetType === "connected") {
-      targets = approved.filter((u) => connectedPhones.has(cleanPhone(u.phone)));
+      targets = approved.filter((u) => connectedPhones.has(cleanPhone(u.phone)) || isDriverSessionConnected(u.phone));
     } else {
       targets = approved;
     }
