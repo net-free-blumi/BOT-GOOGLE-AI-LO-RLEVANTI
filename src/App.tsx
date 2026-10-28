@@ -23,7 +23,8 @@ import {
   stopBot,
   fetchUsersList,
   fetchErrors,
-  clearErrors
+  clearErrors,
+  sendBroadcast
 } from './services/api.ts';
 import { loadShortcuts, saveShortcuts } from './services/shortcuts.ts';
 import { loadSpamRules, saveSpamRules, cleanRideMessage } from './services/spamCleaner.ts';
@@ -40,7 +41,11 @@ import { SpamCleanerModal } from './components/SpamCleanerModal.tsx';
 import { AiHandoffModal } from './components/AiHandoffModal.tsx';
 import { UsersManagementModal } from './components/UsersManagementModal.tsx';
 import { BugTrackerModal } from './components/BugTrackerModal.tsx';
+import { BroadcastModal } from './components/BroadcastModal.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
+import { AccessibilityWidget } from './components/AccessibilityWidget.tsx';
+import { LegalModal, LegalTab } from './components/LegalModal.tsx';
+import { Footer } from './components/Footer.tsx';
 import { AlertCircle, CheckCircle2, X, Bug } from 'lucide-react';
 
 export default function App() {
@@ -73,8 +78,16 @@ export default function App() {
   const [spamModalOpen, setSpamModalOpen] = useState(false);
   const [aiHandoffModalOpen, setAiHandoffModalOpen] = useState(false);
   const [usersModalOpen, setUsersModalOpen] = useState(false);
+  const [broadcastModalOpen, setBroadcastModalOpen] = useState(false);
   const [bugModalOpen, setBugModalOpen] = useState(false);
   const [errorsList, setErrorsList] = useState<ErrorReport[]>([]);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [legalModalTab, setLegalModalTab] = useState<LegalTab>('about');
+
+  const handleOpenLegalTab = (tab: LegalTab = 'about') => {
+    setLegalModalTab(tab);
+    setLegalModalOpen(true);
+  };
 
   // Toast notifications
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; message: string } | null>(null);
@@ -84,6 +97,35 @@ export default function App() {
     setTimeout(() => {
       setToast((curr) => (curr?.message === message ? null : curr));
     }, 4000);
+  };
+
+  const handleSendBroadcast = async (message: string, targetType: 'all' | 'connected') => {
+    try {
+      const res = await sendBroadcast(message, targetType);
+      if (res.ok || res.success) {
+        showToast(
+          `ההודעה שודרה בהצלחה ל-${res.sentCount || 0} נהגים${res.failedCount ? ` (${res.failedCount} נכשלו)` : ''}`,
+          'ok'
+        );
+        return {
+          ok: true,
+          sentCount: res.sentCount,
+          failedCount: res.failedCount,
+        };
+      } else {
+        showToast(res.error || 'שגיאה בשידור ההודעה', 'err');
+        return {
+          ok: false,
+          error: res.error || 'שגיאה בשידור ההודעה',
+        };
+      }
+    } catch (err: any) {
+      showToast(err.message || 'שגיאה בשידור ההודעה', 'err');
+      return {
+        ok: false,
+        error: err.message || 'שגיאה בלתי צפויה',
+      };
+    }
   };
 
   // Poll timer reference
@@ -261,6 +303,7 @@ export default function App() {
           onLogin={handleLogin}
           onOpenConnectionModal={() => setConnectionModalOpen(true)}
           onEnterDemoMode={handleEnterDemoMode}
+          onOpenLegalTab={handleOpenLegalTab}
           config={config}
           loading={actionLoading}
           error={loginError}
@@ -275,10 +318,13 @@ export default function App() {
             setNetlifyModalOpen(true);
           }}
         />
-        <NetlifyGuideModal
-          isOpen={netlifyModalOpen}
-          onClose={() => setNetlifyModalOpen(false)}
-          serverUrl={config.baseUrl}
+        <LegalModal
+          isOpen={legalModalOpen}
+          onClose={() => setLegalModalOpen(false)}
+          initialTab={legalModalTab}
+        />
+        <AccessibilityWidget
+          onOpenAccessibilityStatement={() => handleOpenLegalTab('accessibility')}
         />
       </>
     );
@@ -356,7 +402,9 @@ export default function App() {
         onOpenSpamModal={() => setSpamModalOpen(true)}
         onOpenAiHandoffModal={() => setAiHandoffModalOpen(true)}
         onOpenUsersModal={() => setUsersModalOpen(true)}
+        onOpenBroadcastModal={() => setBroadcastModalOpen(true)}
         onOpenBugModal={() => setBugModalOpen(true)}
+        onOpenLegalModal={handleOpenLegalTab}
         errorsCount={errorsList.length}
         onLogout={handleLogout}
         onToggleDemoMode={() => {
@@ -437,6 +485,9 @@ export default function App() {
         />
       </main>
 
+      {/* Footer */}
+      <Footer onOpenLegalTab={handleOpenLegalTab} className="mt-12" />
+
       {/* Modals */}
       <ConnectionModal
         config={config}
@@ -498,6 +549,25 @@ export default function App() {
         onClearErrors={handleClearErrors}
         onRefreshErrors={() => refreshData(true)}
         isApiConnected={isApiConnected}
+      />
+
+      <BroadcastModal
+        isOpen={broadcastModalOpen}
+        onClose={() => setBroadcastModalOpen(false)}
+        approvedUsers={approvedUsersList}
+        activeSessionsCount={status?.stats?.totalConnectedDrivers ?? approvedUsersList.filter(u => u.connectionStatus === 'connected').length}
+        onSendBroadcast={handleSendBroadcast}
+      />
+
+      {/* Legal & Accessibility Modals */}
+      <LegalModal
+        isOpen={legalModalOpen}
+        onClose={() => setLegalModalOpen(false)}
+        initialTab={legalModalTab}
+      />
+
+      <AccessibilityWidget
+        onOpenAccessibilityStatement={() => handleOpenLegalTab('accessibility')}
       />
 
       {/* Discrete Floating Bug Tracker Button */}

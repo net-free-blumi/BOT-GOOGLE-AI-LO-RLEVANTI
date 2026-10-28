@@ -24,3 +24,66 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #334661;
 }
+
+/* ========================================================
+   Accessibility Modes (WCAG 2.1 AA / תקן ישראלי ת"י 5568)
+   ======================================================== */
+html.a11y-font-lg {
+  font-size: 112% !important;
+}
+html.a11y-font-xl {
+  font-size: 125% !important;
+}
+html.a11y-font-xxl {
+  font-size: 138% !important;
+}
+
+html.a11y-readable-font * {
+  font-family: Arial, Tahoma, -apple-system, sans-serif !important;
+  letter-spacing: 0.02em !important;
+}
+
+html.a11y-highlight-links a,
+html.a11y-highlight-links button {
+  outline: 2px dashed #f59e0b !important;
+  outline-offset: 3px !important;
+}
+
+html.a11y-high-contrast {
+  filter: contrast(150%) brightness(110%);
+}
+
+html.a11y-monochrome {
+  filter: grayscale(100%);
+}
+
+html.a11y-inverted {
+  filter: invert(100%) hue-rotate(180deg);
+}
+
+html.a11y-no-animations *,
+html.a11y-no-animations *::before,
+html.a11y-no-animations *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ========================================================
+   Hide Netlify floating badges and preview drawer
+   ======================================================== */
+[data-netlify-badge],
+.netlify-badge,
+#netlify-badge,
+iframe[src*="netlify"],
+div[class*="netlify-badge"],
+div[class*="netlify-drawer"],
+#netlify-drawer,
+a[href*="netlify.com"][class*="badge"],
+div:has(> a[href*="netlify.com"]) {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

@@ -15,9 +15,12 @@ import {
   Scissors,
   Bot,
   Users,
-  Bug
+  Bug,
+  Megaphone,
+  Scale
 } from 'lucide-react';
 import { WhatsAppState, DriverState, ConnectionConfig, ApprovedUser } from '../types.ts';
+import { Logo } from './Logo.tsx';
 
 interface NavbarProps {
   wa: WhatsAppState;
@@ -32,12 +35,14 @@ interface NavbarProps {
   onSelectDriverPhone?: (phone: string) => void;
   onRefresh: () => void;
   onOpenConnectionModal: () => void;
-  onOpenNetlifyModal: () => void;
+  onOpenNetlifyModal?: () => void;
   onOpenShortcutsModal: () => void;
   onOpenSpamModal: () => void;
   onOpenAiHandoffModal: () => void;
   onOpenUsersModal: () => void;
+  onOpenBroadcastModal?: () => void;
   onOpenBugModal?: () => void;
+  onOpenLegalModal?: (tab?: 'about' | 'accessibility' | 'terms' | 'privacy') => void;
   onLogout: () => void;
   onToggleDemoMode: () => void;
 }
@@ -60,7 +65,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSpamModal,
   onOpenAiHandoffModal,
   onOpenUsersModal,
+  onOpenBroadcastModal,
   onOpenBugModal,
+  onOpenLegalModal,
   onLogout,
   onToggleDemoMode,
 }) => {
@@ -69,24 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2.5">
         {/* Brand & Driver Selector */}
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500/20 via-[#151b24] to-emerald-500/10 border border-amber-500/30 flex items-center justify-center text-lg shadow-inner shadow-amber-500/10">
-              🚕
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-sm sm:text-base font-bold tracking-tight text-white flex items-center gap-1.5">
-                  מרכז שליטה
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-medium">
-                    נסיעות בוט
-                  </span>
-                </h1>
-              </div>
-              <p className="text-[10px] text-slate-400 hidden sm:block">
-                82.70.210.206 · סנכרון רב-משתמשי (Multi-Session)
-              </p>
-            </div>
-          </div>
+          <Logo size="sm" showText={true} subtitle="מערכת ניהול וסינון נסיעות חכמה · חיבור רב-נהגים" />
 
           {/* Quick Driver Selector Dropdown */}
           {approvedUsers.length > 0 && (
@@ -194,6 +184,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
+          {/* Broadcast to Drivers */}
+          <button
+            onClick={onOpenBroadcastModal}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 transition-colors cursor-pointer"
+            title="שידור הודעת וואטסאפ מרוכזת לכל הנהגים בלחיצה אחת"
+          >
+            <Megaphone className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">שידור לנהגים</span>
+          </button>
+
           {/* City Shortcuts Button */}
           <button
             onClick={onOpenShortcutsModal}
@@ -243,14 +243,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">סיכום ל-AI</span>
           </button>
 
-          {/* Netlify deployment helper */}
+          {/* Legal & About info button */}
           <button
-            onClick={onOpenNetlifyModal}
-            className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#141d29] hover:bg-[#1a2535] border border-[#233348] text-teal-300 hover:text-teal-200 transition-colors cursor-pointer"
-            title="מדריך וקובצי הגדרה להעלאה ל-Netlify"
+            onClick={() => onOpenLegalModal?.('about')}
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#141d29] hover:bg-[#1a2535] border border-[#233348] text-slate-300 hover:text-white transition-colors cursor-pointer"
+            title="אודות המערכת, נגישות ותנאי שימוש"
           >
-            <Layers className="w-3.5 h-3.5" />
-            Netlify
+            <Scale className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden xl:inline">אודות ומשפט</span>
           </button>
 
           {/* Server Settings */}

@@ -87,7 +87,7 @@ export function createDeduper(findPlaces, { windowMs = 15 * 60 * 1000 } = {}) {
       // שכונה + מחיר בלבד (בלי רחוב/טלפון) הוסרה: שתי נסיעות שונות באותה שכונה באותו מחיר אינן כפילות!
     }
 
-    for (const phone of phones) keys.push({ key: `${prefix}phone:${phone}|${price ?? ""}`, label: "אותו טלפון ואותו מחיר" });
+    // בדיקת טלפון+מחיר בלבד הוסרה: טלפון בהודעה הוא מספר הסדרן שמפרסם עשרות נסיעות שונות באותו מחיר!
     return keys;
   }
 

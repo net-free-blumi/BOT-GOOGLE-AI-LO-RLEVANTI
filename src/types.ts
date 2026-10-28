@@ -63,6 +63,7 @@ export interface BotStats {
   dedupeSize?: number;
   pendingUsersCount?: number;
   approvedUsersCount?: number;
+  totalConnectedDrivers?: number;
 }
 
 export interface BotSettings {

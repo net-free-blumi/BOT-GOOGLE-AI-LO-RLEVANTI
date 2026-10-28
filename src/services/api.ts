@@ -574,3 +574,30 @@ export async function clearAllSessionsAndLidMapApi(): Promise<{
     method: 'POST',
   });
 }
+
+// שידור הודעה בוואטסאפ לכל הנהגים
+export async function sendBroadcast(message: string, targetType: 'all' | 'connected'): Promise<{
+  ok: boolean;
+  success?: boolean;
+  sentCount?: number;
+  failedCount?: number;
+  recipients?: string[];
+  error?: string;
+  message?: string;
+}> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return {
+      ok: true,
+      success: true,
+      sentCount: targetType === 'all' ? 2 : 1,
+      failedCount: 0,
+      recipients: ['972515157166'],
+      message: 'הודעת שידור נשלחה בהצלחה (מצב הדגמה)',
+    };
+  }
+  return await request<any>('/api/broadcast', {
+    method: 'POST',
+    body: JSON.stringify({ message, targetType }),
+  });
+}

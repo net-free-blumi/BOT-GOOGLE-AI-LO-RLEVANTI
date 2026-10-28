@@ -959,6 +959,67 @@ startDashboard({
       onReaction: handleReaction,
       onEvent: recordEvent,
     });
+  },
+  broadcastToDrivers: async (message, targetType = "all") => {
+    const mainSock = getMainBotSock();
+    if (!mainSock || !getMainBotStatus().connected) {
+      throw new Error("הבוט הראשי אינו מחובר כרגע לוואטסאפ");
+    }
+
+    const cleanMsg = String(message || "").trim();
+    if (!cleanMsg) {
+      throw new Error("תוכן ההודעה ריק");
+    }
+
+    const usersData = loadUsersData();
+    const approved = usersData.approvedUsers || [];
+    const sessions = getAllSessionsSummary();
+    const connectedPhones = new Set(
+      sessions
+        .filter((s) => s.status === "connected" && !s.isMainBot)
+        .map((s) => cleanPhone(s.phone))
+    );
+
+    let targets = [];
+    if (targetType === "connected") {
+      targets = approved.filter((u) => connectedPhones.has(cleanPhone(u.phone)));
+    } else {
+      targets = approved;
+    }
+
+    if (targets.length === 0) {
+      return { success: true, sentCount: 0, failedCount: 0, recipients: [] };
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const results = [];
+
+    for (const driver of targets) {
+      const phone = cleanPhone(driver.phone);
+      if (!phone) continue;
+      const jid = getDestinationJid(phone);
+
+      try {
+        await mainSock.sendMessage(jid, { text: cleanMsg });
+        sentCount++;
+        results.push({ phone, name: driver.name || "נהג", status: "sent" });
+        recordEvent("broadcast", `הודעת תפוצה נשלחה לנהג: ${driver.name || phone}`);
+      } catch (err) {
+        failedCount++;
+        results.push({ phone, name: driver.name || "נהג", status: "failed", error: err.message });
+        console.error(`שגיאה בשליחת הודעת תפוצה ל-${phone}:`, err.message);
+      }
+
+      await new Promise((r) => setTimeout(r, 600));
+    }
+
+    return {
+      success: true,
+      sentCount,
+      failedCount,
+      recipients: results,
+    };
   }
 });
 

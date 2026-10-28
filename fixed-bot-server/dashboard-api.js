@@ -596,6 +596,26 @@ export function startDashboard(runtime) {
     res.json({ ok: true, data });
   });
 
+  // שידור הודעת תפוצה לכל הנהגים בלחיצה אחת מהאתר
+  app.post("/api/broadcast", async (req, res) => {
+    try {
+      const { message, targetType } = req.body || {};
+      if (!message || !message.trim()) {
+        return res.status(400).json({ ok: false, error: "תוכן ההודעה אינו יכול להיות ריק" });
+      }
+
+      if (typeof ctx?.broadcastToDrivers !== "function") {
+        return res.status(500).json({ ok: false, error: "פונקציית שידור אינה מוגדרת בשרת" });
+      }
+
+      const result = await ctx.broadcastToDrivers(message, targetType || "all");
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      recordError("broadcast_api", err);
+      return res.status(500).json({ ok: false, error: err.message || "שגיאה בשידור הודעה לנהגים" });
+    }
+  });
+
   // שליטה ב-PM2
   app.post("/api/bot/restart", async (_req, res) => {
     recordEvent("system", "בקשת הפעלה מחדש מהאתר");

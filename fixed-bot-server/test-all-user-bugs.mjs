@@ -273,4 +273,58 @@ assert(!cleanAlertText.includes("נסיעה מתאימה נמצאה"), "ההתר
 assert(!cleanAlertText.includes("──────"), "ההתראה אינה כוללת קווים מפרידים מיותרים");
 assert(cleanAlertText.startsWith("פנימי שמש 50"), "ההתראה מתחילה ישירות בפרטי הנסיעה");
 
+console.log(`\n--- בדיקה 7: 9 המקרים החדשים שדווחו היום (גרסה 2.9) ---`);
+
+// 1. נסיעות עוקבות מאותו סדרן ובאותו מחיר (הסרת כפילות שגויה של טלפון+מחיר)
+const dedupKey1 = deduper.check(
+  "פ שמש 50 \nהמכללה לשוטרים & ד\nזמנים\nלבקש פה \n0552683249",
+  "0552683249"
+);
+assert(!dedupKey1.duplicate, "נסיעה 1 של סדרן 0552683249 מתקבלת");
+
+const dedupKey2 = deduper.check(
+  "פ שמש 50 \nד & קריה\nזמנים\nלבקש פה \n0552683249",
+  "0552683249"
+);
+assert(!dedupKey2.duplicate, "נסיעה 2 של סדרן 0552683249 (ד & קריה באותו מחיר) מתקבלת ולא נחסמת ככפילות!");
+
+const dedupKeyExact = deduper.check(
+  "פ שמש 50 \nד & קריה\nזמנים\nלבקש פה \n0552683249",
+  "0552683249"
+);
+assert(dedupKeyExact.duplicate, "שליחה חוזרת של אותה נסיעה בדיוק נחסמת ככפילות אמיתית");
+
+// 2. רמג - קרייה
+const vRmg = matcher.rideMatches(`שמש 50ש\nרמג - קרייה\n\nלבקש באישי עם תיוג המכרז!`, internalShemeshState);
+assert(vRmg.ok, `רמג - קרייה התקבלה בהצלחה: "${vRmg.reason}"`);
+
+// 3. שער בנימין אדם 50ש (נפסל מבית שמש)
+const vShaarBinyamin = matcher.rideMatches(`שער בנימין אדם 50ש\n2א\nזמנים`, internalShemeshState);
+assert(!vShaarBinyamin.ok, `שער בנימין אדם נפסל מבית שמש פנימי בהצלחה: "${vShaarBinyamin.reason}"`);
+
+// 4. הודעת משטרות עם המילה "אלה" (נפסלת לחלוטין)
+const msgPoliceAla = `אני מכיר בדרך כלל בשעות אלה חוזר מהאירועים לבית ונוסע משמה שאני בצפון והכל אז יודע`;
+const vPoliceAla = matcher.rideMatches(msgPoliceAla, internalShemeshState);
+assert(!vPoliceAla.ok, `הודעת שיחה עם המילה "אלה" נפסלת בהצלחה ולא מזוהה כאות א ל-ה`);
+
+// 5. ג לרמה ד / אלישע הנביא
+const vGleD = matcher.rideMatches(`שמש 50 \nג לרמה ד\nאלישע הנביא זמן`, internalShemeshState);
+assert(vGleD.ok, `ג לרמה ד / אלישע הנביא התקבלה בהצלחה: "${vGleD.reason}"`);
+
+// 6. הרצוג לנהרדע
+const vHerzog = matcher.rideMatches(`שמש 50\nהרצוג לנהרדע\nזמן`, internalShemeshState);
+assert(vHerzog.ok, `הרצוג לנהרדע התקבלה בהצלחה: "${vHerzog.reason}"`);
+
+// 7. רוגלית שמש 80 (מושב בעמק האלה - נפסל מפנימי)
+const vRoglit = matcher.rideMatches(`רוגלית שמש 80\nזמן`, internalShemeshState);
+assert(!vRoglit.ok, `רוגלית (מושב אזורי) נפסל מפנימי בית שמש: "${vRoglit.reason}"`);
+
+// 8. יואל הנביא לגפן
+const vYoelGefen = matcher.rideMatches(`שמש 70\nיואל הנביא לגפן\nזמן`, internalShemeshState);
+assert(vYoelGefen.ok, `יואל הנביא לגפן התקבלה בהצלחה: "${vYoelGefen.reason}"`);
+
+// 9. חתימת תחנה: אור החיים אינו מזהם את הנסיעה
+const vStationClean = matcher.rideMatches(`⚠️⚠️⚠️⚠️⚠️⚠️\nשמש פ 50ש\nא 1 משלמת בביט\nד להישנה\nשד' האמוראים זמן\nwa.me/972552732722?text=ת+852897622+gd66wp\n‎⛔אור החיים🏅⛔ללא פון🏅`, internalShemeshState);
+assert(vStationClean.ok, `נסיעה עם חתימת תחנת אור החיים התקבלה נקי: "${vStationClean.reason}"`);
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
