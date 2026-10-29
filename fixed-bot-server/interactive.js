@@ -253,9 +253,10 @@ export async function sendInteractiveList(sock, jid, {
  * שליחת התראת נסיעה עם כפתור תפיסה מהיר "ת" וכפתור וואטסאפ לסדרן
  */
 export async function sendRideAlertWithButtons(sock, jid, rideData, quoted = null) {
-  const alertBody = `${rideData.cleanedText}\n\n` +
+  let alertBody = `${rideData.cleanedText}\n\n` +
     `📍 ${rideData.groupName}\n` +
-    `👤 ${rideData.senderName} · ${rideData.senderPhone}`;
+    `👤 ${rideData.senderName} · ${rideData.senderPhone}\n\n` +
+    `🚕 *לתפיסה מהירה השב:* "ת" או "תן"`;
 
   const buttons = [
     {
@@ -270,9 +271,11 @@ export async function sendRideAlertWithButtons(sock, jid, rideData, quoted = nul
   if (rawPhone && rawPhone.length >= 9 && rawPhone !== "זמין בקבוצה") {
     let intlPhone = rawPhone;
     if (intlPhone.startsWith("0")) intlPhone = "972" + intlPhone.slice(1);
+    const waUrl = `https://wa.me/${intlPhone}`;
+    alertBody += `\n💬 *וואטסאפ ישיר לסדרן:* ${waUrl}`;
     buttons.push({
       text: "💬 וואטסאפ לסדרן",
-      url: `https://wa.me/${intlPhone}`,
+      url: waUrl,
       type: "url",
     });
   }
@@ -286,14 +289,18 @@ export async function sendRideAlertWithButtons(sock, jid, rideData, quoted = nul
 }
 
 /**
- * שליחת הודעת אישור חיפוש מקבילי עם 3 כפתורים
+ * שליחת הודעת אישור חיפוש מקבילי עם 3 כפתורים + הנחיות תגובה מפורשות בגוף ההודעה
  */
 export async function sendPendingSearchConfirmationWithButtons(sock, jid, { currentSearches = [], newSearch, modeDesc = "" }) {
   const currentList = currentSearches.map((s, idx) => `${idx + 1}. ${s.displayText}`).join("\n");
   
   let body = `🔍 *יש לך כרגע חיפוש פעיל במערכת:*\n${currentList}\n\n`;
   body += `❓ *האם להוסיף את החיפוש החדש במקביל?*\n`;
-  body += `📍 *חיפוש חדש:* ${newSearch.displayText} (${modeDesc})`;
+  body += `📍 *חיפוש חדש:* ${newSearch.displayText} (${modeDesc})\n\n`;
+  body += `*השב עכשיו במספר או מילה (או לחץ על כפתור):*\n`;
+  body += `👉 *1* או *הוסף* (או *כן*) ⬅️ להוספה במקביל\n`;
+  body += `👉 *2* או *החלף* ⬅️ להחליף את כל החיפושים בחדש בלבד\n`;
+  body += `👉 *ביטול* (או *לא*) ⬅️ להישאר עם הקיים ללא שינוי`;
 
   const buttons = [
     {

@@ -598,6 +598,44 @@ await sendFullInteractiveMenu(mockSockMenu, "123@s.whatsapp.net", {
 const menuSections = capturedMenu?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
 assert(Boolean(menuSections), "תפריט נפתח מלא נוצר בהצלחה עם אפשרויות בחירה נוחות");
 
+// ==========================================
+// בדיקה 8: תרחישי הדיווח האחרון (בידוד צפת מבית שמש + נחל משמר ורחוב ברוש)
+// ==========================================
+console.log("\n--- בדיקה 8: בידוד צפת מבית שמש + זיהוי נחל משמר וברוש ---");
+
+// תרחיש א': נהג שמחפש צפת (בתוך ומחוץ לעיר) לא מקבל נסיעות פנימיות מבית שמש!
+const tzfatDriverState = {
+  active: true,
+  searches: [
+    { mode: "city_all", origin: "צפת", destination: null, displayText: "צפת (בתוך ומחוץ לעיר)" },
+    { mode: "route", origin: "ירושלים", destination: "בית שמש", displayText: "ירושלים ⬅️ בית שמש" },
+    { mode: "route", origin: "נתב\"ג", destination: "ירושלים", displayText: "נתב\"ג ⬅️ ירושלים" }
+  ]
+};
+
+const rideShemeshBug1 = "פנימי שמש 50\nוותיקה לרמה ד\nהגפן זמן";
+const vTzfat1 = matchesAnySearch(rideShemeshBug1, tzfatDriverState);
+assert(!vTzfat1.ok, `נסיעת בית שמש פנימי נפסלת מחיפוש צפת: "${vTzfat1.reason}"`);
+
+const rideShemeshBug2 = "שמש פנימי ברוש - לד גגון מיניק וכו' 120\n0542086154";
+const vTzfat2 = matchesAnySearch(rideShemeshBug2, tzfatDriverState);
+assert(!vTzfat2.ok, `נסיעת ברוש-לד נפסלת מחיפוש צפת: "${vTzfat2.reason}"`);
+
+// תרחיש ב': נהג שמחפש בית שמש (פנימי) מקבל את נחל משמר לברכיה!
+const shemeshInternalState = {
+  active: true,
+  searches: [{ mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" }]
+};
+
+const rideMishmarText = `שמש 50ש\nנחל משמר לברכיה זמן\nווצאפ ☚ wa.me/972552732722?text=ת+680229719+gd66wp\n🎩8080* - ללא פון 🎩`;
+const vMishmar = matchesAnySearch(rideMishmarText, shemeshInternalState);
+assert(vMishmar.ok, `נסיעת נחל משמר לברכיה מתקבלת בהצלחה בבית שמש פנימי: "${vMishmar.reason}"`);
+
+// תרחיש ג': נסיעת ברוש - לד (מיניק 120) מתקבלת בבית שמש פנימי
+const vBroshShemesh = matchesAnySearch(rideShemeshBug2, shemeshInternalState);
+assert(vBroshShemesh.ok, `נסיעת ברוש - לד מתקבלת בהצלחה בבית שמש פנימי: "${vBroshShemesh.reason}"`);
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
+
 
 
