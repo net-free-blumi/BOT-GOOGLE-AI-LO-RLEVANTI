@@ -1,9 +1,10 @@
 // test-all-user-bugs.mjs - בדיקה מלאה של כל התרחישים, כולל מניעת הודעות ספאם ואימות כל הפיצ'רים החדשים
-import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand, rideMatches, findPlaces, extractPrice } from "./matcher.js";
+import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractPrice } from "./matcher.js";
 import { createDeduper, isUniqueRideLink } from "./dedupe.js";
+import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, stopUserSearch } from "./users-manager.js";
 import { readFileSync } from "node:fs";
 
-console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 2.8)...\n");
+console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 3.0 - חיפושים מקבילים ובתוך/מחוץ לעיר)...\n");
 
 const cities = JSON.parse(readFileSync(new URL("./cities.json", import.meta.url), "utf8"));
 const streets = JSON.parse(readFileSync(new URL("./streets-full.json", import.meta.url), "utf8"));
@@ -147,30 +148,39 @@ const vHighPrice = matcher.rideMatches(`שמש 180ש מקוםלאמוכר`, inte
 assert(!vHighPrice.ok, `מחיר 180 ש"ח נפסל: "${vHighPrice.reason}"`);
 
 // ==========================================
-// בדיקה 4: פענוח מדויק של פקודות הנהג
+// בדיקה 4: פענוח מדויק של פקודות הנהג (בתוך ומחוץ לעיר מול פנימי בלבד)
 // ==========================================
-console.log("\n--- בדיקה 4: פענוח פקודות נהג (כולל 'פנוי שמש' בלי שיבושים) ---");
+console.log("\n--- בדיקה 4: פענוח פקודות נהג (בתוך ומחוץ לעיר מול פנימי בלבד) ---");
 
+// 1. עיר יחידה ללא פנימי -> בתוך ומחוץ לעיר
 const pShemesh = processDriverCommand("פנוי שמש");
-assert(pShemesh.mode === "internal" && pShemesh.origin === "בית שמש", `פנוי שמש -> פנימי בית שמש (${pShemesh.displayText})`);
-
-const pShemeshPnimi = processDriverCommand("פנוי שמש פנימי");
-assert(pShemeshPnimi.mode === "internal" && pShemeshPnimi.origin === "בית שמש", `פנוי שמש פנימי -> פנימי בית שמש`);
+assert(pShemesh.mode === "city_all" && pShemesh.origin === "בית שמש", `פנוי שמש -> בתוך ומחוץ לעיר (${pShemesh.displayText})`);
 
 const pShort = processDriverCommand("פ שמש");
-assert(pShort.mode === "internal" && pShort.origin === "בית שמש", `פ שמש -> פנימי בית שמש`);
+assert(pShort.mode === "city_all" && pShort.origin === "בית שמש", `פ שמש -> בתוך ומחוץ לעיר (${pShort.displayText})`);
 
-const pReverseShort = processDriverCommand("שמש פ");
-assert(pReverseShort.mode === "internal" && pReverseShort.origin === "בית שמש", `שמש פ -> פנימי בית שמש`);
+const pYam = processDriverCommand("פנוי ים");
+assert(pYam.mode === "city_all" && pYam.origin === "ירושלים", `פנוי ים -> בתוך ומחוץ לעיר (${pYam.displayText})`);
 
+const pMeron = processDriverCommand("פנוי מירון");
+assert(pMeron.mode === "city_all" && pMeron.origin === "מירון", `פנוי מירון -> בתוך ומחוץ לעיר (${pMeron.displayText})`);
+
+// 2. פקודת פנימי מפורשת -> פנימי בלבד
+const pShemeshPnimi = processDriverCommand("פנוי שמש פנימי");
+assert(pShemeshPnimi.mode === "internal" && pShemeshPnimi.origin === "בית שמש", `פנוי שמש פנימי -> פנימי בלבד (${pShemeshPnimi.displayText})`);
+
+const pYamPnimi = processDriverCommand("פנוי ים פנימי");
+assert(pYamPnimi.mode === "internal" && pYamPnimi.origin === "ירושלים", `פנוי ים פנימי -> פנימי בלבד (${pYamPnimi.displayText})`);
+
+const pMeronPnimi = processDriverCommand("פנוי מירון פנימי");
+assert(pMeronPnimi.mode === "internal" && pMeronPnimi.origin === "מירון", `פנוי מירון פנימי -> פנימי בלבד (${pMeronPnimi.displayText})`);
+
+// 3. מסלול מקוצר
 const pYamShemesh = processDriverCommand("פ ים שמש");
 assert(pYamShemesh.mode === "route" && pYamShemesh.origin === "ירושלים" && pYamShemesh.destination === "בית שמש", `פ ים שמש -> מסלול מירושלים לבית שמש`);
 
 const pShemeshYam = processDriverCommand("פ שמש ים");
 assert(pShemeshYam.mode === "route" && pShemeshYam.origin === "בית שמש" && pShemeshYam.destination === "ירושלים", `פ שמש ים -> מסלול מבית שמש לירושלים`);
-
-const pTzimtzum = processDriverCommand("שמש צמצם");
-assert(pTzimtzum.mode === "reduce" && pTzimtzum.origin === "בית שמש", `שמש צמצם -> צמצום בית שמש`);
 
 // ==========================================
 // בדיקה 5: דיסלייק (👎) מוגן לחלוטין מתגובות בקבוצות
@@ -383,4 +393,110 @@ assert(vAliyatHanoar.ok, `עלית הנוער לרמה א התקבלה: "${vAliy
 const vPoliceCollege = matcher.rideMatches(`פ שמש 50\nהמכללה לשוטרים & ד\nזמנים\nלבקש פה 0552683249`, internalShemeshState);
 assert(vPoliceCollege.ok, `המכללה לשוטרים & ד התקבלה: "${vPoliceCollege.reason}"`);
 
+// ==========================================
+// בדיקה 9: אימות שני הפיצ'רים החדשים (גרסה 3.0)
+// 1. חיפוש עיר יחידה (פנוי שמש / פנוי ים / פנוי מירון) = בתוך ומחוץ לעיר
+// 2. חיפוש מקבילי מרובה לנהג + שלב אישור והוספה
+// ==========================================
+console.log("\n--- בדיקה 9: אימות בתוך ומחוץ לעיר + חיפושים מקביליים (גרסה 3.0) ---");
+
+// 1. בדיקת סינון נסיעות עבור מצב 'בתוך ומחוץ לעיר' (city_all: בית שמש)
+const stateCityAllShemesh = { active: true, mode: "city_all", origin: "בית שמש", destination: null, displayText: "בית שמש (בתוך ומחוץ לעיר)" };
+
+// א. נסיעה פנימית בבית שמש מתקבלת!
+const vInternalInCityAll = matcher.rideMatches(`שמש 50ש ד להישנה ושד' האמוראים`, stateCityAllShemesh);
+assert(vInternalInCityAll.ok, `פנוי שמש: מקבל נסיעה פנימית בבית שמש ("${vInternalInCityAll.reason}")`);
+
+// ב. נסיעה שיוצאת מבית שמש לירושלים מתקבלת!
+const vOutboundInCityAll = matcher.rideMatches(`שמש ים 100 ש"ח יציאה מיידית`, stateCityAllShemesh);
+assert(vOutboundInCityAll.ok, `פנוי שמש: מקבל נסיעה יוצאת מבית שמש ("${vOutboundInCityAll.reason}")`);
+
+// ג. נסיעה שנכנסת לבית שמש ממקום אחר (כפר סבא או גבעתיים) נפסלת!
+const vInboundInCityAll = matcher.rideMatches(`סבא שמש 100ש`, stateCityAllShemesh);
+assert(!vInboundInCityAll.ok, `פנוי שמש: פוסל נסיעה נכנסת לבית שמש ("${vInboundInCityAll.reason}")`);
+
+const vInboundGivatayim = matcher.rideMatches(`גבעתיים שמש נחת 100`, stateCityAllShemesh);
+assert(!vInboundGivatayim.ok, `פנוי שמש: פוסל נסיעה מגבעתיים ("${vInboundGivatayim.reason}")`);
+
+// 2. בדיקת סינון נסיעות עבור מצב 'פנימי בלבד' (internal: בית שמש פנימי)
+const stateInternalShemesh = { active: true, mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי בלבד)" };
+
+const vInternalInInternal = matcher.rideMatches(`שמש 50ש ד להישנה ושד' האמוראים`, stateInternalShemesh);
+assert(vInternalInInternal.ok, `פנוי שמש פנימי: מקבל נסיעה פנימית ("${vInternalInInternal.reason}")`);
+
+const vOutboundInInternal = matcher.rideMatches(`שמש ים 100 ש"ח`, stateInternalShemesh);
+assert(!vOutboundInInternal.ok, `פנוי שמש פנימי: פוסל נסיעה יוצאת ("${vOutboundInInternal.reason}")`);
+
+// 3. בדיקת עיר אחרת (מירון)
+const stateCityAllMeron = { active: true, mode: "city_all", origin: "מירון", destination: null, displayText: "מירון (בתוך ומחוץ לעיר)" };
+
+const vMeronInternal = matcher.rideMatches(`מירון 50 מחסום לקבר רשבי`, stateCityAllMeron);
+assert(vMeronInternal.ok, `פנוי מירון: מקבל נסיעה במירון ("${vMeronInternal.reason}")`);
+
+const vMeronOutbound = matcher.rideMatches(`מירון לצפת 80 זמן`, stateCityAllMeron);
+assert(vMeronOutbound.ok, `פנוי מירון: מקבל יציאה ממירון לצפת ("${vMeronOutbound.reason}")`);
+
+const vMeronInbound = matcher.rideMatches(`צפת למירון 80`, stateCityAllMeron);
+assert(!vMeronInbound.ok, `פנוי מירון: פוסל כניסה מצפת למירון ("${vMeronInbound.reason}")`);
+
+// 4. בדיקת מנגנון חיפושים מקביליים (Multi-Search Flow)
+const testDriverPhone = "972599999999";
+stopUserSearch(testDriverPhone);
+
+// שלב א': חיפוש ראשון מופעל מיד ללא אישור
+const cmd1 = processDriverCommand("פ ים שמש");
+const res1 = addOrStageUserSearch(testDriverPhone, cmd1);
+assert(res1.status === "activated_immediately", "חיפוש ראשון מופעל מיד ללא צורך באישור");
+assert(res1.current.active && res1.current.searches.length === 1, "נשמר חיפוש 1 פעיל");
+
+// שלב ב': הנהג שולח חיפוש שני -> נכנס להמתנה לאישור (pending_confirmation)
+const cmd2 = processDriverCommand("פ ים בב");
+const res2 = addOrStageUserSearch(testDriverPhone, cmd2);
+assert(res2.status === "pending_confirmation", "חיפוש שני נכנס להמתנה לאישור הנהג");
+assert(Boolean(res2.current.pendingSearch), "קיים pendingSearch במצב המתנה");
+assert(res2.current.searches.length === 1, "הרשימה הפעילה עדיין מכילה רק את החיפוש הראשון עד אישור");
+
+// שלב ג': הנהג מאשר להוסיף לרשימה (1 / כן / הוסף)
+const resConfirm = confirmPendingSearch(testDriverPhone, false);
+assert(resConfirm.success, "האישור הצליח");
+assert(resConfirm.current.searches.length === 2, "כעת קיימים 2 חיפושים מקביליים פעילים ברשימה!");
+assert(resConfirm.current.pendingSearch === null, "pendingSearch אופס");
+
+// שלב ד': בדיקת סינון נסיעות מקבילי (matchesAnySearch)
+const currentDriverState = getUserSearch(testDriverPhone);
+
+// נסיעה 1: מירושלים לבית שמש -> תואמת את חיפוש 1!
+const matchRide1 = matchesAnySearch(`ירושלים לבית שמש 120ש זמן`, currentDriverState);
+assert(matchRide1.ok && matchRide1.matchedSearch.destination === "בית שמש", `נסיעה 1 תואמת לחיפוש הראשון: ${matchRide1.matchedSearch.displayText}`);
+
+// נסיעה 2: מירושלים לבני ברק -> תואמת את חיפוש 2!
+const matchRide2 = matchesAnySearch(`ירושלים לבני ברק 150ש מיידי`, currentDriverState);
+assert(matchRide2.ok && matchRide2.matchedSearch.destination === "בני ברק", `נסיעה 2 תואמת לחיפוש השני: ${matchRide2.matchedSearch.displayText}`);
+
+// נסיעה 3: מחיפה לטבריה -> נפסלת (לא תואמת אף אחד)
+const matchRide3 = matchesAnySearch(`חיפה לטבריה 200ש`, currentDriverState);
+assert(!matchRide3.ok, `נסיעה לא קשורה נפסלת במקביל: "${matchRide3.reason}"`);
+
+// שלב ה': שליחת חיפוש זהה שכבר קיים -> מזהה כקיים
+const resDuplicateSearch = addOrStageUserSearch(testDriverPhone, cmd2);
+assert(resDuplicateSearch.status === "already_exists", "חיפוש כפול שכבר קיים מזוהה מיידית כקיים");
+
+// שלב ו': הסרת חיפוש בודד לפי אינדקס (מחיקת מסלול 1)
+const resRemove = removeUserSearchByIndex(testDriverPhone, 1);
+assert(resRemove.success && resRemove.current.searches.length === 1, "הסרת חיפוש 1 הצליחה, נותר חיפוש יחיד פעיל");
+assert(resRemove.current.searches[0].destination === "בני ברק", "החיפוש שנותר הוא ירושלים לבני ברק");
+
+// שלב ז': שליחת חיפוש שלישי וביטולו (ביטול / בטל)
+const cmd3 = processDriverCommand("פ בב שמש");
+addOrStageUserSearch(testDriverPhone, cmd3);
+const resCancel = cancelPendingSearch(testDriverPhone);
+assert(resCancel.success && resCancel.current.pendingSearch === null, "ביטול חיפוש בהמתנה הצליח ללא פגיעה בחיפושים הקיימים");
+assert(resCancel.current.searches.length === 1, "החיפוש הקיים נותר פעיל");
+
+// שלב ח': עצירת כל החיפושים (תפוס)
+stopUserSearch(testDriverPhone);
+const stoppedState = getUserSearch(testDriverPhone);
+assert(!stoppedState.active && stoppedState.searches.length === 0, "עצירה מלאה מכבה את כל החיפושים (מצב תפוס)");
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
+

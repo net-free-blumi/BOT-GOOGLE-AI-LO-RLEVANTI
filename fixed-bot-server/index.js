@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import fs from "node:fs";
-import { normalizeText, parseDriverCommand, rideMatches, findPlaces } from "./matcher.js";
+import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces } from "./matcher.js";
 import { createDeduper } from "./dedupe.js";
 import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
 import { 
@@ -21,7 +21,11 @@ import {
   setUserSearch,
   stopUserSearch,
   getAllUserSearches,
-  resetUserCooldown
+  resetUserCooldown,
+  addOrStageUserSearch,
+  confirmPendingSearch,
+  cancelPendingSearch,
+  removeUserSearchByIndex
 } from "./users-manager.js";
 import {
   startMainBot,
@@ -392,102 +396,25 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
 async function sendHelpMenu(sock, jid, driverPhone) {
   const search = getUserSearch(driverPhone);
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
-  menuText += `📊 *סטטוס נוכחי שלך:* ${search.active ? "🟢 פעיל (" + search.displayText + ")" : "🔴 מופסק (תפוס)"}\n\n`;
+  if (search.active && search.searches.length > 0) {
+    menuText += `📊 *סטטוס החיפושים הפעילים שלך במקביל:*\n`;
+    search.searches.forEach((s, idx) => {
+      menuText += `${idx + 1}. ${s.displayText} (${describeMode(s)})\n`;
+    });
+    menuText += `\n`;
+  } else {
+    menuText += `📊 *סטטוס נוכחי שלך:* 🔴 מופסק (תפוס)\n\n`;
+  }
   menuText += `🔍 *פקודות חיפוש נפוצות:*\n`;
-  menuText += `• *פנוי שמש* או *פנוי שמש פנימי* (פנימי בית שמש בלבד)\n`;
-  menuText += `• *פנימי ים* (פנימי ירושלים בלבד)\n`;
+  menuText += `• *פנוי שמש* / *פנוי ים* / *פנוי מירון* (בתוך ומחוץ לעיר)\n`;
+  menuText += `• *פנוי שמש פנימי* / *פנימי ים* (פנימי בלבד בעיר)\n`;
   menuText += `• *פ ים שמש* (מירושלים לבית שמש)\n`;
-  menuText += `• *פ שמש ים* (מבית שמש לירושלים)\n`;
-  menuText += `• *שמש צמצם* (פנימי ויוצא מבית שמש)\n`;
-  menuText += `• *תפוס* או *ת* (עצירת חיפוש מידית)\n\n`;
+  menuText += `• *פ שמש ים* (מבית שמש לירושלים)\n\n`;
+  menuText += `⚡ *חיפוש מקבילי:* שליחת פקודת חיפוש נוספת תאפשר לך להוסיף אותה במקביל (למשל: גם שמש וגם ים בו-זמנית!)\n`;
+  menuText += `🛑 *תפוס* או *ת* (עצירת כל החיפושים)\n\n`;
   menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*`;
 
   await sock.sendMessage(jid, { text: menuText });
-}
-
-// פענוח מדויק של פקודות הנהג - ללא שיבושים של שמות ערים מורכבים
-export function processDriverCommand(rawText) {
-  const raw = String(rawText || "").trim();
-  const norm = normalizeText(raw);
-
-  // 1. פקודות פנימי ישירות:
-  // "פנוי שמש", "פנוי שמש פנימי", "פנימי שמש", "שמש פנימי", "פ שמש", "שמש פ"
-  if (
-    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פנימי\s+)?(?:בית\s+)?שמש$/.test(norm)
-  ) {
-    return { mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" };
-  }
-
-  // פנימי ירושלים: "פנוי ים פנימי", "פנימי ים", "ים פנימי", "פ ים", "ים פ"
-  if (
-    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פ|פנוי)\s+(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm)
-  ) {
-    return { mode: "internal", origin: "ירושלים", destination: null, displayText: "ירושלים (פנימי)" };
-  }
-
-  // פנימי בני ברק
-  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:בני\s+ברק|בב)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
-    return { mode: "internal", origin: "בני ברק", destination: null, displayText: "בני ברק (פנימי)" };
-  }
-
-  // פנימי מודיעין עילית
-  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:מודיעין\s+עילית|קרית\s+ספר|מוע)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
-    return { mode: "internal", origin: "מודיעין עילית", destination: null, displayText: "מודיעין עילית (פנימי)" };
-  }
-
-  // 2. מצב צמצום (פנימי + יוצא): "שמש צמצם", "צמצם שמש", "צמצום שמש", "ים צמצם"
-  if (/(^|\s)(צמצם|צמצום)(\s|$)/.test(norm)) {
-    let city = "בית שמש";
-    if (norm.includes("ים") || norm.includes("ירושלים")) city = "ירושלים";
-    else if (norm.includes("בב") || norm.includes("בני ברק")) city = "בני ברק";
-    else if (norm.includes("מוע") || norm.includes("ספר")) city = "מודיעין עילית";
-    return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
-  }
-
-  // 3. מסלול מקוצר עם כינויי ערים:
-  // "פ ים שמש", "פנוי ים שמש", "ים שמש" -> מירושלים לבית שמש
-  // "פ שמש ים", "פנוי שמש ים", "שמש ים" -> מבית שמש לירושלים
-  const cityAliasMap = {
-    "שמש": "בית שמש",
-    "בש": "בית שמש",
-    "בית שמש": "בית שמש",
-    "ים": "ירושלים",
-    "ירו": "ירושלים",
-    "ירושלים": "ירושלים",
-    "בב": "בני ברק",
-    "בני ברק": "בני ברק",
-    "מוע": "מודיעין עילית",
-    "ספר": "מודיעין עילית",
-    "קרית ספר": "מודיעין עילית",
-    "מודיעין עילית": "מודיעין עילית",
-    "תא": "תל אביב",
-    "תל אביב": "תל אביב",
-    "נתבג": "נתב\"ג",
-    "שדה": "נתב\"ג",
-    "ביתר": "ביתר עילית",
-    "אלעד": "אלעד",
-    "אשדוד": "אשדוד",
-    "חיפה": "חיפה",
-    "טבריה": "טבריה",
-    "צפת": "צפת",
-  };
-
-  const cleanCmd = norm.replace(/^(?:פ|פנוי)\s+/, "");
-  for (const [a1, c1] of Object.entries(cityAliasMap)) {
-    for (const [a2, c2] of Object.entries(cityAliasMap)) {
-      if (c1 === c2) continue;
-      const routeRe = new RegExp(`^${a1}\\s+(?:ל|אל|\\-|>|)?${a2}$`);
-      if (routeRe.test(cleanCmd)) {
-        return { mode: "route", origin: c1, destination: c2, displayText: `${c1} ⬅️ ${c2}` };
-      }
-    }
-  }
-
-  // 4. שימוש במפענח הכללי
-  return parseDriverCommand(raw);
 }
 
 // זיהוי ופענוח מספר טלפון אמיתי של סדרן/שולח (מניעת מזהי LID חסויים)
@@ -532,10 +459,11 @@ async function getRealSenderPhone(sock, groupJid, msg) {
 }
 
 function describeMode(state) {
-  if (state.mode === "internal") return `רק נסיעות פנימיות בתוך ${state.origin}`;
-  if (state.mode === "reduce") return `מצב צמצום: נסיעות פנימיות ויוצאות מ${state.origin}`;
-  if (state.mode === "route") return `רק נסיעות מ${state.origin} ל${state.destination}`;
-  return `נסיעות שיוצאות מ${state.origin} (בתוך העיר ומחוצה לה)`;
+  if (!state) return "";
+  if (state.mode === "internal") return `נסיעות פנימיות בתוך ${state.origin} בלבד`;
+  if (state.mode === "city_all" || state.mode === "reduce") return `נסיעות בתוך ומחוץ ל-${state.origin}`;
+  if (state.mode === "route") return `רק נסיעות מ-${state.origin} ל-${state.destination}`;
+  return `נסיעות מ-${state.origin}`;
 }
 
 export function getPairingGuideInstructions() {
@@ -802,21 +730,110 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
-      if (norm.startsWith("פנוי") || norm.includes("מחפש") || norm.includes("צמצם") || norm.includes("פנימי") || /^פ /.test(norm) || / פ$/.test(norm) || norm === "שמש" || norm === "ים") {
+      const currentSearch = getUserSearch(senderPhone);
+
+      // 1. טיפול בתשובה לשאלת אישור הוספת חיפוש במקביל (אם יש חיפוש בהמתנה לאישור)
+      if (currentSearch.pendingSearch) {
+        // אפשרות א': אישור הוספה במקביל
+        if (norm === "1" || norm === "כן" || norm === "הוסף" || norm === "אשר" || norm === "אישור" || norm === "תוסיף" || norm === "להוסיף") {
+          const res = confirmPendingSearch(senderPhone, false);
+          let msg = `✅ *החיפוש נוסף בהצלחה!*\n\n📋 *כל החיפושים הפעילים שלך במקביל:*\n`;
+          res.current.searches.forEach((s, idx) => {
+            msg += `${idx + 1}. ${s.displayText} (${describeMode(s)})\n`;
+          });
+          msg += `\n🚕 הבוט יסנן עבורך נסיעות מכל המסלולים הללו בו-זמנית!\n💡 להפסקת כל החיפושים שלח "תפוס".`;
+          recordEvent("command", `נוסף חיפוש מקבילי עבור ${senderPhone}: ${res.added.displayText}`);
+          await sock.sendMessage(jid, { text: msg }, { quoted: m });
+          continue;
+        }
+
+        // אפשרות ב': החלפה (רק החיפוש החדש)
+        if (norm === "2" || norm === "החלף" || norm === "רק זה" || norm === "החלפה") {
+          const res = confirmPendingSearch(senderPhone, true);
+          const s = res.current.searches[0];
+          let msg = `🔄 *החיפושים הוחלפו בהצלחה!*\n\n🔍 *חיפוש פעיל כעת:*\n1. ${s.displayText} (${describeMode(s)})\n\nברגע שתעלה נסיעה מתאימה - תקבל התראה מיידית.`;
+          recordEvent("command", `הוחלף חיפוש עבור ${senderPhone}: ${s.displayText}`);
+          await sock.sendMessage(jid, { text: msg }, { quoted: m });
+          continue;
+        }
+
+        // אפשרות ג': ביטול (do nothing / cancel staging)
+        if (norm === "ביטול" || norm === "בטל" || norm === "לא" || norm === "0" || norm === "אל תוסיף") {
+          const res = cancelPendingSearch(senderPhone);
+          let msg = `👌 *הבקשה בוטלה.* נשארת עם החיפושים הקיימים שלך:\n`;
+          res.current.searches.forEach((s, idx) => {
+            msg += `${idx + 1}. ${s.displayText}\n`;
+          });
+          recordEvent("command", `בוטלה הוספת חיפוש עבור ${senderPhone}`);
+          await sock.sendMessage(jid, { text: msg }, { quoted: m });
+          continue;
+        }
+      }
+
+      // 2. מחיקת חיפוש בודד לפי מספר (למשל: "מחק 2", "הסר 1")
+      const removeMatch = norm.match(/^(?:מחק|הסר|בטל)\s+(\d+)$/);
+      if (removeMatch) {
+        const num = parseInt(removeMatch[1], 10);
+        const res = removeUserSearchByIndex(senderPhone, num);
+        if (res.success) {
+          let msg = `🗑️ *החיפוש "${res.removed.displayText}" הוסר.*\n\n`;
+          if (res.current.searches.length > 0) {
+            msg += `📋 *חיפושים שנותרו פעילים במקביל:*\n`;
+            res.current.searches.forEach((s, idx) => {
+              msg += `${idx + 1}. ${s.displayText}\n`;
+            });
+          } else {
+            msg += `🛑 כל החיפושים הוסרו (מצב תפוס).`;
+          }
+          await sock.sendMessage(jid, { text: msg }, { quoted: m });
+          continue;
+        }
+      }
+
+      // 3. זיהוי פקודת חיפוש חדשה
+      const isSearchCmd = norm.startsWith("פנוי") || norm.includes("מחפש") || norm.includes("צמצם") || norm.includes("פנימי") ||
+        /^פ\s+/.test(norm) || /\s+פ$/.test(norm) ||
+        norm === "שמש" || norm === "ים" || norm === "מירון" || norm === "בב" ||
+        /^(?:בית\s+)?שמש|ירושלים|מירון|בני\s+ברק|מודיעין\s+עילית|תל\s+אביב|ביתר|אלעד|אשדוד|צפת|טבריה|חיפה|נתבג$/.test(norm);
+
+      if (isSearchCmd) {
         const parsed = processDriverCommand(text);
-        const nextState = { active: true, ...parsed };
-        setUserSearch(senderPhone, nextState);
+        const stageResult = addOrStageUserSearch(senderPhone, parsed);
 
-        let responseMsg = `✅ *החיפוש הופעל בהצלחה:*\n\n`;
-        responseMsg += `🔍 *מוגדר:* ${nextState.displayText}\n`;
-        responseMsg += `📌 *סינון:* ${describeMode(nextState)}\n\n`;
-        responseMsg += `ברגע שתעלה נסיעה מתאימה בקבוצות שלך - תקבל התראה מיידית.`;
+        if (stageResult.status === "already_exists") {
+          await sock.sendMessage(jid, {
+            text: `⚠️ *חיפוש זה כבר מוגדר ופעיל אצלך ברשימה!*\n${parsed.displayText}`
+          }, { quoted: m });
+          continue;
+        }
 
-        console.log(`[פקודת נהג ${senderPhone}]: "${text}" -> ${nextState.mode} | ${nextState.displayText}`);
-        recordEvent("command", `הופעל חיפוש עבור ${senderPhone}: ${nextState.displayText}`);
+        if (stageResult.status === "activated_immediately") {
+          let responseMsg = `✅ *החיפוש הופעל בהצלחה:*\n\n`;
+          responseMsg += `🔍 *מוגדר:* ${parsed.displayText}\n`;
+          responseMsg += `📌 *סינון:* ${describeMode(parsed)}\n\n`;
+          responseMsg += `ברגע שתעלה נסיעה מתאימה בקבוצות שלך - תקבל התראה מיידית.\n\n`;
+          responseMsg += `💡 *רוצה לחפש מסלול נוסף במקביל?* פשוט שלח פקודה נוספת (למשל: "פ ים בב").`;
 
-        await sock.sendMessage(jid, { text: responseMsg }, { quoted: m });
-        continue;
+          console.log(`[פקודת נהג ${senderPhone}]: "${text}" -> ${parsed.mode} | ${parsed.displayText}`);
+          recordEvent("command", `הופעל חיפוש עבור ${senderPhone}: ${parsed.displayText}`);
+
+          await sock.sendMessage(jid, { text: responseMsg }, { quoted: m });
+          continue;
+        }
+
+        if (stageResult.status === "pending_confirmation") {
+          const currentList = stageResult.current.searches.map((s, idx) => `${idx + 1}. ${s.displayText}`).join("\n");
+          let promptMsg = `🔍 *יש לך כרגע חיפוש פעיל במערכת:*\n${currentList}\n\n`;
+          promptMsg += `❓ *האם להוסיף את החיפוש החדש במקביל?*\n`;
+          promptMsg += `📍 *חיפוש חדש:* ${parsed.displayText} (${describeMode(parsed)})\n\n`;
+          promptMsg += `*השב עכשיו:*\n`;
+          promptMsg += `👉 *1* או *הוסף* (או *כן*) ⬅️ להוספה לחיפושים הקיימים\n`;
+          promptMsg += `👉 *2* או *החלף* ⬅️ להחליף את כל החיפושים בחדש בלבד\n`;
+          promptMsg += `👉 *ביטול* (או *לא*) ⬅️ לבטל (להישאר עם הקיים ללא שינוי)`;
+
+          await sock.sendMessage(jid, { text: promptMsg }, { quoted: m });
+          continue;
+        }
       }
 
       const search = getUserSearch(senderPhone);
@@ -860,7 +877,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
-      const verdict = rideMatches(cleanedText, driverSearch, groupName);
+      const verdict = matchesAnySearch(cleanedText, driverSearch, groupName);
 
       if (!verdict.ok) {
         if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${verdict.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
@@ -884,7 +901,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         groupName,
         senderName: rideSenderName,
         senderPhone: rideSenderPhone,
-        searchDesc: driverSearch.displayText,
+        searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
       };
 
       // שליחה לנהג: קודם דרך הבוט הראשי (עם התראה בטלפון), ובגיבוי דרך חשבון הנהג

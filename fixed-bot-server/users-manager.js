@@ -53,6 +53,51 @@ function persistSearches() {
   }
 }
 
+function formatSearchesSummary(searches) {
+  if (!searches || !Array.isArray(searches) || searches.length === 0) return "אין חיפוש פעיל";
+  if (searches.length === 1) return searches[0].displayText || "חיפוש פעיל";
+  return `${searches.length} חיפושים פעילים במקביל (${searches.map((s, i) => `${i + 1}. ${s.displayText}`).join(" | ")})`;
+}
+
+function normalizeSearchState(st) {
+  if (!st || typeof st !== "object") {
+    return {
+      active: false,
+      searches: [],
+      pendingSearch: null,
+      mode: null,
+      origin: null,
+      destination: null,
+      displayText: "אין חיפוש פעיל",
+    };
+  }
+
+  let searches = Array.isArray(st.searches) ? [...st.searches] : [];
+  if (searches.length === 0 && st.active && st.origin) {
+    searches = [{
+      id: "s_migrated",
+      mode: st.mode || "city_all",
+      origin: st.origin,
+      destination: st.destination || null,
+      displayText: st.displayText || `${st.origin}`,
+      addedAt: new Date().toISOString(),
+    }];
+  }
+
+  const active = Boolean(st.active && searches.length > 0);
+  const primary = searches[0] || null;
+
+  return {
+    active,
+    searches,
+    pendingSearch: st.pendingSearch || null,
+    mode: primary?.mode || null,
+    origin: primary?.origin || null,
+    destination: primary?.destination || null,
+    displayText: active ? formatSearchesSummary(searches) : (st.displayText || "מופסק (תפוס)"),
+  };
+}
+
 export function shouldNotifyAdminInitial(phoneOrLid) {
   const p = cleanPhone(phoneOrLid);
   const info = adminAlertsSent.get(p) || { initial: false, phoneProvided: false };
@@ -73,18 +118,115 @@ export function shouldNotifyAdminPhoneProvided(phoneOrLid) {
 
 export function getUserSearch(phone) {
   const p = cleanPhone(phone);
-  return userSearches.get(p) || { active: false, mode: null, origin: null, destination: null, displayText: "אין חיפוש פעיל" };
+  const raw = userSearches.get(p);
+  return normalizeSearchState(raw);
 }
 
 export function setUserSearch(phone, searchState) {
   const p = cleanPhone(phone);
-  userSearches.set(p, searchState);
+  const normalized = normalizeSearchState(searchState);
+  userSearches.set(p, normalized);
   persistSearches();
+  return normalized;
+}
+
+export function addOrStageUserSearch(phone, newParsedQuery) {
+  const p = cleanPhone(phone);
+  const current = getUserSearch(p);
+
+  // בדיקה האם חיפוש זהה לחלוטין כבר קיים ברשימה
+  const exists = current.searches.some(
+    (s) => s.mode === newParsedQuery.mode &&
+           s.origin === newParsedQuery.origin &&
+           s.destination === newParsedQuery.destination
+  );
+
+  if (exists) {
+    return { status: "already_exists", current };
+  }
+
+  // אם הנהג כרגע במצב תפוס או שאין לו שום חיפוש פעיל: מפעילים מיד ללא צורך באישור
+  if (!current.active || current.searches.length === 0) {
+    const item = {
+      id: `s_${Date.now()}`,
+      ...newParsedQuery,
+      addedAt: new Date().toISOString(),
+    };
+    current.searches = [item];
+    current.pendingSearch = null;
+    current.active = true;
+    const saved = setUserSearch(p, current);
+    return { status: "activated_immediately", current: saved, item };
+  }
+
+  // יש כבר חיפוש אחד או יותר פעיל: מעבירים למצב המתנה לאישור הנהג
+  const pendingItem = {
+    id: `p_${Date.now()}`,
+    ...newParsedQuery,
+    stagedAt: new Date().toISOString(),
+  };
+  current.pendingSearch = pendingItem;
+  const saved = setUserSearch(p, current);
+  return { status: "pending_confirmation", current: saved, pending: pendingItem };
+}
+
+export function confirmPendingSearch(phone, replace = false) {
+  const p = cleanPhone(phone);
+  const current = getUserSearch(p);
+  if (!current.pendingSearch) {
+    return { success: false, reason: "no_pending" };
+  }
+
+  const added = current.pendingSearch;
+  if (replace) {
+    current.searches = [added];
+  } else {
+    current.searches.push(added);
+  }
+  current.pendingSearch = null;
+  current.active = true;
+  const saved = setUserSearch(p, current);
+  return { success: true, current: saved, added };
+}
+
+export function cancelPendingSearch(phone) {
+  const p = cleanPhone(phone);
+  const current = getUserSearch(p);
+  if (!current.pendingSearch) {
+    return { success: false, reason: "no_pending" };
+  }
+  const cancelled = current.pendingSearch;
+  current.pendingSearch = null;
+  const saved = setUserSearch(p, current);
+  return { success: true, current: saved, cancelled };
+}
+
+export function removeUserSearchByIndex(phone, index1Based) {
+  const p = cleanPhone(phone);
+  const current = getUserSearch(p);
+  const idx = Number(index1Based) - 1;
+  if (idx < 0 || idx >= current.searches.length) {
+    return { success: false, reason: "invalid_index", current };
+  }
+  const removed = current.searches.splice(idx, 1)[0];
+  if (current.searches.length === 0) {
+    current.active = false;
+  }
+  const saved = setUserSearch(p, current);
+  return { success: true, current: saved, removed };
 }
 
 export function stopUserSearch(phone) {
   const p = cleanPhone(phone);
-  const empty = { active: false, mode: null, origin: null, destination: null, displayText: "מופסק (תפוס)" };
+  const empty = {
+    active: false,
+    searches: [],
+    pendingSearch: null,
+    mode: null,
+    origin: null,
+    destination: null,
+    displayText: "מופסק (תפוס)",
+  };
   userSearches.set(p, empty);
   persistSearches();
   return empty;
@@ -93,7 +235,7 @@ export function stopUserSearch(phone) {
 export function getAllUserSearches() {
   const obj = {};
   for (const [p, s] of userSearches.entries()) {
-    obj[p] = s;
+    obj[p] = normalizeSearchState(s);
   }
   return obj;
 }

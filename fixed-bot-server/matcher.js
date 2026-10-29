@@ -210,6 +210,13 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
     }
     const cities = [...seen.values()];
+    if (cities.length === 1) {
+      return {
+        from: cities[0].city,
+        to: null,
+        cities: [cities[0].city],
+      };
+    }
     const asFrom = cities.find((c) => c.role === "from");
     const asTo = cities.find((c) => c.role === "to" && c !== asFrom);
     const from = asFrom || (asTo ? cities.find((c) => c !== asTo) : cities[0]);
@@ -279,30 +286,84 @@ export function createMatcher(citiesData, streetsData = {}) {
     return patterns.some((p) => p.test(raw) || p.test(norm));
   }
 
+  function checkInternalRide(text, home, places, externalCities, groupName) {
+    const norm = normalizeText(text);
+    const isExplicitHomeInternal = isExplicitInternal(text, home);
+    const price = extractPrice(text);
+
+    // הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית רגילה
+    const isMultiOrHourly = /(^|\s)(?:הוש|הלוש|הלוך\s+ושוב|מיניק|לפיש|לפי\s+שעה|לפי\s+שעות|נגרר)(\s|$)/i.test(text);
+    const maxInternalPrice = isMultiOrHourly ? 230 : 125;
+    if (price && price > maxInternalPrice && !norm.includes("פנימי")) {
+      return { ok: false, reason: `נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)` };
+    }
+
+    // בדיקת מסלול בינעירוני מובהק:
+    const detectedCityAliases = places.filter((p) => p.kind === "alias").map((p) => p.city);
+    const distinctCities = [...new Set(detectedCityAliases)];
+    if (distinctCities.length >= 2) {
+      return { ok: false, reason: `נפסל מפנימי: מזוהה מסלול בינעירוני בין ${distinctCities.join(" ל-")}` };
+    }
+
+    // טיפול בערים חיצוניות
+    if (externalCities.length > 0) {
+      if (isExplicitHomeInternal && (!price || price <= 110 || isMultiOrHourly)) {
+        return { ok: true, reason: `פנימי ${home}: הוגדר מפורשות כפנימי (${price ? price + " ש\"ח" : "מחיר מקומי"})` };
+      }
+      return { ok: false, reason: `נפסל מפנימי: מופיעה עיר חיצונית (${externalCities.join(", ")})` };
+    }
+
+    // בדיקת מעברים פנימיים ספציפיים לפי עיר
+    if (home === "בית שמש" && detectInternalTransitionBeitShemesh(text)) {
+      return { ok: true, reason: `פנימי בית שמש: זוהה מעבר בין שכונות/רחובות בעיר` };
+    }
+    if (home === "ירושלים" && detectInternalTransitionJerusalem(text)) {
+      return { ok: true, reason: `פנימי ירושלים: זוהה מעבר פנימי בתוך ירושלים` };
+    }
+
+    // אם זוהתה הצהרת פנימי מפורשת של עיר הבית
+    if (isExplicitHomeInternal) {
+      return { ok: true, reason: `פנימי ${home}: צוין מפורשות` };
+    }
+
+    // אם כל המוקדים שזוהו בהודעה שייכים אך ורק לעיר הבית ואין אף עיר חיצונית
+    // (מושבים ואזורים כפריים כמו רוגלית או נס הרים אינם נחשבים נסיעה פנימית בעיר!)
+    if (externalCities.length === 0) {
+      const nonVillageSpots = places.filter((p) => p.city === home && p.kind !== "village");
+      const homePhrases = [...new Set(nonVillageSpots.map((p) => p.phrase))];
+      if (homePhrases.length >= 2 && (!price || price <= 110 || isMultiOrHourly)) {
+        return { ok: true, reason: `פנימי ${home}: מעבר בין מוקדים בעיר (${homePhrases.join(" ⬅️ ")})` };
+      }
+    }
+
+    // אם זוהתה שכונה או רחוב של עיר הבית
+    const localSpots = places.filter((p) => p.city === home && (p.kind === "neighborhood" || p.kind === "street"));
+    if (localSpots.length > 0) {
+      if (price && (price <= 90 || isMultiOrHourly)) {
+        return { ok: true, reason: `פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}" עם מחיר (${price} ש"ח)` };
+      }
+      if (norm.includes("בתוך") || isExplicitHomeInternal) {
+        return { ok: true, reason: `פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}"` };
+      }
+    }
+
+    // בדיקה לפי שם הקבוצה (אם הקבוצה ייעודית לפנימי שמש)
+    const groupNorm = normalizeText(groupName);
+    if (groupNorm.includes("פנימי שמש") || groupNorm.includes("בית שמש בלבד")) {
+      const hasPrice = /\b\d{2,3}\b/.test(text);
+      if (hasPrice) {
+        return { ok: true, reason: `פנימי ${home} (מתוך קבוצה ייעודית)` };
+      }
+    }
+
+    return { ok: false, reason: `אין בהודעה סימן לנסיעה פנימית בתוך ${home}` };
+  }
+
   function parseDriverCommand(text) {
     let clean = String(text || "").trim();
     const norm = normalizeText(clean);
 
-    // 1. מצב צמצום (פנימי ויוצא יחד): "שמש צמצם", "ים צמצם", "צמצם שמש"
-    if (/(^|\s)(צמצם|צמצום)(\s|$)/.test(norm)) {
-      const places = findPlaces(clean);
-      const city = places[0]?.city || DEFAULT_CITY;
-      return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
-    }
-
-    // 2. פקודת פנימי: "פנוי שמש פנימי", "פנימי שמש", "פ שמש פ", "פ שמש", "שמש פ", "שמש פנימי", "פנוי שמש"
-    if (
-      /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-      /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-      /(^|\s)(פנימי|פש|פ שמש|פ ים|שמש פ|ים פ|פ בש|בש פ)(\s|$)/.test(norm) ||
-      norm.includes("פנימי")
-    ) {
-      const places = findPlaces(clean);
-      const city = places[0]?.city || DEFAULT_CITY;
-      return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי)` };
-    }
-
-    // 3. פקודת מסלול מקוצרת
+    // 1. פקודת מסלול מקוצרת (שתי ערים שונות)
     const routeShorthand = norm.match(/^(?:פ|פנוי)\s+([א-ת]+)\s+([א-ת]+)$/);
     if (routeShorthand) {
       const p1 = findPlaces(routeShorthand[1])[0]?.city;
@@ -312,15 +373,31 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
     }
 
-    // 4. פקודת מסלול רגילה: "פנוי בית שמש לירושלים"
-    const { from, to } = resolveRoles(findPlaces(clean));
-    const origin = from || DEFAULT_CITY;
-    if (to && to !== origin) {
-      return { mode: "route", origin, destination: to, displayText: `${origin} ⬅️ ${to}` };
+    // פקודת מסלול רגילה: "פנוי בית שמש לירושלים"
+    const roles = resolveRoles(findPlaces(clean));
+    if (roles.from && roles.to && roles.from !== roles.to) {
+      return { mode: "route", origin: roles.from, destination: roles.to, displayText: `${roles.from} ⬅️ ${roles.to}` };
     }
 
-    // 5. פקודת יציאה כללית: "פנוי בית שמש יוצא"
-    return { mode: "from", origin, destination: null, displayText: origin };
+    // 2. פקודת פנימי מפורשת: מכילה את המילה "פנימי"
+    // "פנוי שמש פנימי", "שמש פנימי", "פנימי שמש", "פנוי מירון פנימי", "פנוי ים פנימי", "פ שמש פ", "פ ים פ"
+    const isExplicitInternalCmd = /(^|\s)פנימי(\s|$)/.test(norm) ||
+      /^(?:פ|פנוי)\s+[א-ת]+\s+פ$/.test(norm) ||
+      /^[א-ת]+\s+פ$/.test(norm);
+
+    if (isExplicitInternalCmd) {
+      const cleanWithoutInternal = clean.replace(/פנימי/g, "").replace(/\bפ\b/g, "").trim();
+      const places = findPlaces(cleanWithoutInternal.length > 0 ? cleanWithoutInternal : clean);
+      const city = places[0]?.city || DEFAULT_CITY;
+      return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי בלבד)` };
+    }
+
+    // 3. חיפוש עיר יחידה (ללא המילה "פנימי"):
+    // "פנוי ים", "פנוי שמש", "פנוי מירון", "פ ים", "פ שמש", "שמש", "ים", "מירון", "שמש צמצם"
+    // לפי ההגדרה החדשה: מחפש בתוך ומחוץ לעיר כאחד!
+    const singlePlaces = findPlaces(clean);
+    const city = singlePlaces[0]?.city || DEFAULT_CITY;
+    return { mode: "city_all", origin: city, destination: null, displayText: `${city} (בתוך ומחוץ לעיר)` };
   }
 
   function rideMatches(text, state, groupName = "") {
@@ -340,92 +417,34 @@ export function createMatcher(citiesData, streetsData = {}) {
     // מצב 1: פנימי בלבד (internal)
     // ==========================================
     if (state.mode === "internal") {
-      const norm = normalizeText(text);
-      const isExplicitHomeInternal = isExplicitInternal(text, home);
-      const price = extractPrice(text);
-
-      // הגנת מחיר פנימי: נסיעה במחיר 130 ש"ח ומעלה אינה פנימית רגילה
-      // (אלא אם צוין מפורשות הוש/הלוש/מיניק/לפיש/לפי שעה/נגרר עד 230 ש"ח)
-      const isMultiOrHourly = /(^|\s)(?:הוש|הלוש|הלוך\s+ושוב|מיניק|לפיש|לפי\s+שעה|לפי\s+שעות|נגרר)(\s|$)/i.test(text);
-      const maxInternalPrice = isMultiOrHourly ? 230 : 125;
-      if (price && price > maxInternalPrice && !norm.includes("פנימי")) {
-        return no(`נפסל מפנימי: מחיר גבוה לנסיעה פנימית (${price} ש"ח)`);
+      const internalCheck = checkInternalRide(text, home, places, externalCities, groupName);
+      if (internalCheck.ok) {
+        return yes(internalCheck.reason);
       }
-
-      // בדיקת מסלול בינעירוני מובהק:
-      // אם מזוהות שתי ערים ראשיות (או יותר) שהן שונות, כמו "סבא שמש", "שמש ים", "ים שמש", "ביתר שמש", "בב שמש"
-      const detectedCityAliases = places.filter((p) => p.kind === "alias").map((p) => p.city);
-      const distinctCities = [...new Set(detectedCityAliases)];
-      if (distinctCities.length >= 2) {
-        return no(`נפסל מפנימי: מזוהה מסלול בינעירוני בין ${distinctCities.join(" ל-")}`);
-      }
-
-      // טיפול בערים חיצוניות
-      if (externalCities.length > 0) {
-        // אם הנסיעה מוגדרת מפורשות כפנימי בעיר הבית (למשל "פ שמש 50 ש") והמחיר סביר (<= 110 ש"ח),
-        // ייתכן שמדובר ברחוב/מוקד מקומי ששמו מתנגש עם עיר (למשל "הר מירון", "רחוב ירושלים", "רחוב חיפה")
-        if (isExplicitHomeInternal && (!price || price <= 110 || isMultiOrHourly)) {
-          return yes(`פנימי ${home}: הוגדר מפורשות כפנימי (${price ? price + " ש\"ח" : "מחיר מקומי"})`);
-        }
-        return no(`נפסל מפנימי: מופיעה עיר חיצונית (${externalCities.join(", ")})`);
-      }
-
-      // בדיקת מעברים פנימיים ספציפיים לפי עיר
-      if (home === "בית שמש" && detectInternalTransitionBeitShemesh(text)) {
-        return yes(`פנימי בית שמש: זוהה מעבר בין שכונות/רחובות בעיר`);
-      }
-      if (home === "ירושלים" && detectInternalTransitionJerusalem(text)) {
-        return yes(`פנימי ירושלים: זוהה מעבר פנימי בתוך ירושלים`);
-      }
-
-      // אם זוהתה הצהרת פנימי מפורשת של עיר הבית
-      if (isExplicitHomeInternal) {
-        return yes(`פנימי ${home}: צוין מפורשות`);
-      }
-
-      // אם זוהתה שכונה או רחוב של עיר הבית (מושבים סמוכים כמו רוגלית, נס הרים שייכים לצמצום/יוצא ולא לפנימי בעיר!)
-      const localSpots = places.filter((p) => p.city === home && (p.kind === "neighborhood" || p.kind === "street"));
-      if (localSpots.length > 0) {
-        // חייב להיות מלווה במחיר מקומי, מעבר, הצהרת פנימי, או "בתוך"
-        if (price && (price <= 90 || isMultiOrHourly)) {
-          return yes(`פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}" עם מחיר (${price} ש"ח)`);
-        }
-        if (norm.includes("בתוך") || isExplicitHomeInternal) {
-          return yes(`פנימי ${home}: זוהה מוקד מקומי "${localSpots[0].phrase}"`);
-        }
-      }
-
-      // בדיקה לפי שם הקבוצה (אם הקבוצה ייעודית לפנימי שמש)
-      const groupNorm = normalizeText(groupName);
-      if (groupNorm.includes("פנימי שמש") || groupNorm.includes("בית שמש בלבד")) {
-        const hasPrice = /\b\d{2,3}\b/.test(text);
-        if (hasPrice) {
-          return yes(`פנימי ${home} (מתוך קבוצה ייעודית)`);
-        }
-      }
-
-      return no(`אין בהודעה סימן לנסיעה פנימית בתוך ${home}`);
+      return no(internalCheck.reason);
     }
 
     // ==========================================
-    // מצב 2: מצב צמצום (reduce: פנימי ויוצא יחד)
+    // מצב 2: בתוך ומחוץ לעיר (city_all או reduce / צמצום)
     // ==========================================
-    if (state.mode === "reduce") {
-      // 1. האם זו נסיעה פנימית נקייה?
-      if (externalCities.length === 0) {
-        const mine = places.filter((p) => p.city === home);
-        if (mine.length > 0 || (home === "בית שמש" && detectInternalTransitionBeitShemesh(text))) {
-          return yes(`צמצום (${home}): נסיעה פנימית`);
+    if (state.mode === "city_all" || state.mode === "reduce") {
+      // 1. האם זו נסיעה פנימית בעיר?
+      const internalCheck = checkInternalRide(text, home, places, externalCities, groupName);
+      if (internalCheck.ok) {
+        return yes(`${home} (בתוך העיר): ${internalCheck.reason}`);
+      }
+
+      // 2. האם זו נסיעה שיוצאת מעיר הבית לכל יעד בינעירוני?
+      const roles = resolveRoles(places);
+      if (roles.cities.includes(home)) {
+        if (roles.from === home) {
+          return yes(`${home} (מחוץ לעיר): יוצאת ל${roles.to || "יעד חיצוני"}`);
+        } else {
+          return no(`${home} מופיעה כיעד ולא כמוצא (נסיעה נכנסת)`);
         }
       }
 
-      // 2. האם זו נסיעה שיוצאת מעיר הבית?
-      const roles = resolveRoles(places);
-      if (roles.cities.includes(home) && roles.from === home) {
-        return yes(`צמצום (${home}): יוצאת ל${roles.to || "יעד חיצוני"}`);
-      }
-
-      return no(`צמצום: לא זוהתה יציאה או פנימי מ${home}`);
+      return no(`לא זוהתה נסיעה פנימית ולא יציאה מ${home}`);
     }
 
     // ==========================================
@@ -489,99 +508,85 @@ export const findPlaces = (text) => get().findPlaces(text);
 export const detectInternalTransitionBeitShemesh = (text) => get().detectInternalTransitionBeitShemesh(text);
 export const detectInternalTransitionJerusalem = (text) => get().detectInternalTransitionJerusalem(text);
 
+export function matchesAnySearch(rideText, userSearchState, groupName = "") {
+  if (!userSearchState || !userSearchState.active) {
+    return { ok: false, reason: "אין חיפוש פעיל" };
+  }
+  const searches = Array.isArray(userSearchState.searches) && userSearchState.searches.length > 0
+    ? userSearchState.searches
+    : [userSearchState];
+
+  for (const s of searches) {
+    const verdict = get().rideMatches(rideText, s, groupName);
+    if (verdict.ok) {
+      return {
+        ok: true,
+        reason: verdict.reason,
+        matchedSearch: s,
+      };
+    }
+  }
+  return { ok: false, reason: "לא תואם לאף אחד מהחיפושים הפעילים" };
+}
+
+export const CITY_ALIAS_MAP = {
+  "שמש": "בית שמש",
+  "בש": "בית שמש",
+  "בית שמש": "בית שמש",
+  "ים": "ירושלים",
+  "ירו": "ירושלים",
+  "ירושלים": "ירושלים",
+  "מירון": "מירון",
+  "בב": "בני ברק",
+  "בני ברק": "בני ברק",
+  "מוע": "מודיעין עילית",
+  "ספר": "מודיעין עילית",
+  "קרית ספר": "מודיעין עילית",
+  "מודיעין עילית": "מודיעין עילית",
+  "תא": "תל אביב",
+  "תל אביב": "תל אביב",
+  "נתבג": "נתב\"ג",
+  "שדה": "נתב\"ג",
+  "ביתר": "ביתר עילית",
+  "ביתר עילית": "ביתר עילית",
+  "אלעד": "אלעד",
+  "אשדוד": "אשדוד",
+  "סבא": "כפר סבא",
+  "כפר סבא": "כפר סבא",
+  "פת": "פתח תקווה",
+  "פתח": "פתח תקווה",
+  "פתח תקווה": "פתח תקווה",
+  "ראשון": "ראשון לציון",
+  "ראשלצ": "ראשון לציון",
+  "ראשון לציון": "ראשון לציון",
+  "גבעז": "גבעת זאב",
+  "גבעת זאב": "גבעת זאב",
+  "גת": "קריית גת",
+  "קרית גת": "קריית גת",
+  "טלז": "טלזסטון",
+  "טלזסטון": "טלזסטון",
+  "חיפה": "חיפה",
+  "טבריה": "טבריה",
+  "צפת": "צפת",
+  "רחובות": "רחובות",
+  "חולון": "חולון",
+  "בת ים": "בת ים",
+  "לוד": "לוד",
+  "רמלה": "רמלה",
+  "עפולה": "עפולה",
+  "נתיבות": "נתיבות",
+  "רכסים": "רכסים",
+  "קוממיות": "קוממיות",
+};
+
 export function processDriverCommand(rawText) {
   const raw = String(rawText || "").trim();
   const norm = normalizeText(raw);
 
-  // 1. פקודות פנימי ישירות:
-  // "פנוי שמש", "פנוי שמש פנימי", "פנימי שמש", "שמש פנימי", "פ שמש", "שמש פ"
-  if (
-    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פ|פנוי)\s+(?:בית\s+)?שמש(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פנימי\s+)?(?:בית\s+)?שמש$/.test(norm) ||
-    norm === "שמש"
-  ) {
-    return { mode: "internal", origin: "בית שמש", destination: null, displayText: "בית שמש (פנימי)" };
-  }
-
-  // פנימי ירושלים: "פנוי ים פנימי", "פנימי ים", "ים פנימי", "פ ים", "ים פ"
-  if (
-    /^(?:פנוי\s+)?(?:פנימי\s+)?(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    /^(?:פ|פנוי)\s+(?:ירושלים|ים)(?:\s+פנימי|\s+פ)?$/.test(norm) ||
-    norm === "ים"
-  ) {
-    return { mode: "internal", origin: "ירושלים", destination: null, displayText: "ירושלים (פנימי)" };
-  }
-
-  // פנימי בני ברק
-  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:בני\s+ברק|בב)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
-    return { mode: "internal", origin: "בני ברק", destination: null, displayText: "בני ברק (פנימי)" };
-  }
-
-  // פנימי מודיעין עילית
-  if (/^(?:פנוי\s+)?(?:פנימי\s+)?(?:מודיעין\s+עילית|קרית\s+ספר|מוע)(?:\s+פנימי|\s+פ)?$/.test(norm)) {
-    return { mode: "internal", origin: "מודיעין עילית", destination: null, displayText: "מודיעין עילית (פנימי)" };
-  }
-
-  // 2. מצב צמצום (פנימי + יוצא): "שמש צמצם", "צמצם שמש", "צמצום שמש", "ים צמצם"
-  if (/(^|\s)(צמצם|צמצום)(\s|$)/.test(norm)) {
-    let city = "בית שמש";
-    if (norm.includes("ים") || norm.includes("ירושלים")) city = "ירושלים";
-    else if (norm.includes("בב") || norm.includes("בני ברק")) city = "בני ברק";
-    else if (norm.includes("מוע") || norm.includes("ספר")) city = "מודיעין עילית";
-    return { mode: "reduce", origin: city, destination: null, displayText: `${city} (צמצום: פנימי ויוצא)` };
-  }
-
-  // 3. מסלול מקוצר עם כינויי ערים:
-  const cityAliasMap = {
-    "שמש": "בית שמש",
-    "בש": "בית שמש",
-    "בית שמש": "בית שמש",
-    "ים": "ירושלים",
-    "ירו": "ירושלים",
-    "ירושלים": "ירושלים",
-    "בב": "בני ברק",
-    "בני ברק": "בני ברק",
-    "מוע": "מודיעין עילית",
-    "ספר": "מודיעין עילית",
-    "קרית ספר": "מודיעין עילית",
-    "מודיעין עילית": "מודיעין עילית",
-    "תא": "תל אביב",
-    "תל אביב": "תל אביב",
-    "נתבג": "נתב\"ג",
-    "שדה": "נתב\"ג",
-    "ביתר": "ביתר עילית",
-    "אלעד": "אלעד",
-    "אשדוד": "אשדוד",
-    "סבא": "כפר סבא",
-    "כפר סבא": "כפר סבא",
-    "פת": "פתח תקווה",
-    "פתח": "פתח תקווה",
-    "פתח תקווה": "פתח תקווה",
-    "ראשון": "ראשון לציון",
-    "ראשלצ": "ראשון לציון",
-    "ראשון לציון": "ראשון לציון",
-    "גבעז": "גבעת זאב",
-    "גבעת זאב": "גבעת זאב",
-    "גת": "קריית גת",
-    "קרית גת": "קריית גת",
-    "טלז": "טלזסטון",
-    "טלזסטון": "טלזסטון",
-    "חיפה": "חיפה",
-    "טבריה": "טבריה",
-    "צפת": "צפת",
-    "רחובות": "רחובות",
-    "חולון": "חולון",
-    "בת ים": "בת ים",
-    "לוד": "לוד",
-    "רמלה": "רמלה",
-    "עפולה": "עפולה",
-    "נתיבות": "נתיבות",
-  };
-
+  // 1. האם יש פקודת מסלול מקוצרת עם שני כינויים שונים? (למשל: "פ ים שמש", "ים שמש", "פנוי שמש בב")
   const cleanCmd = norm.replace(/^(?:פ|פנוי)\s+/, "");
-  for (const [a1, c1] of Object.entries(cityAliasMap)) {
-    for (const [a2, c2] of Object.entries(cityAliasMap)) {
+  for (const [a1, c1] of Object.entries(CITY_ALIAS_MAP)) {
+    for (const [a2, c2] of Object.entries(CITY_ALIAS_MAP)) {
       if (c1 === c2) continue;
       const routeRe = new RegExp(`^${a1}\\s+(?:ל|אל|\\-|>|)?${a2}$`);
       if (routeRe.test(cleanCmd)) {
@@ -590,7 +595,29 @@ export function processDriverCommand(rawText) {
     }
   }
 
-  // 4. שימוש במפענח הכללי
-  return get().parseDriverCommand(raw);
+  // 2. האם יש פקודת פנימי מפורשת? (חובה שתכיל "פנימי" או קיצור פנימי מובהק כמו "פ שמש פ", "שמש פנימי")
+  const isExplicitInternalCmd = /(^|\s)פנימי(\s|$)/.test(norm) ||
+    /^(?:פ|פנוי)\s+[א-ת]+\s+פ$/.test(norm) ||
+    /^[א-ת]+\s+פ$/.test(norm);
+
+  if (isExplicitInternalCmd) {
+    const cleanWithoutInternal = cleanCmd.replace(/פנימי/g, "").replace(/\bפ\b/g, "").trim();
+    let city = CITY_ALIAS_MAP[cleanWithoutInternal];
+    if (!city) {
+      const places = findPlaces(cleanWithoutInternal.length > 0 ? cleanWithoutInternal : raw);
+      city = places[0]?.city || "בית שמש";
+    }
+    return { mode: "internal", origin: city, destination: null, displayText: `${city} (פנימי בלבד)` };
+  }
+
+  // 3. עיר יחידה ללא המילה "פנימי": "פנוי ים", "פנוי שמש", "פנוי מירון", "פ ים", "שמש", "ים", "מירון", "שמש צמצם"
+  // חיפוש בתוך ומחוץ לעיר כאחד!
+  let singleCity = CITY_ALIAS_MAP[cleanCmd.replace(/(^|\s)(צמצם|צמצום)(\s|$)/g, "").trim()];
+  if (!singleCity) {
+    const places = findPlaces(raw);
+    singleCity = places[0]?.city || (raw.length > 0 ? raw : "בית שמש");
+  }
+
+  return { mode: "city_all", origin: singleCity, destination: null, displayText: `${singleCity} (בתוך ומחוץ לעיר)` };
 }
 
