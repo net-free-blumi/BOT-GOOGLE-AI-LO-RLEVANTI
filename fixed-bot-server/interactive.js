@@ -106,31 +106,46 @@ export async function sendInteractiveButtons(sock, jid, {
     };
   });
 
-  // ניסיון 1: שליחה כמבנה InteractiveMessage בפורמט Native Flow (הנתמך ביותר באפליקציות מודרניות)
+  // ניסיון 1: שימוש ב-generateWAMessageFromContent ו-relayMessage (פורמט Native Flow הרשמי ב-Baileys)
   try {
-    const interactiveMessage = {
-      header: title ? { title, hasMediaAttachment: false } : undefined,
-      body: { text: body },
-      footer: footer ? { text: footer } : undefined,
-      nativeFlowMessage: {
-        buttons: nativeButtons,
-        messageParamsJsonType: 1,
-      },
-    };
+    const baileys = await import("@whiskeysockets/baileys").catch(() => null);
+    if (baileys && baileys.generateWAMessageFromContent && baileys.proto) {
+      const { generateWAMessageFromContent, proto } = baileys;
 
-    const payload = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage,
+      const interactiveMessage = proto.Message.InteractiveMessage.create({
+        header: title ? proto.Message.InteractiveMessage.Header.create({ title, hasMediaAttachment: false }) : undefined,
+        body: proto.Message.InteractiveMessage.Body.create({ text: body }),
+        footer: footer ? proto.Message.InteractiveMessage.Footer.create({ text: footer }) : undefined,
+        nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+          buttons: nativeButtons,
+        }),
+      });
+
+      const waMsg = generateWAMessageFromContent(
+        jid,
+        {
+          viewOnceMessage: {
+            message: {
+              messageContextInfo: {
+                deviceListMetadata: {},
+                deviceListMetadataVersion: 2,
+              },
+              interactiveMessage,
+            },
+          },
         },
-      },
-    };
+        {
+          userJid: sock.user?.id || sock.authState?.creds?.me?.id,
+          quoted: quoted || undefined,
+        }
+      );
 
-    const res = await sock.sendMessage(jid, payload, quoted ? { quoted } : {});
-    if (res?.key?.id) return res;
-  } catch (errInteractive) {
-    // ממשיכים לניסיון הבא
-  }
+      if (sock.relayMessage && waMsg?.key?.id) {
+        await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
+        return waMsg;
+      }
+    }
+  } catch (errProto) {}
 
   // ניסיון 2: מבנה Buttons רגיל של Baileys
   try {
@@ -140,29 +155,43 @@ export async function sendInteractiveButtons(sock, jid, {
       type: 1,
     }));
 
-    const legacyPayload = {
-      text: body,
-      footer: footer,
-      buttons: legacyButtons,
-      headerType: 1,
-    };
-
-    const res = await sock.sendMessage(jid, legacyPayload, quoted ? { quoted } : {});
+    const res = await sock.sendMessage(
+      jid,
+      {
+        text: body,
+        footer,
+        buttons: legacyButtons,
+        headerType: 1,
+      },
+      quoted ? { quoted } : {}
+    );
     if (res?.key?.id) return res;
-  } catch (errLegacy) {
-    // ממשיכים ל-Fallback
-  }
+  } catch (errLegacy) {}
 
-  // ניסיון 3 (Fallback בטוח): שליחה כטקסט מעוצב ונוח כדי שאף הודעה לא תלך לאיבוד
-  let fallbackText = body;
-  if (buttons.length > 0) {
-    fallbackText += `\n\n━━━━━━━━━━━━━━━━━━━━\n🔘 *פעולות מהירות (השב במספר או מילה):*\n`;
-    buttons.forEach((b, i) => {
-      fallbackText += `👉 *${b.id || i + 1}* ⬅️ ${b.text || b.displayText}\n`;
+  // ניסיון 3: תבנית Hydrated Template של Baileys
+  try {
+    const hydratedButtons = buttons.map((b, idx) => {
+      if (b.type === "url" || b.url) {
+        return { index: idx + 1, urlButton: { displayText: b.text || b.displayText, url: b.url } };
+      }
+      return { index: idx + 1, quickReplyButton: { displayText: b.text || b.displayText, id: b.id || String(idx + 1) } };
     });
-  }
 
-  return await sock.sendMessage(jid, { text: fallbackText }, quoted ? { quoted } : {});
+    const res = await sock.sendMessage(
+      jid,
+      {
+        templateButtons: hydratedButtons,
+        text: body,
+        footer,
+      },
+      quoted ? { quoted } : {}
+    );
+    if (res?.key?.id) return res;
+  } catch (errHydrated) {}
+
+  // ניסיון 4 (Fallback בטוח תמיד): שליחת הודעת טקסט מעוצבת.
+  // שים לב: body כבר כולל בתוכו את כל ההנחיות והמספרים (1, 2, ביטול / ת, תן)
+  return await sock.sendMessage(jid, { text: body }, quoted ? { quoted } : {});
 }
 
 /**

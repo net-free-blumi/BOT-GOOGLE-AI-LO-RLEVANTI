@@ -560,10 +560,12 @@ const mockInteractiveSock = {
 
 await sendRideAlertWithButtons(mockInteractiveSock, "123@s.whatsapp.net", mockRideData);
 assert(capturedPayload !== null, "התראת נסיעה עם כפתורים נוצרה ונשלחה לסוקט");
-assert(
-  Boolean(capturedPayload?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons),
-  "התראת נסיעה מכילה כפתורי Native Flow (כפתור 'ת' + כפתור וואטסאפ לסדרן)"
+const hasAlertButtons = Boolean(
+  capturedPayload?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons ||
+  capturedPayload?.buttons ||
+  capturedPayload?.templateButtons
 );
+assert(hasAlertButtons, "התראת נסיעה מכילה כפתורים (כפתור 'ת' + כפתור וואטסאפ לסדרן)");
 
 // 6. בדיקת בניית הודעת אישור הוספת חיפוש במקביל (3 כפתורים)
 let capturedConfirm = null;
@@ -579,7 +581,10 @@ await sendPendingSearchConfirmationWithButtons(mockSockConfirm, "123@s.whatsapp.
   newSearch: { displayText: "ירושלים לבית שמש" },
   modeDesc: "נסיעות מירושלים לבית שמש"
 });
-const confirmButtons = capturedConfirm?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+const confirmButtons =
+  capturedConfirm?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons ||
+  capturedConfirm?.buttons ||
+  capturedConfirm?.templateButtons;
 assert(Array.isArray(confirmButtons) && confirmButtons.length === 3, "שאלת אישור חיפוש מכילה 3 כפתורים (הוסף, החלף, ביטול)");
 
 // 7. בדיקת תפריט פעולות נפתח מלא (List Menu)
