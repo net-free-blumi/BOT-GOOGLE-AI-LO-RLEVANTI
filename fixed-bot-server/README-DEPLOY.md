@@ -34,7 +34,7 @@
 
 ### 1. העלאת הקבצים המעודכנים (ב-PowerShell מקומי או טרמינל):
 ```powershell
-scp -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" index.js matcher.js dedupe.js cities.json streets-full.json dashboard-api.js users-manager.js ubuntu@82.70.210.206:/home/ubuntu/wa-rides-bot/
+scp -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" index.js matcher.js dedupe.js cities.json streets-full.json dashboard-api.js users-manager.js interactive.js ubuntu@82.70.210.206:/home/ubuntu/wa-rides-bot/
 ```
 
 ### 2. כניסה לשרת והפעלה מחדש (SSH):

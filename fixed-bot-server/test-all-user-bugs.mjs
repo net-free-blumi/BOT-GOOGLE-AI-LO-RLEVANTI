@@ -2,6 +2,7 @@
 import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractPrice } from "./matcher.js";
 import { createDeduper, isUniqueRideLink } from "./dedupe.js";
 import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, stopUserSearch } from "./users-manager.js";
+import { extractInteractiveResponse, sendRideAlertWithButtons, sendPendingSearchConfirmationWithButtons, sendFullInteractiveMenu } from "./interactive.js";
 import { readFileSync } from "node:fs";
 
 console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 3.0 - חיפושים מקבילים ובתוך/מחוץ לעיר)...\n");
@@ -498,5 +499,105 @@ stopUserSearch(testDriverPhone);
 const stoppedState = getUserSearch(testDriverPhone);
 assert(!stoppedState.active && stoppedState.searches.length === 0, "עצירה מלאה מכבה את כל החיפושים (מצב תפוס)");
 
+// ==========================================
+// בדיקה 7: כפתורים אינטראקטיביים, פענוח תגובות ותפריט נפתח (Native Flow + List)
+// ==========================================
+console.log("\n--- בדיקה 7: כפתורים אינטראקטיביים, פענוח תגובות ותפריט נפתח ---");
+
+// 1. תגובת כפתור רגיל (Buttons Response)
+const mockBtnMsg = {
+  buttonsResponseMessage: {
+    selectedButtonId: "1",
+    selectedDisplayText: "➕ הוסף במקביל"
+  }
+};
+assert(extractInteractiveResponse(mockBtnMsg) === "1", "חילוץ תגובה מכפתור רגיל (selectedButtonId) פועל");
+
+// 2. תגובת כפתור תבנית (Template Button Reply)
+const mockTplMsg = {
+  templateButtonReplyMessage: {
+    selectedId: "ת",
+    selectedDisplayText: "ת"
+  }
+};
+assert(extractInteractiveResponse(mockTplMsg) === "ת", "חילוץ תגובה מכפתור תבנית 'ת' פועל");
+
+// 3. תגובה מתוך בחירה ברשימה נפתחת (Single Select List)
+const mockListMsg = {
+  listResponseMessage: {
+    singleSelectReply: {
+      selectedRowId: "פנוי שמש פנימי"
+    }
+  }
+};
+assert(extractInteractiveResponse(mockListMsg) === "פנוי שמש פנימי", "חילוץ תגובה מרשימה נפתחת (Single Select) פועל");
+
+// 4. תגובה מ-Native Flow (הפורמט המודרני ביותר של וואטסאפ)
+const mockNativeFlow = {
+  interactiveResponseMessage: {
+    nativeFlowResponseMessage: {
+      paramsJson: JSON.stringify({ id: "2" })
+    }
+  }
+};
+assert(extractInteractiveResponse(mockNativeFlow) === "2", "חילוץ תגובה מ-Native Flow Interactive Response פועל");
+
+// 5. בדיקת בניית התראת נסיעה עם כפתור תפיסה מהיר "ת" וכפתור וואטסאפ לסדרן
+const mockRideData = {
+  cleanedText: "שמש 50 שח\nרמה א לרמה ד",
+  groupName: "דרכ\"ש",
+  senderName: "יהודה",
+  senderPhone: "0552683249"
+};
+
+let capturedPayload = null;
+const mockInteractiveSock = {
+  sendMessage: async (jid, payload) => {
+    capturedPayload = payload;
+    return { key: { id: "MSG_INTERACTIVE_123" } };
+  }
+};
+
+await sendRideAlertWithButtons(mockInteractiveSock, "123@s.whatsapp.net", mockRideData);
+assert(capturedPayload !== null, "התראת נסיעה עם כפתורים נוצרה ונשלחה לסוקט");
+assert(
+  Boolean(capturedPayload?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons),
+  "התראת נסיעה מכילה כפתורי Native Flow (כפתור 'ת' + כפתור וואטסאפ לסדרן)"
+);
+
+// 6. בדיקת בניית הודעת אישור הוספת חיפוש במקביל (3 כפתורים)
+let capturedConfirm = null;
+const mockSockConfirm = {
+  sendMessage: async (jid, payload) => {
+    capturedConfirm = payload;
+    return { key: { id: "MSG_CONFIRM_123" } };
+  }
+};
+
+await sendPendingSearchConfirmationWithButtons(mockSockConfirm, "123@s.whatsapp.net", {
+  currentSearches: [{ displayText: "בית שמש" }],
+  newSearch: { displayText: "ירושלים לבית שמש" },
+  modeDesc: "נסיעות מירושלים לבית שמש"
+});
+const confirmButtons = capturedConfirm?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+assert(Array.isArray(confirmButtons) && confirmButtons.length === 3, "שאלת אישור חיפוש מכילה 3 כפתורים (הוסף, החלף, ביטול)");
+
+// 7. בדיקת תפריט פעולות נפתח מלא (List Menu)
+let capturedMenu = null;
+const mockSockMenu = {
+  sendMessage: async (jid, payload) => {
+    capturedMenu = payload;
+    return { key: { id: "MSG_MENU_123" } };
+  }
+};
+
+await sendFullInteractiveMenu(mockSockMenu, "123@s.whatsapp.net", {
+  activeSearches: [{ displayText: "בית שמש", mode: "city_all", origin: "בית שמש" }],
+  describeMode: () => "בתוך ומחוץ לעיר"
+});
+const menuSections = capturedMenu?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+assert(Boolean(menuSections), "תפריט נפתח מלא נוצר בהצלחה עם אפשרויות בחירה נוחות");
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
+
 

@@ -3,6 +3,14 @@ import fs from "node:fs";
 import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces } from "./matcher.js";
 import { createDeduper } from "./dedupe.js";
 import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
+import {
+  extractInteractiveResponse,
+  sendInteractiveButtons,
+  sendInteractiveList,
+  sendRideAlertWithButtons,
+  sendPendingSearchConfirmationWithButtons,
+  sendFullInteractiveMenu
+} from "./interactive.js";
 import { 
   loadUsersData, 
   isUserApproved, 
@@ -196,6 +204,10 @@ function extractMessageText(m) {
     if (!inner) break;
     msg = inner;
   }
+  // בדיקה מקיפה של תגובת כפתורים או תפריט נפתח (Interactive / Buttons / List / Native Flow)
+  const interactiveText = extractInteractiveResponse(msg);
+  if (interactiveText) return interactiveText;
+
   return String(
     msg.conversation ||
     msg.extendedTextMessage?.text ||
@@ -258,7 +270,12 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
   let lastError = null;
   for (const a of attempts) {
     try {
-      const sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
+      let sentMsg = null;
+      try {
+        sentMsg = await sendRideAlertWithButtons(a.sock, driverJid, rideData, originalMsg);
+      } catch (eBtn) {
+        sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
+      }
       if (!sentMsg) continue;
 
       if (sentMsg.key?.id) {
@@ -392,9 +409,18 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
   }
 }
 
-// שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות
+// שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות (אינטראקטיבי או טקסט)
 async function sendHelpMenu(sock, jid, driverPhone) {
   const search = getUserSearch(driverPhone);
+
+  try {
+    const res = await sendFullInteractiveMenu(sock, jid, {
+      activeSearches: search.active ? search.searches : [],
+      describeMode,
+    });
+    if (res) return;
+  } catch (eList) {}
+
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
   if (search.active && search.searches.length > 0) {
     menuText += `📊 *סטטוס החיפושים הפעילים שלך במקביל:*\n`;
@@ -723,6 +749,39 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
+      // 0. מענה על כפתור תפיסת נסיעה / תגובה "תן" / "ת" על הודעת נסיעה
+      const quotedStanzaId =
+        m.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+        m.message?.buttonsResponseMessage?.contextInfo?.stanzaId ||
+        m.message?.templateButtonReplyMessage?.contextInfo?.stanzaId ||
+        m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
+
+      const quotedAlertInfo = quotedStanzaId ? sentAlertsCache.get(quotedStanzaId) : null;
+      const isClaimIntent = norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||
+        norm === "קח_נסיעה" || norm === "claim_ride" || (norm === "ת" && quotedAlertInfo);
+
+      if (isClaimIntent && quotedAlertInfo) {
+        const rawPhone = String(quotedAlertInfo.senderPhone || "").replace(/\D/g, "");
+        let waLink = "";
+        if (rawPhone && rawPhone.length >= 9 && quotedAlertInfo.senderPhone !== "זמין בקבוצה") {
+          let intl = rawPhone.startsWith("0") ? "972" + rawPhone.slice(1) : rawPhone;
+          waLink = `https://wa.me/${intl}`;
+        }
+
+        let claimReply = `🚕 *נסיעה נתפסה! בהצלחה!*\n\n`;
+        claimReply += `📍 *קבוצה:* ${quotedAlertInfo.groupName}\n`;
+        claimReply += `👤 *סדרן:* ${quotedAlertInfo.senderName} (${quotedAlertInfo.senderPhone})\n`;
+        if (waLink) {
+          claimReply += `💬 *וואטסאפ ישיר לסדרן:* ${waLink}\n`;
+          claimReply += `📞 *חיוג מהיר:* tel:${quotedAlertInfo.senderPhone}\n`;
+        }
+        claimReply += `\n💡 צור קשר מיידית עם הסדרן לסגירת הנסיעה.`;
+
+        await sock.sendMessage(jid, { text: claimReply }, { quoted: m });
+        recordEvent("command", `נהג ${senderPhone} תפס נסיעה של סדרן ${quotedAlertInfo.senderPhone}`);
+        continue;
+      }
+
       if (norm === "ת" || /(^| )(תפוס|עצור|סגור)( |$)/.test(norm)) {
         stopUserSearch(senderPhone);
         recordEvent("command", `חיפוש הופסק ע"י ${pushName} (${senderPhone})`);
@@ -822,11 +881,20 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         }
 
         if (stageResult.status === "pending_confirmation") {
+          try {
+            const res = await sendPendingSearchConfirmationWithButtons(sock, jid, {
+              currentSearches: stageResult.current.searches,
+              newSearch: parsed,
+              modeDesc: describeMode(parsed),
+            });
+            if (res) continue;
+          } catch (eBtn) {}
+
           const currentList = stageResult.current.searches.map((s, idx) => `${idx + 1}. ${s.displayText}`).join("\n");
           let promptMsg = `🔍 *יש לך כרגע חיפוש פעיל במערכת:*\n${currentList}\n\n`;
           promptMsg += `❓ *האם להוסיף את החיפוש החדש במקביל?*\n`;
           promptMsg += `📍 *חיפוש חדש:* ${parsed.displayText} (${describeMode(parsed)})\n\n`;
-          promptMsg += `*השב עכשיו:*\n`;
+          promptMsg += `*השב עכשיו (או לחץ על כפתור):*\n`;
           promptMsg += `👉 *1* או *הוסף* (או *כן*) ⬅️ להוספה לחיפושים הקיימים\n`;
           promptMsg += `👉 *2* או *החלף* ⬅️ להחליף את כל החיפושים בחדש בלבד\n`;
           promptMsg += `👉 *ביטול* (או *לא*) ⬅️ לבטל (להישאר עם הקיים ללא שינוי)`;
