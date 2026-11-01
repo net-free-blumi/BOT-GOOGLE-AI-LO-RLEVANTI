@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import fs from "node:fs";
-import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces } from "./matcher.js";
+import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
 import { createDeduper } from "./dedupe.js";
 import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
 import {
@@ -49,6 +49,7 @@ import {
   isDriverSessionConnected,
   purgeAllDriverSessions,
   ensureDriverSessionForQr,
+  getDriverSession,
 } from "./session-manager.js";
 
 const DEBUG_FILTER = true;
@@ -234,12 +235,12 @@ function isStaleMessage(m) {
   return Date.now() / 1000 - ts > MAX_MESSAGE_AGE_SEC;
 }
 
-// פורמט התראת נסיעה נקי וממוקד - בלי כותרת מעצבנת ובלי קווים מפרידים
+// פורמט התראת נסיעה נקי, מדויק וללא שורות מיותרות
 function buildRideAlertText(rideData) {
   let alertMsg = `${rideData.cleanedText}\n\n`;
   alertMsg += `📍 ${rideData.groupName}\n`;
   alertMsg += `👤 ${rideData.senderName} · ${rideData.senderPhone}`;
-  return alertMsg;
+  return alertMsg.trim();
 }
 
 // שליחת הודעה עם ניסיון ציטוט, ובמקרה כשל - בלי ציטוט
@@ -255,9 +256,65 @@ async function trySend(sock, jid, content, quoted) {
   return await sock.sendMessage(jid, content);
 }
 
-// שליחת התראת נסיעה לנהג.
-// עדיפות 1: הבוט הראשי (הודעה רגילה שמקפיצה התראה וצליל לטלפון של הנהג).
-// עדיפות 2 (גיבוי): חשבון הנהג עצמו ל"הודעה לעצמי".
+
+// קבלת ההתראה האחרונה ביותר שנשלחה לנהג (לחילוץ נסיעה כשהנהג משיב "תן" ללא ציטוט)
+export function getLatestAlertForDriver(driverPhone, maxAgeMs = 5 * 60 * 1000) {
+  const clean = cleanPhone(driverPhone);
+  let latest = null;
+  const now = Date.now();
+  for (const info of sentAlertsCache.values()) {
+    if (cleanPhone(info.driverPhone) === clean) {
+      if (now - (info.sentAt || 0) <= maxAgeMs) {
+        if (!latest || info.sentAt > latest.sentAt) {
+          latest = info;
+        }
+      }
+    }
+  }
+  return latest;
+}
+
+
+// שליחת מענה "תן" כתגובה המצטטת את הודעת הנסיעה (עם גיבוי אם הציטוט הבין-צ'אטי נדחה)
+export async function sendRideClaimReply(sock, targetJid, text, quoteObj) {
+  if (!sock || !targetJid) return false;
+
+  // 1. ניסיון שליחה עם הציטוט המלא (כולל מזהה קבוצת המקור)
+  if (quoteObj) {
+    try {
+      await sock.sendMessage(targetJid, { text }, { quoted: quoteObj });
+      return true;
+    } catch (e) {
+      console.log(`שליחה עם ציטוט מקורי ל-${targetJid} נכשלה (${e.message}), מנסה ציטוט מותאם`);
+    }
+
+    // 2. ניסיון ציטוט כאשר remoteJid מכוון לצ'אט היעד
+    try {
+      const adaptedQuote = {
+        key: {
+          ...quoteObj.key,
+          remoteJid: targetJid,
+        },
+        message: quoteObj.message,
+      };
+      await sock.sendMessage(targetJid, { text }, { quoted: adaptedQuote });
+      return true;
+    } catch (e2) {
+      console.log(`שליחה עם ציטוט מותאם ל-${targetJid} נכשלה (${e2.message}), מנסה ללא ציטוט`);
+    }
+  }
+
+  // 3. גיבוי אחרון: שליחה ללא ציטוט
+  try {
+    await sock.sendMessage(targetJid, { text });
+    return true;
+  } catch (err) {
+    console.error(`שליחה ל-${targetJid} נכשלה:`, err.message);
+    return false;
+  }
+}
+
+// שליחת התראת נסיעה לנהג (100% אמינות, הגעה מיידית ללא בליעת הודעות בוואטסאפ).
 async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
   const alertMsg = buildRideAlertText(rideData);
   const driverJid = getDestinationJid(driverPhone);
@@ -270,12 +327,7 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
   let lastError = null;
   for (const a of attempts) {
     try {
-      let sentMsg = null;
-      try {
-        sentMsg = await sendRideAlertWithButtons(a.sock, driverJid, rideData, originalMsg);
-      } catch (eBtn) {
-        sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
-      }
+      const sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
       if (!sentMsg) continue;
 
       if (sentMsg.key?.id) {
@@ -285,8 +337,12 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
           rawText: rideData.rawText || rideData.cleanedText,
           driverPhone,
           groupName: rideData.groupName,
+          groupJid: rideData.groupJid || originalMsg?.key?.remoteJid || null,
           senderName: rideData.senderName,
           senderPhone: rideData.senderPhone,
+          senderJid: rideData.senderJid || originalMsg?.key?.participant || originalMsg?.key?.remoteJid || null,
+          originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
+          originalMessage: originalMsg?.message || null,
           searchDesc: rideData.searchDesc,
           sentAt: Date.now(),
         });
@@ -409,18 +465,9 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
   }
 }
 
-// שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות (אינטראקטיבי או טקסט)
+// שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות (100% הגעה ישירה)
 async function sendHelpMenu(sock, jid, driverPhone) {
   const search = getUserSearch(driverPhone);
-
-  try {
-    const res = await sendFullInteractiveMenu(sock, jid, {
-      activeSearches: search.active ? search.searches : [],
-      describeMode,
-    });
-    if (res) return;
-  } catch (eList) {}
-
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
   if (search.active && search.searches.length > 0) {
     menuText += `📊 *סטטוס החיפושים הפעילים שלך במקביל:*\n`;
@@ -756,29 +803,78 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         m.message?.templateButtonReplyMessage?.contextInfo?.stanzaId ||
         m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
 
-      const quotedAlertInfo = quotedStanzaId ? sentAlertsCache.get(quotedStanzaId) : null;
-      const isClaimIntent = norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||
-        norm === "קח_נסיעה" || norm === "claim_ride" || (norm === "ת" && quotedAlertInfo);
+      let targetAlertInfo = quotedStanzaId ? sentAlertsCache.get(quotedStanzaId) : null;
+      if (!targetAlertInfo && (norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" || norm === "קח_נסיעה" || norm === "claim_ride")) {
+        targetAlertInfo = getLatestAlertForDriver(senderPhone);
+      }
 
-      if (isClaimIntent && quotedAlertInfo) {
-        const rawPhone = String(quotedAlertInfo.senderPhone || "").replace(/\D/g, "");
-        let waLink = "";
-        if (rawPhone && rawPhone.length >= 9 && quotedAlertInfo.senderPhone !== "זמין בקבוצה") {
-          let intl = rawPhone.startsWith("0") ? "972" + rawPhone.slice(1) : rawPhone;
-          waLink = `https://wa.me/${intl}`;
+      const isClaimIntent = (norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||
+        norm === "קח_נסיעה" || norm === "claim_ride") || (norm === "ת" && quotedStanzaId && targetAlertInfo);
+
+      if (isClaimIntent && targetAlertInfo) {
+        const driverSession = getDriverSession(senderPhone);
+        const driverSock = driverSession?.sock;
+
+        let sentDirect = false;
+        let sentInGroup = false;
+        const sentDirectPhones = [];
+
+        // הכנת אובייקט הציטוט הרשמי של הודעת הנסיעה המקורית
+        const quoteObj = buildQuotedRideMessage(targetAlertInfo);
+
+        // שליחה אוטומטית מחשבון הוואטסאפ של הנהג
+        if (driverSock && driverSession?.status === "connected") {
+          // 1. שליחת תגובת "תן" בקבוצה שבה פורסמה הנסיעה (עם ציטוט מלא של הודעת הנסיעה)
+          if (targetAlertInfo.groupJid) {
+            const okGroup = await sendRideClaimReply(driverSock, targetAlertInfo.groupJid, "תן", quoteObj);
+            if (okGroup) sentInGroup = true;
+          }
+
+          // 2. שליחת תגובה אישית לסדרן שפרסם את הנסיעה (לא סתם הודעה, אלא תגובה המצטטת את הודעת הנסיעה שלו!)
+          const directRecipients = new Set();
+
+          // א. הסדרן שפרסם את ההודעה בקבוצה
+          const senderPhoneClean = cleanPhone(targetAlertInfo.senderPhone);
+          if (senderPhoneClean && senderPhoneClean.length >= 9 && !isLid(senderPhoneClean) && senderPhoneClean !== "זמין בקבוצה") {
+            directRecipients.add(senderPhoneClean);
+          }
+
+          // ב. טלפון ישיר שצוין בתוכן ההודעה (אם שונה, למשל "לבקש פה 0507787427")
+          const textPhone = extractDispatcherContact(targetAlertInfo);
+          if (textPhone && textPhone.length >= 9 && !isLid(textPhone)) {
+            directRecipients.add(cleanPhone(textPhone));
+          }
+
+          for (const p of directRecipients) {
+            const targetJid = `${p}@s.whatsapp.net`;
+            const okDirect = await sendRideClaimReply(driverSock, targetJid, "תן", quoteObj);
+            if (okDirect) {
+              sentDirect = true;
+              sentDirectPhones.push(p);
+            }
+          }
         }
 
         let claimReply = `🚕 *נסיעה נתפסה! בהצלחה!*\n\n`;
-        claimReply += `📍 *קבוצה:* ${quotedAlertInfo.groupName}\n`;
-        claimReply += `👤 *סדרן:* ${quotedAlertInfo.senderName} (${quotedAlertInfo.senderPhone})\n`;
-        if (waLink) {
-          claimReply += `💬 *וואטסאפ ישיר לסדרן:* ${waLink}\n`;
-          claimReply += `📞 *חיוג מהיר:* tel:${quotedAlertInfo.senderPhone}\n`;
+        if (sentInGroup) {
+          claimReply += `✅ נשלחה תגובת *"תן"* עם ציטוט בקבוצה: *${targetAlertInfo.groupName}*\n`;
         }
-        claimReply += `\n💡 צור קשר מיידית עם הסדרן לסגירת הנסיעה.`;
+        if (sentDirect) {
+          claimReply += `✅ נשלחה תגובה אישית לסדרן (${sentDirectPhones.join(", ")}) המצטטת את הודעת הנסיעה שלו!\n`;
+        }
+        if (!sentDirect && !sentInGroup) {
+          if (!driverSock || driverSession?.status !== "connected") {
+            claimReply += `⚠️ וואטסאפ הנהג שלך אינו מחובר למערכת (שלח *"חבר אותי"* לחיבור כדי שהבוט יוכל להגיב בשמך).\n`;
+          } else {
+            claimReply += `⚠️ לא זוהה מספר סדרן ישיר ואין גישת כתיבה בקבוצה.\n`;
+          }
+        }
+
+        claimReply += `\n📍 *קבוצה:* ${targetAlertInfo.groupName}\n`;
+        claimReply += `👤 *סדרן:* ${targetAlertInfo.senderName} (${targetAlertInfo.senderPhone})`;
 
         await sock.sendMessage(jid, { text: claimReply }, { quoted: m });
-        recordEvent("command", `נהג ${senderPhone} תפס נסיעה של סדרן ${quotedAlertInfo.senderPhone}`);
+        recordEvent("command", `נהג ${senderPhone} תפס נסיעה של סדרן ${targetAlertInfo.senderPhone} (קבוצה: ${sentInGroup}, פרטי: ${sentDirect})`);
         continue;
       }
 
@@ -881,23 +977,14 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         }
 
         if (stageResult.status === "pending_confirmation") {
-          try {
-            const res = await sendPendingSearchConfirmationWithButtons(sock, jid, {
-              currentSearches: stageResult.current.searches,
-              newSearch: parsed,
-              modeDesc: describeMode(parsed),
-            });
-            if (res) continue;
-          } catch (eBtn) {}
-
           const currentList = stageResult.current.searches.map((s, idx) => `${idx + 1}. ${s.displayText}`).join("\n");
           let promptMsg = `🔍 *יש לך כרגע חיפוש פעיל במערכת:*\n${currentList}\n\n`;
           promptMsg += `❓ *האם להוסיף את החיפוש החדש במקביל?*\n`;
           promptMsg += `📍 *חיפוש חדש:* ${parsed.displayText} (${describeMode(parsed)})\n\n`;
-          promptMsg += `*השב עכשיו (או לחץ על כפתור):*\n`;
-          promptMsg += `👉 *1* או *הוסף* (או *כן*) ⬅️ להוספה לחיפושים הקיימים\n`;
+          promptMsg += `*השב עכשיו במספר או מילה:*\n`;
+          promptMsg += `👉 *1* או *הוסף* (או *כן*) ⬅️ להוספה במקביל\n`;
           promptMsg += `👉 *2* או *החלף* ⬅️ להחליף את כל החיפושים בחדש בלבד\n`;
-          promptMsg += `👉 *ביטול* (או *לא*) ⬅️ לבטל (להישאר עם הקיים ללא שינוי)`;
+          promptMsg += `👉 *ביטול* (או *לא*) ⬅️ להישאר עם הקיים ללא שינוי`;
 
           await sock.sendMessage(jid, { text: promptMsg }, { quoted: m });
           continue;
@@ -967,8 +1054,11 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         rawText: text,
         driverPhone,
         groupName,
+        groupJid: jid,
         senderName: rideSenderName,
         senderPhone: rideSenderPhone,
+        senderJid: m.key?.participant || m.key?.remoteJid || null,
+        originalMsgKey: m.key || null,
         searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
       };
 

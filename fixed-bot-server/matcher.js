@@ -2,6 +2,7 @@
 // תומך בבדיקה מחמירה של פנימי מול חיצוני, זיהוי שכונות ומושבים, ופענוח קיצורי דרייבר
 
 import { readFileSync } from "node:fs";
+import { cleanPhone, isLid } from "./users-manager.js";
 
 const STRICT_DIRECTION = true;
 const DEFAULT_CITY = "בית שמש";
@@ -47,6 +48,18 @@ export function extractPrice(text) {
     if (+m[1] >= 20) return +m[1];
   }
   return null;
+}
+
+// זיהוי מסלול בינעירוני מרוחק (למשל ירושלים-גוש דן או חיפה-מרכז) למניעת זיהוי שגוי של נסיעות מקומיות זולות
+export function isDistantRoute(from, to) {
+  if (!from || !to || from === to) return false;
+  const majorCities = new Set(["ירושלים", "בני ברק", "תל אביב", "חיפה", "טבריה", "צפת", "אשדוד", "באר שבע", "נתניה"]);
+  if (majorCities.has(from) && majorCities.has(to)) {
+    if ((from === "בני ברק" && to === "תל אביב") || (from === "תל אביב" && to === "בני ברק")) return false;
+    if ((from === "צפת" && to === "מירון") || (from === "מירון" && to === "צפת")) return false;
+    return true;
+  }
+  return false;
 }
 
 // בדיקה האם יש הצהרת פנימי מפורשת ספציפית לעיר הבית (מונע הרמטית ערבוב בין ערים!)
@@ -457,6 +470,19 @@ export function createMatcher(citiesData, streetsData = {}) {
       // 2. האם זו נסיעה שיוצאת מעיר הבית לכל יעד בינעירוני?
       const roles = resolveRoles(places);
       if (roles.cities.includes(home)) {
+        // הגנה 1: אם ההודעה פותחת בכינוי מובהק של עיר אחרת (כמו "בב 70" או "שמש 50"),
+        // עיר המוצא היא אותה עיר ולא עיר הבית!
+        const firstAlias = places.find((p) => p.kind === "alias");
+        if (firstAlias && firstAlias.start <= 1 && firstAlias.city !== home) {
+          return no(`ההודעה פותחת בכינוי של עיר אחרת (${firstAlias.city})`);
+        }
+
+        // הגנה 2: בדיקת מחיר מינימלי לנסיעות בינעירוניות רחוקות (כמו ירושלים-בני ברק ב-70 ש"ח)
+        const price = extractPrice(text);
+        if (roles.to && roles.to !== home && isDistantRoute(home, roles.to) && price && price <= 110) {
+          return no(`נפסל מיציאה מ${home}: מחיר נמוך (${price} ש"ח) לנסיעה בינעירונית ל-${roles.to}`);
+        }
+
         if (roles.from === home) {
           return yes(`${home} (מחוץ לעיר): יוצאת ל${roles.to || "יעד חיצוני"}`);
         } else {
@@ -640,4 +666,64 @@ export function processDriverCommand(rawText) {
 
   return { mode: "city_all", origin: singleCity, destination: null, displayText: `${singleCity} (בתוך ומחוץ לעיר)` };
 }
+
+// חילוץ איש קשר/טלפון של הסדרן מתוך טקסט הנסיעה או פרטי השולח
+export function extractDispatcherContact(alertInfo) {
+  if (!alertInfo) return null;
+  const text = alertInfo.rawText || alertInfo.rideData?.rawText || alertInfo.rideData?.cleanedText || "";
+
+  // 1. חיפוש טלפון ישיר מתוך תוכן ההודעה (למשל "לבקש פה 0507787427" או "0542086154")
+  if (text) {
+    const matchContext = text.match(/(?:לבקש|אצל|טלפון|טל|פלאפון|סדרן|וואטסאפ|פרטי|נייד|דברו עם)[^\d\n\r]{0,15}(05\d[- ]?\d{7})/);
+    if (matchContext && matchContext[1]) {
+      const p = cleanPhone(matchContext[1]);
+      if (p && p.length >= 9 && !isLid(p)) return p;
+    }
+    const matchGeneral = text.match(/(?:^|[^\d])(05\d[- ]?\d{7})(?:$|[^\d])/);
+    if (matchGeneral && matchGeneral[1]) {
+      const p = cleanPhone(matchGeneral[1]);
+      if (p && p.length >= 9 && !isLid(p)) return p;
+    }
+  }
+
+  // 2. מספר הטלפון המפוענח של השולח/סדרן
+  const senderPhone = cleanPhone(alertInfo.senderPhone);
+  if (senderPhone && senderPhone.length >= 9 && !isLid(senderPhone) && senderPhone !== "זמין בקבוצה") {
+    return senderPhone;
+  }
+
+  // 3. JID ישיר
+  if (alertInfo.senderJid && !isLid(alertInfo.senderJid)) {
+    const p = cleanPhone(alertInfo.senderJid);
+    if (p && p.length >= 9 && !isLid(p)) return p;
+  }
+
+  return null;
+}
+
+// יצירת אובייקט ציטוט של הודעת הנסיעה המקורית (לתגובה בקבוצה ולתגובה אישית לסדרן)
+export function buildQuotedRideMessage(alertInfo) {
+  if (!alertInfo) return undefined;
+  const rawText = alertInfo.rawText || alertInfo.rideData?.rawText || alertInfo.rideData?.cleanedText || "";
+  const origKey = alertInfo.originalMsgKey || {};
+  const groupJid = alertInfo.groupJid || origKey.remoteJid;
+  const participant = alertInfo.senderJid || origKey.participant || origKey.remoteJid;
+  const id = origKey.id || alertInfo.msgId;
+
+  if (!id) return undefined;
+
+  return {
+    key: {
+      remoteJid: groupJid,
+      participant: participant,
+      id: id,
+      fromMe: false,
+    },
+    message: alertInfo.originalMessage || {
+      conversation: rawText,
+    },
+  };
+}
+
+
 

@@ -3,6 +3,7 @@ import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand,
 import { createDeduper, isUniqueRideLink } from "./dedupe.js";
 import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, stopUserSearch } from "./users-manager.js";
 import { extractInteractiveResponse, sendRideAlertWithButtons, sendPendingSearchConfirmationWithButtons, sendFullInteractiveMenu } from "./interactive.js";
+import { extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
 import { readFileSync } from "node:fs";
 
 console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 3.0 - חיפושים מקבילים ובתוך/מחוץ לעיר)...\n");
@@ -639,6 +640,78 @@ assert(vMishmar.ok, `נסיעת נחל משמר לברכיה מתקבלת בהצ
 // תרחיש ג': נסיעת ברוש - לד (מיניק 120) מתקבלת בבית שמש פנימי
 const vBroshShemesh = matchesAnySearch(rideShemeshBug2, shemeshInternalState);
 assert(vBroshShemesh.ok, `נסיעת ברוש - לד מתקבלת בהצלחה בבית שמש פנימי: "${vBroshShemesh.reason}"`);
+
+// ==========================================
+// בדיקה 9: בידוד נסיעות בני ברק מירושלים + חילוץ טלפון סדרן לתפיסת "תן"
+// ==========================================
+console.log("\n--- בדיקה 9: בידוד בני ברק מירושלים + תפיסה אוטומטית 'תן' ---");
+
+// מקרה הדיווח: בב 70 / שבטי ישראל לרבי עקיבא / לבקש פה 0507787427
+const bbRideText = `בב 70 \nשבטי ישראל לרבי עקיבא\nלבקש פה 0507787427`;
+
+const jerusalemDriverState = {
+  active: true,
+  searches: [{ mode: "city_all", origin: "ירושלים", destination: null, displayText: "ירושלים (בתוך ומחוץ לעיר)" }]
+};
+
+const bneiBrakDriverState = {
+  active: true,
+  searches: [{ mode: "city_all", origin: "בני ברק", destination: null, displayText: "בני ברק (בתוך ומחוץ לעיר)" }]
+};
+
+// 1. נהג שמחפש ירושלים לא מקבל נסיעה פנימית מבני ברק!
+const vJlm = matchesAnySearch(bbRideText, jerusalemDriverState);
+assert(!vJlm.ok, `נסיעת בני ברק (בב 70) נפסלת מחיפוש ירושלים: "${vJlm.reason}"`);
+
+// 2. נהג שמחפש בני ברק מקבל אותה
+const vBb = matchesAnySearch(bbRideText, bneiBrakDriverState);
+assert(vBb.ok, `נסיעת בני ברק מתקבלת בהצלחה בחיפוש בני ברק: "${vBb.reason}"`);
+
+// 3. חילוץ טלפון סדרן מתוך תוכן ההודעה ("לבקש פה 0507787427")
+const extractedPhone1 = extractDispatcherContact({
+  rawText: bbRideText,
+  senderPhone: "972526753681"
+});
+assert(extractedPhone1 === "972507787427" || extractedPhone1 === "0507787427", `חילוץ טלפון סדרן ישיר מתוכן ההודעה: ${extractedPhone1}`);
+
+// 4. חילוץ טלפון סדרן מנסיעת מיניק ("לבקש 0542086154")
+const extractedPhone2 = extractDispatcherContact({
+  rawText: "שמש פנימי ברוש - לד גגון מיניק וכו' 120\nזמנים\nלבקש\n👇👇👇👇👇👇\n0542086154",
+  senderPhone: "זמין בקבוצה"
+});
+assert(extractedPhone2 === "972542086154" || extractedPhone2 === "0542086154", `חילוץ טלפון סדרן מנסיעת מיניק: ${extractedPhone2}`);
+
+// 5. אימות פורמט נקי של ההתראה (ללא פוטר של תפיסה מהירה/חיוג)
+const sampleCleanAlert = `${bbRideText}\n\n📍 קבוצת נסיעות\n👤 סדרן · 0507787427`;
+assert(!sampleCleanAlert.includes("לתפיסה מהירה"), "ההתראה נקייה מלשונית תפיסה מהירה");
+assert(!sampleCleanAlert.includes("חיוג מהיר"), "ההתראה נקייה מלשונית חיוג מהיר");
+
+// 6. אימות מבנה הציטוט הרשמי של הנסיעה (לתגובה בקבוצה ולתגובה אישית לסדרן)
+const testAlertInfo = {
+  msgId: "BOT_ALERT_12345",
+  rawText: bbRideText,
+  groupName: "⚜️ סוס ורוכבו ⚜️",
+  groupJid: "120363000000000000@g.us",
+  senderName: "אהרון",
+  senderPhone: "972548362633",
+  senderJid: "972548362633@s.whatsapp.net",
+  originalMsgKey: {
+    id: "ORIG_MSG_99999",
+    remoteJid: "120363000000000000@g.us",
+    participant: "972548362633@s.whatsapp.net",
+    fromMe: false,
+  },
+  originalMessage: {
+    conversation: bbRideText,
+  }
+};
+
+const quoteObj = buildQuotedRideMessage(testAlertInfo);
+assert(quoteObj && typeof quoteObj === "object", "אובייקט ציטוט נוצר בהצלחה");
+assert(quoteObj.key.remoteJid === "120363000000000000@g.us", "אובייקט הציטוט מקושר לקבוצה המקורית");
+assert(quoteObj.key.id === "ORIG_MSG_99999", "אובייקט הציטוט מפנה ל-ID של הודעת הסדרן המקורית");
+assert(quoteObj.key.participant === "972548362633@s.whatsapp.net", "אובייקט הציטוט מציין את הסדרן המקורי כמשתתף");
+assert(quoteObj.message?.conversation === bbRideText, "אובייקט הציטוט מכיל את תוכן הודעת הנסיעה המקורית");
 
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
 
