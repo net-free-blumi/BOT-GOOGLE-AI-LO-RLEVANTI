@@ -23,7 +23,8 @@ import {
   Phone,
   User,
   KeyRound,
-  ExternalLink
+  ExternalLink,
+  Send
 } from 'lucide-react';
 import { ApprovedUser, PendingUser, DriverSessionItem } from '../types.ts';
 import { 
@@ -40,7 +41,8 @@ import {
   disconnectDriverApi,
   resetDriverAuthApi,
   sendSearchCommand,
-  stopSearch
+  stopSearch,
+  sendOnboardingGuideApi
 } from '../services/api.ts';
 import { ConfirmModal } from './ConfirmModal.tsx';
 import { DriverQrPanel } from './DriverQrPanel.tsx';
@@ -173,6 +175,25 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
         onUserModified?.();
       } else {
         setActionError(res.error || 'שגיאה באישור המשתמש');
+      }
+    } catch (e: any) {
+      setActionError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // שליחה חוזרת של מדריך חיבור ואישור לוואטסאפ של המשתמש
+  const handleSendOnboarding = async (phone: string, name?: string) => {
+    setLoading(true);
+    setActionSuccess(null);
+    setActionError(null);
+    try {
+      const res = await sendOnboardingGuideApi(phone, name);
+      if (res.ok) {
+        setActionSuccess(`הודעת אישור ומדריך חיבור ווב נשלחו בהצלחה לוואטסאפ של ${name || phone}!`);
+      } else {
+        setActionError(res.error || 'שגיאה בשליחת המדריך');
       }
     } catch (e: any) {
       setActionError(e.message);
@@ -783,6 +804,18 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                           >
                             <KeyRound className="w-3 h-3 text-teal-400" />
                             קוד צימוד
+                          </button>
+
+                          {/* Send Onboarding Guide Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleSendOnboarding(user.phone, user.name)}
+                            disabled={loading}
+                            className="px-2 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/40 text-blue-200 hover:text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                            title="שלח הודעת אישור ומדריך חיבור ווב ישירות לוואטסאפ של הנהג"
+                          >
+                            <Send className="w-3 h-3 text-blue-400" />
+                            שלח מדריך וחיבור
                           </button>
 
                           {/* Reset Auth Cookies Button */}

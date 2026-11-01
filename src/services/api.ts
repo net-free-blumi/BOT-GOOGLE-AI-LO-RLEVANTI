@@ -420,6 +420,15 @@ export async function approveUserApi(phone: string, name?: string): Promise<{ ok
   });
 }
 
+export async function sendOnboardingGuideApi(phone: string, name?: string): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) return { ok: true, message: 'מדריך נשלח בהצלחה (דמו)' };
+  return await request<any>('/api/users/send-onboarding', {
+    method: 'POST',
+    body: JSON.stringify({ phone, name }),
+  });
+}
+
 export async function rejectUserApi(identifier: string): Promise<{ ok: boolean; error?: string }> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) return { ok: true };

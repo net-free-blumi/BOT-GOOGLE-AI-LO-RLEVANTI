@@ -522,6 +522,24 @@ export function startDashboard(runtime) {
     res.json({ ok: true, ...result });
   });
 
+  // שליחה חוזרת של מדריך חיבור ואישור לוואטסאפ של המשתמש
+  app.post("/api/users/send-onboarding", async (req, res) => {
+    const phone = req.body?.phone;
+    const name = req.body?.name || "נהג";
+    if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
+
+    try {
+      if (ctx?.sendApprovalAndOnboarding) {
+        await ctx.sendApprovalAndOnboarding(phone, name);
+        recordEvent("command", `נשלח מדריך חיבור ואישור לוואטסאפ של ${name} (${phone})`);
+        return res.json({ ok: true, success: true, message: `המדריך והודעת החיבור נשלחו לוואטסאפ של ${name}!` });
+      }
+      res.status(500).json({ ok: false, error: "פונקציית שליחת המדריך אינה זמינה כרגע" });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // עריכת פרטי משתמש (שם, טלפון לתצוגה ותפקיד)
   app.post("/api/users/edit", (req, res) => {
     const oldPhone = req.body?.oldPhone || req.body?.phone;

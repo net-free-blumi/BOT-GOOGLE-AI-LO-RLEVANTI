@@ -171,24 +171,28 @@ cron.schedule("0 2 * * *", async () => {
 
 // שליחת דיווח לקבוצת תיקוני הבוט הייעודית (120363402521442927@g.us)
 export async function sendBugReportToGroup(sock, reportText) {
-  if (sock) {
-    try {
-      await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
-      return true;
-    } catch (e) {
-      console.log("סוקט מקומי לא הצליח לשלוח לקבוצת הבאגים, מנסה סוקט ראשי:", e.message);
-    }
-  }
-
+  // 1. קודם כל: שליחה דרך הבוט הראשי (0555081810) שהוא חבר/מנהל קבוע בקבוצת התיקונים!
+  // מבטיח 100% הגעה גם אם הנהג שמסמן דיסלייק כלל אינו חבר בקבוצה!
   const mainSock = getMainBotSock();
-  if (mainSock && mainSock !== sock) {
+  if (mainSock && getMainBotStatus().connected) {
     try {
       await mainSock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
       return true;
     } catch (e) {
-      console.error("שגיאה בשליחת דיווח באג דרך הבוט הראשי:", e.message);
+      console.error("שליחת דיווח באג דרך הבוט הראשי נכשלה:", e.message);
     }
   }
+
+  // 2. גיבוי: ניסיון דרך הסוקט הנוכחי
+  if (sock && sock !== mainSock) {
+    try {
+      await sock.sendMessage(BUG_REPORT_GROUP_JID, { text: reportText });
+      return true;
+    } catch (e) {
+      console.log("סוקט מקומי לא הצליח לשלוח לקבוצת הבאגים:", e.message);
+    }
+  }
+
   return false;
 }
 
@@ -344,6 +348,9 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
           originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
           originalMessage: originalMsg?.message || null,
           searchDesc: rideData.searchDesc,
+          matchedReason: rideData.matchedReason || null,
+          matchedSearch: rideData.matchedSearch || null,
+          activeSearchesSnapshot: rideData.activeSearchesSnapshot || null,
           sentAt: Date.now(),
         });
         if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
@@ -397,19 +404,47 @@ export async function handleReaction(sock, reactions, sessionContext = {}) {
 
     let reportMsg = `🐞 *דיווח תקלה / נסיעה לא רלוונטית (דיסלייק 👎)*\n`;
     reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-    reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData.cleanedText}\n`;
+    reportMsg += `🚕 *הנסיעה שנשלחה:*\n${alertInfo.rideData?.cleanedText || alertInfo.rawText}\n`;
     reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-    if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData.cleanedText) {
+    if (alertInfo.rawText && alertInfo.rawText !== alertInfo.rideData?.cleanedText) {
       reportMsg += `📌 *טקסט גולמי מקורי:*\n${alertInfo.rawText}\n`;
       reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
     }
     reportMsg += `👤 *נהג מדווח:* ${alertInfo.driverPhone}\n`;
-    reportMsg += `📍 *קבוצה:* ${alertInfo.groupName}\n`;
+    reportMsg += `📍 *קבוצה מקורית:* ${alertInfo.groupName} (${alertInfo.groupJid || "לא זמין"})\n`;
     reportMsg += `🏷️ *סדרן:* ${alertInfo.senderName} (${alertInfo.senderPhone})\n`;
-    reportMsg += `🔍 *חיפוש שהיה מוגדר:* ${alertInfo.searchDesc}\n`;
     reportMsg += `⏱️ *זמן הדיווח:* ${nowFormatted}\n`;
     reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
-    reportMsg += `💡 המשתמש סימן 👎 ישירות על הודעת הבוט. הועבר אוטומטית לטיפול בבאג.`;
+
+    // 1. פירוט כל החיפושים שהיו פעילים לנהג באותו רגע
+    const driverState = getUserSearch(alertInfo.driverPhone);
+    const activeSearches = alertInfo.activeSearchesSnapshot || (driverState?.searches || []);
+    if (activeSearches && activeSearches.length > 0) {
+      reportMsg += `📋 *כל החיפושים שהיו פעילים לנהג באותו רגע (${activeSearches.length}):*\n`;
+      activeSearches.forEach((s, idx) => {
+        const desc = describeMode ? describeMode(s) : (s.mode || "");
+        reportMsg += `${idx + 1}. ${s.displayText} (${desc})\n`;
+      });
+      reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    }
+
+    // 2. החיפוש הספציפי שתפס את הנסיעה וסיבת ההתאמה
+    reportMsg += `🎯 *החיפוש שהתאים בשרת:* ${alertInfo.searchDesc}\n`;
+    if (alertInfo.matchedReason) {
+      reportMsg += `💡 *סיבת ההתאמה בשרת:* ${alertInfo.matchedReason}\n`;
+    }
+
+    // 3. ניתוח אבחון ומוקדים שזוהו בנסיעה
+    try {
+      const places = findPlaces(alertInfo.rideData?.cleanedText || alertInfo.rawText || "");
+      if (places && places.length > 0) {
+        const detected = places.map((p) => `${p.phrase} (${p.city})`).join(", ");
+        reportMsg += `📍 *מוקדים שזוהו בטקסט:* ${detected}\n`;
+      }
+    } catch (e) {}
+
+    reportMsg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    reportMsg += `💡 דיסלייק 👎 שסומן ישירות ע"י הנהג. נמשך מקסימום מידע מהשרת לטיפול מיידי בבאג.`;
 
     const sent = await sendBugReportToGroup(sock, reportMsg);
     console.log(`📤 [דיווח לקבוצת תיקונים ${BUG_REPORT_GROUP_JID}]: ${sent ? "נשלח בהצלחה ✅" : "כשל בשליחה ❌"}`);
@@ -484,10 +519,55 @@ async function sendHelpMenu(sock, jid, driverPhone) {
   menuText += `• *פ ים שמש* (מירושלים לבית שמש)\n`;
   menuText += `• *פ שמש ים* (מבית שמש לירושלים)\n\n`;
   menuText += `⚡ *חיפוש מקבילי:* שליחת פקודת חיפוש נוספת תאפשר לך להוסיף אותה במקביל (למשל: גם שמש וגם ים בו-זמנית!)\n`;
+  menuText += `🚕 *לתפיסת נסיעה מהירה:* השב *"ת"* או *"תן"* על הודעת הנסיעה (הבוט יגיב בקבוצה ולסדרן בשמך!)\n`;
   menuText += `🛑 *תפוס* או *ת* (עצירת כל החיפושים)\n\n`;
+  menuText += `📖 *למדריך שימוש מפורט ומקצועי:* השב *"מדריך"*\n`;
   menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*`;
 
   await sock.sendMessage(jid, { text: menuText });
+}
+
+// שליחת מדריך שימוש מפורט, קצר ומקצועי לנהג
+export async function sendDriverGuide(sock, jid) {
+  let guideText = `📖 *מדריך נהגים מקצועי – נסיעות בוט איכותי* 🚕\n\n`;
+
+  guideText += `🔹 *1. חיבור הוואטסאפ (פעם אחת בלבד מהנייד)*\n` +
+    `• שולחים לבוט: *"חבר אותי"*\n` +
+    `• מקבלים קוד צימוד בן 8 אותיות.\n` +
+    `• נכנסים בוואטסאפ: *הגדרות ⬅️ מכשירים מקושרים ⬅️ קישור מכשיר ⬅️ "קישור עם מספר טלפון במקום"*\n` +
+    `• מזינים את הקוד — וזהו! הבוט מחובר ומתחיל לסרוק עבורך את כל הקבוצות.\n\n`;
+
+  guideText += `🔹 *2. הגדרת חיפושים*\n` +
+    `• *בתוך ומחוץ לעיר:* שלח למשל *"פנוי שמש"* או *"פנוי ים"* (מקבל נסיעות פנימיות + נסיעות שיוצאות מהעיר).\n` +
+    `• *פנימי בעיר בלבד:* שלח *"פנוי שמש פנימי"* או *"שמש פנימי"* (מסנן רק נסיעות מקומיות בתוך העיר).\n` +
+    `• *מסלול בין שתי ערים:* שלח *"פ ים שמש"* (מירושלים לבית שמש) או *"פ שמש ים"*.\n\n`;
+
+  guideText += `🔹 *3. חיפושים מקביליים (כמה יעדים יחד!)*\n` +
+    `• יש לך חיפוש פעיל? שלח פקודת חיפוש נוספת (למשל: *"פנוי ים"*).\n` +
+    `• הבוט ישאל אותך מיד:\n` +
+    `  👉 *1* או *הוסף* ⬅️ להוספת החיפוש במקביל (קבלת נסיעות מכל היעדים בו-זמנית!)\n` +
+    `  👉 *2* או *החלף* ⬅️ להחליף את הכל בחיפוש החדש בלבד\n` +
+    `  👉 *ביטול* ⬅️ להישאר עם הקיים\n\n`;
+
+  guideText += `🔹 *4. תפיסת נסיעה סופר-מהירה ("ת" או "תן")*\n` +
+    `• קיבלת נסיעה מתאימה מהבוט? השב עליה: *"ת"* או *"תן"*.\n` +
+    `• מה הבוט עושה בשבילך אוטומטית?\n` +
+    `  1. שולח תגובת *"תן"* בקבוצה המקורית עם ציטוט מדויק של הנסיעה!\n` +
+    `  2. שולח הודעה אישית לסדרן בוואטסאפ הפרטי שלו, המצטטת את הנסיעה שהוא פרסם!\n` +
+    `  3. מחזיר לך אישור שהנסיעה נתפסה בהצלחה.\n\n`;
+
+  guideText += `🔹 *5. עצירת חיפוש (מצב תפוס)*\n` +
+    `• תפסת נסיעה או סיימת משמרת? שלח: *"תפוס"* או *"ת"* (בלי ציטוט נסיעה).\n` +
+    `• הבוט יעצור את כל הסינונים מיד ולא ישלח התראות.\n\n`;
+
+  guideText += `🔹 *6. פקודת "תפריט"*\n` +
+    `• שלח *"תפריט"* בכל רגע כדי לצפות בסטטוס החיפושים הפעילים שלך ובאפשרויות מהירות.\n\n`;
+
+  guideText += `🔹 *7. דיווח תקלה (דיסלייק 👎)*\n` +
+    `• קיבלת נסיעה לא קשורה? סמן *👎* ישירות על הודעת הבוט.\n` +
+    `• המקרה יישלח מיד לטיפול ותיקון בקבוצת הבאגים!`;
+
+  await sock.sendMessage(jid, { text: guideText });
 }
 
 // זיהוי ופענוח מספר טלפון אמיתי של סדרן/שולח (מניעת מזהי LID חסויים)
@@ -566,6 +646,103 @@ export function getPairingGuideText(code) {
     guide += `\n\n🔑 *קוד הצימוד:* ${code}`;
   }
   return guide;
+}
+
+// ניהול תזכורות חידוש קוד צימוד אם הנהג לא הספיק להזין אותו תוך כדקה
+const pairingReminders = new Map();
+
+export function schedulePairingReminder(sock, jid, phone) {
+  const clean = cleanPhone(phone);
+  if (!clean) return;
+
+  if (pairingReminders.has(clean)) {
+    clearTimeout(pairingReminders.get(clean));
+    pairingReminders.delete(clean);
+  }
+
+  const timer = setTimeout(async () => {
+    pairingReminders.delete(clean);
+    // אם הנהג כבר התחבר בהצלחה - אין צורך בתזכורת
+    if (isDriverSessionConnected(clean)) return;
+
+    try {
+      const reminderMsg = `⏳ *לא הספקת להזין את קוד הצימוד או שהיה קושי בהתחברות?*\n\n` +
+        `קוד הצימוד תקף לכ-2 דקות בלבד.\n` +
+        `אם הקוד פג או לא הספקת להזין אותו — אל דאגה!\n\n` +
+        `👉 שלח עכשיו: *"חבר אותי"* לקבלת קוד עדכני מיידית.`;
+
+      await sock.sendMessage(jid, { text: reminderMsg });
+      console.log(`⏱️ נשלחה תזכורת חידוש קוד צימוד לנהג: ${clean}`);
+    } catch (e) {
+      console.log(`שגיאה בשליחת תזכורת צימוד ל-${clean}:`, e.message);
+    }
+  }, 65 * 1000); // תזכורת אחרי 65 שניות
+
+  pairingReminders.set(clean, timer);
+}
+
+export function cancelPairingReminder(phone) {
+  const clean = cleanPhone(phone);
+  if (pairingReminders.has(clean)) {
+    clearTimeout(pairingReminders.get(clean));
+    pairingReminders.delete(clean);
+  }
+}
+
+// התראה למנהל המערכת (0515157166) כאשר נהג חיבר בהצלחה את חשבון הוואטסאפ שלו
+export async function notifyAdminOnDriverConnected(driverPhone) {
+  const mainSock = getMainBotSock();
+  if (!mainSock || !getMainBotStatus().connected) return;
+
+  const usersData = loadUsersData();
+  const adminPhone = cleanPhone(usersData.adminPhone || "972515157166");
+  const clean = cleanPhone(driverPhone);
+
+  if (!adminPhone || clean === adminPhone) return;
+
+  const user = (usersData.approvedUsers || []).find((u) => cleanPhone(u.phone) === clean);
+  const name = user?.name || "נהג חדש";
+
+  const adminMsg = `🎉 *התחברות נהג חדש בוואטסאפ!*\n\n` +
+    `👤 *נהג:* ${name} (${clean})\n` +
+    `✅ חיבר בהצלחה את חשבון הוואטסאפ שלו למערכת!\n\n` +
+    `🚕 הבוט סורק כעת נסיעות מכל קבוצות הנסיעות שלו בזמן אמת.`;
+
+  try {
+    await mainSock.sendMessage(`${adminPhone}@s.whatsapp.net`, { text: adminMsg });
+    console.log(`📢 נשלחה התראה למנהל (${adminPhone}) על התחברות נהג ${clean}`);
+  } catch (e) {
+    console.error(`שגיאה בשליחת התראת התחברות למנהל:`, e.message);
+  }
+}
+
+// הודעת ברכה והדרכה לנהג ברגע שהוואטסאפ שלו מתחבר בהצלחה
+export async function notifyDriverWelcomeOnConnected(driverPhone) {
+  const mainSock = getMainBotSock();
+  if (!mainSock || !getMainBotStatus().connected) return;
+  const clean = cleanPhone(driverPhone);
+
+  const welcomeMsg = `✅ *הוואטסאפ שלך חובר ומסונכרן בהצלחה למערכת!* 🎉\n\n` +
+    `מעכשיו הבוט יסנן עבורך נסיעות בזמן אמת מכל הקבוצות שלך.\n\n` +
+    `🔍 *להפעלת חיפוש שלח עכשיו:*\n` +
+    `• *פנוי שמש* או *פנוי ים* (בתוך ומחוץ לעיר)\n` +
+    `• *פנוי שמש פנימי* (פנימי בעיר בלבד)\n` +
+    `• *פ ים שמש* (מסלול מירושלים לבית שמש)\n\n` +
+    `📖 *לצפייה בהוראות בכל רגע שלח:* "מדריך" או "תפריט"`;
+
+  try {
+    const jid = getDestinationJid(clean);
+    await mainSock.sendMessage(jid, { text: welcomeMsg });
+  } catch (e) {}
+}
+
+// טיפול בשינוי סטטוס סשן נהג
+export async function handleDriverStatusChange(driverPhone, sessionObj) {
+  if (sessionObj?.status === "connected") {
+    cancelPairingReminder(driverPhone);
+    await notifyAdminOnDriverConnected(driverPhone);
+    await notifyDriverWelcomeOnConnected(driverPhone);
+  }
 }
 
 // ==========================================
@@ -674,6 +851,15 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           continue;
         }
 
+        const sendGuideMatch = text.match(/^(?:שלח\s+מדריך|מדריך|שלח\s+הדרכה|הדרכה|אישור|חבר)\s+([0-9+\s-]+)$/);
+        if (sendGuideMatch) {
+          const targetPhone = cleanPhone(sendGuideMatch[1]);
+          await sendApprovalAndOnboarding(targetPhone, "נהג");
+          await sock.sendMessage(jid, { text: `✅ נשלחה הודעת אישור ומדריך חיבור ווב לנהג *${targetPhone}*!` }, { quoted: m });
+          recordEvent("command", `מנהל שלח מדריך חיבור חוזר לנהג: ${targetPhone}`);
+          continue;
+        }
+
         const updateMatch = text.match(/^(?:עדכן|החלף)\s+([0-9+\s-]+)\s+(?:ל|אל)\s+([0-9+\s-]+)$/);
         if (updateMatch) {
           const oldNum = cleanPhone(updateMatch[1]);
@@ -685,7 +871,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
         if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
           await sock.sendMessage(jid, {
-            text: `🛠️ *מספר ניהול*\n\nפקודות זמינות:\n• *אשר 972501234567*\n• *דחה 972501234567*\n• *עדכן 972501234567 ל 972507654321*`
+            text: `🛠️ *תפריט ניהול מערכת*\n\nפקודות זמינות למנהל:\n• *אשר 0501234567* ⬅️ אישור נהג חדש ושליחת מדריך\n• *דחה 0501234567* ⬅️ דחיית בקשת הצטרפות\n• *שלח מדריך 0501234567* ⬅️ שליחה חוזרת של הודעת אישור ומדריך חיבור ווב\n• *עדכן 0501234567 ל 0507654321* ⬅️ עדכון מספר טלפון של נהג`
           }, { quoted: m });
         }
         continue;
@@ -747,9 +933,11 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
             const code = await requestDriverPairingCode(phoneForPairing, {
               onRideMessage: handleIncomingMessage,
               onReaction: handleReaction,
+              onStatusChange: handleDriverStatusChange,
               onEvent: recordEvent,
             });
             await sendPairingCodeMessages(sock, jid, code, m);
+            schedulePairingReminder(sock, jid, phoneForPairing);
             recordEvent("system", `נוצר קוד חיבור נהג עבור ${phoneForPairing}`);
           } catch (err) {
             await sock.sendMessage(jid, {
@@ -796,6 +984,11 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
+      if (norm === "מדריך" || norm === "הוראות" || norm === "מדריך שימוש" || norm === "guide") {
+        await sendDriverGuide(sock, jid);
+        continue;
+      }
+
       // 0. מענה על כפתור תפיסת נסיעה / תגובה "תן" / "ת" על הודעת נסיעה
       const quotedStanzaId =
         m.message?.extendedTextMessage?.contextInfo?.stanzaId ||
@@ -804,16 +997,21 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
 
       let targetAlertInfo = quotedStanzaId ? sentAlertsCache.get(quotedStanzaId) : null;
-      if (!targetAlertInfo && (norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" || norm === "קח_נסיעה" || norm === "claim_ride")) {
+      const isClaimWord = norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||
+        norm === "קח_נסיעה" || norm === "claim_ride" ||
+        norm === "ת פה" || norm === "תן פה" || norm === "פה";
+
+      if (!targetAlertInfo && isClaimWord) {
         targetAlertInfo = getLatestAlertForDriver(senderPhone);
       }
 
-      const isClaimIntent = (norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||
-        norm === "קח_נסיעה" || norm === "claim_ride") || (norm === "ת" && quotedStanzaId && targetAlertInfo);
+      const isClaimIntent = isClaimWord || ((norm === "ת" || norm === "ת פה" || norm === "תן פה") && quotedStanzaId && targetAlertInfo);
 
       if (isClaimIntent && targetAlertInfo) {
         const driverSession = getDriverSession(senderPhone);
         const driverSock = driverSession?.sock;
+
+        const claimTextToSend = (norm === "ת פה" || norm === "תן פה" || norm === "פה") ? "ת פה" : "תן";
 
         let sentDirect = false;
         let sentInGroup = false;
@@ -824,9 +1022,9 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
         // שליחה אוטומטית מחשבון הוואטסאפ של הנהג
         if (driverSock && driverSession?.status === "connected") {
-          // 1. שליחת תגובת "תן" בקבוצה שבה פורסמה הנסיעה (עם ציטוט מלא של הודעת הנסיעה)
+          // 1. שליחת תגובה בקבוצה שבה פורסמה הנסיעה (עם ציטוט מלא של הודעת הנסיעה)
           if (targetAlertInfo.groupJid) {
-            const okGroup = await sendRideClaimReply(driverSock, targetAlertInfo.groupJid, "תן", quoteObj);
+            const okGroup = await sendRideClaimReply(driverSock, targetAlertInfo.groupJid, claimTextToSend, quoteObj);
             if (okGroup) sentInGroup = true;
           }
 
@@ -847,7 +1045,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
           for (const p of directRecipients) {
             const targetJid = `${p}@s.whatsapp.net`;
-            const okDirect = await sendRideClaimReply(driverSock, targetJid, "תן", quoteObj);
+            const okDirect = await sendRideClaimReply(driverSock, targetJid, claimTextToSend, quoteObj);
             if (okDirect) {
               sentDirect = true;
               sentDirectPhones.push(p);
@@ -857,10 +1055,10 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
         let claimReply = `🚕 *נסיעה נתפסה! בהצלחה!*\n\n`;
         if (sentInGroup) {
-          claimReply += `✅ נשלחה תגובת *"תן"* עם ציטוט בקבוצה: *${targetAlertInfo.groupName}*\n`;
+          claimReply += `✅ נשלחה תגובת *"${claimTextToSend}"* עם ציטוט בקבוצה: *${targetAlertInfo.groupName}*\n`;
         }
         if (sentDirect) {
-          claimReply += `✅ נשלחה תגובה אישית לסדרן (${sentDirectPhones.join(", ")}) המצטטת את הודעת הנסיעה שלו!\n`;
+          claimReply += `✅ נשלחה תגובה אישית לסדרן (${sentDirectPhones.join(", ")}) המצטטת את הודעת הנסיעה שלו עם *"${claimTextToSend}"*!\n`;
         }
         if (!sentDirect && !sentInGroup) {
           if (!driverSock || driverSession?.status !== "connected") {
@@ -1060,6 +1258,14 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         senderJid: m.key?.participant || m.key?.remoteJid || null,
         originalMsgKey: m.key || null,
         searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
+        matchedReason: verdict.reason,
+        matchedSearch: verdict.matchedSearch || null,
+        activeSearchesSnapshot: (driverSearch.searches || []).map((s) => ({
+          displayText: s.displayText,
+          mode: s.mode,
+          origin: s.origin,
+          destination: s.destination,
+        })),
       };
 
       // שליחה לנהג: קודם דרך הבוט הראשי (עם התראה בטלפון), ובגיבוי דרך חשבון הנהג
@@ -1113,6 +1319,7 @@ startDashboard({
       {
         onRideMessage: handleIncomingMessage,
         onReaction: handleReaction,
+        onStatusChange: handleDriverStatusChange,
         onEvent: recordEvent,
       },
       options
@@ -1132,6 +1339,7 @@ startDashboard({
     return await ensureDriverSessionForQr(phone, {
       onRideMessage: handleIncomingMessage,
       onReaction: handleReaction,
+      onStatusChange: handleDriverStatusChange,
       onEvent: recordEvent,
     });
   },
@@ -1217,6 +1425,7 @@ async function boot() {
   await initSavedDriverSessions({
     onRideMessage: handleIncomingMessage,
     onReaction: handleReaction,
+    onStatusChange: handleDriverStatusChange,
     onEvent: recordEvent,
   });
 }
