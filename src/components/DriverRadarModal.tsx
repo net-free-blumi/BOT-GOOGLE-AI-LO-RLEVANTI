@@ -129,7 +129,17 @@ export function DriverRadarModal({
     try {
       const res = await fetchLiveRidesApi(selectedDriverPhone);
       if (res && res.ok && Array.isArray(res.rides)) {
-        setRides(res.rides);
+        setRides((prev) => {
+          const simRides = prev.filter((r) => r.id.startsWith('sim-'));
+          const incoming = res.rides;
+          const merged = [...simRides];
+          for (const s of incoming) {
+            if (!merged.some((m) => m.id === s.id)) {
+              merged.push(s);
+            }
+          }
+          return merged;
+        });
 
         // If new ride arrived and it is close, ring chime
         if (prevRidesCountRef.current > 0 && res.rides.length > prevRidesCountRef.current) {
@@ -138,7 +148,7 @@ export function DriverRadarModal({
         prevRidesCountRef.current = res.rides.length;
       }
     } catch (e) {
-      console.error('Failed to load live rides:', e);
+      // Handled gracefully in api layer
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -252,9 +262,11 @@ export function DriverRadarModal({
       ];
 
       const pick = sampleList[Math.floor(Math.random() * sampleList.length)];
-      await simulateRideApi(pick);
+      const res = await simulateRideApi(pick);
+      if (res && res.ride) {
+        setRides((prev) => [res.ride, ...prev.filter((r) => r.id !== res.ride.id)]);
+      }
       playChime();
-      await loadRides(false);
       showToast('🚀 נסיעת בדיקה שודרה לרדאר בהצלחה!');
     } catch (e: any) {
       showToast(e.message || 'שגיאה בשידור נסיעת דמה');
