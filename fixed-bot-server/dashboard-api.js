@@ -437,6 +437,53 @@ export function startDashboard(runtime) {
     res.json({ ok: true, logs: rows.slice(0, limit) });
   });
 
+  // רדאר נסיעות חי (Live Rides Feed)
+  app.get("/api/rides/live", (req, res) => {
+    try {
+      const phone = req.query.phone ? cleanPhone(req.query.phone) : null;
+      let rides = [];
+      if (ctx?.getLiveRides) {
+        rides = ctx.getLiveRides(phone);
+      }
+      res.json({ ok: true, rides });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // תפיסת נסיעה מהירה מהאתר ("תן")
+  app.post("/api/rides/claim", async (req, res) => {
+    try {
+      const { rideId, driverPhone, claimText } = req.body || {};
+      if (!rideId) return res.status(400).json({ ok: false, error: "נדרש מזהה נסיעה" });
+      
+      if (!ctx?.claimRideFromWeb) {
+        return res.status(500).json({ ok: false, error: "פונקציית תפיסת נסיעה אינה מוגדרת בשרת" });
+      }
+
+      const result = await ctx.claimRideFromWeb(rideId, driverPhone, claimText || "תן");
+      recordEvent("command", `תפיסת נסיעה מהאתר: נהג ${driverPhone || 'ראשי'} | ${claimText || 'תן'}`);
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      recordError("claim_ride_api", err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // סימולציית נסיעה לבדיקה חיה מהאתר
+  app.post("/api/rides/simulate", (req, res) => {
+    try {
+      const simulated = req.body || {};
+      if (ctx?.simulateLiveRide) {
+        const ride = ctx.simulateLiveRide(simulated);
+        return res.json({ ok: true, success: true, ride });
+      }
+      return res.json({ ok: true, success: true, message: "הנסיעה סומלצה" });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // חיפוש כללי או לפי נהג ספציפי
   app.get("/api/search", (req, res) => {
     const phone = req.query.phone || loadUsersData().adminPhone;

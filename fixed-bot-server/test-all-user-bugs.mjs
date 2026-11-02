@@ -713,6 +713,53 @@ assert(quoteObj.key.id === "ORIG_MSG_99999", "אובייקט הציטוט מפנ
 assert(quoteObj.key.participant === "972548362633@s.whatsapp.net", "אובייקט הציטוט מציין את הסדרן המקורי כמשתתף");
 assert(quoteObj.message?.conversation === bbRideText, "אובייקט הציטוט מכיל את תוכן הודעת הנסיעה המקורית");
 
+console.log("\n--- בדיקה 10: תיקון דיסלייקים מקיף (נסיעות נכנסות, הר טוב, עין כרם, מנחם משיב, וכלל הערים) ---");
+
+// באג 1: יסודות שמש (נסיעה נכנסת לבית שמש)
+const yesodotRide = "⚠️⚠️⚠️⚠️⚠️⚠️\nיסודות שמש 150 מיידי\nבית חנן זמן";
+const verdictYesodot = rideMatches(yesodotRide, { mode: "city_all", origin: "בית שמש" });
+assert(!verdictYesodot.ok, `יסודות שמש נפסל בהצלחה מחיפוש בית שמש (נסיעה נכנסת): "${verdictYesodot.reason}"`);
+
+// באג 2: עיכ שמש (נסיעה נכנסת מעין כרם לבית שמש)
+const einKeremRide = "עיכ שמש 150\nזמנים\n\nלבקש ב.\n\n0528101833";
+const verdictEinKerem = rideMatches(einKeremRide, { mode: "city_all", origin: "בית שמש" });
+assert(!verdictEinKerem.ok, `עיכ שמש נפסל בהצלחה מחיפוש בית שמש (נסיעה נכנסת): "${verdictEinKerem.reason}"`);
+
+// באג 3: כפר קאסם שמש (נסיעה נכנסת מכפר קאסם לבית שמש)
+const kfarQasimRide = "⚠️⚠️⚠️⚠️⚠️⚠️\nכפר קאסם שמש 240\nמידי";
+const verdictKfarQasim = rideMatches(kfarQasimRide, { mode: "city_all", origin: "בית שמש" });
+assert(!verdictKfarQasim.ok, `כפר קאסם שמש נפסל בהצלחה מחיפוש בית שמש (נסיעה נכנסת): "${verdictKfarQasim.reason}"`);
+
+// באג 4: שמש הר טוב 70 / מלאכי הנביא (נסיעה פנימית בבית שמש)
+const harTuvRide = "שמש הר טוב 70\nמלאכי הנביא זמן";
+const verdictHarTuv = rideMatches(harTuvRide, { mode: "internal", origin: "בית שמש" });
+assert(verdictHarTuv.ok, `שמש הר טוב לרחוב מלאכי הנביא מתקבל בהצלחה בפנימי: "${verdictHarTuv.reason}"`);
+
+// באג 5: ים בב 250 / מנחם משיב (נסיעה מירושלים לבני ברק - אסור שתתאים לבית שמש)
+const menachemRide = "⚠️⚠️⚠️⚠️⚠️⚠️\nים בב 250\nמנחם משיב";
+const verdictMenachem = rideMatches(menachemRide, { mode: "city_all", origin: "בית שמש" });
+assert(!verdictMenachem.ok, `נסיעת מנחם משיב (ירושלים-בני ברק) נפסלת בהצלחה מבית שמש ללא זיהוי שגוי של נחם: "${verdictMenachem.reason}"`);
+
+// באג 6: נווה דניאל & שמש 170 (נסיעה נכנסת מגוש עציון לבית שמש)
+const neveDanielRide = "⚠️⚠️⚠️⚠️⚠️⚠️\nנווה דניאל & שמש 170\nזמןןןן";
+const verdictNeveDaniel = rideMatches(neveDanielRide, { mode: "city_all", origin: "בית שמש" });
+assert(!verdictNeveDaniel.ok, `נווה דניאל & שמש נפסל בהצלחה מחיפוש בית שמש (נסיעה נכנסת): "${verdictNeveDaniel.reason}"`);
+
+// אימות הכלליות של החוק על כלל ערי ישראל:
+// 1. חיפה לטבריה - נפסל מטבריה (נכנסת), מתקבל בחיפה (יוצאת)
+const haifaTiberias = "חיפה טבריה 200";
+const vTib = rideMatches(haifaTiberias, { mode: "city_all", origin: "טבריה" });
+assert(!vTib.ok, `חיפה טבריה נפסל מנהג בטבריה: "${vTib.reason}"`);
+const vHaifa = rideMatches(haifaTiberias, { mode: "city_all", origin: "חיפה" });
+assert(vHaifa.ok, `חיפה טבריה מתקבל לנהג בחיפה: "${vHaifa.reason}"`);
+
+// 2. צפת למירון - נפסל ממירון (נכנסת), מתקבל בצפת (יוצאת)
+const safedMeron = "צפת מירון 70";
+const vMeron = rideMatches(safedMeron, { mode: "city_all", origin: "מירון" });
+assert(!vMeron.ok, `צפת מירון נפסל מנהג במירון: "${vMeron.reason}"`);
+const vSafed = rideMatches(safedMeron, { mode: "city_all", origin: "צפת" });
+assert(vSafed.ok, `צפת מירון מתקבל לנהג בצפת: "${vSafed.reason}"`);
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
 
 

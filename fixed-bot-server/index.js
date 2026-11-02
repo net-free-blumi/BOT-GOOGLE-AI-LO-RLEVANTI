@@ -51,6 +51,12 @@ import {
   ensureDriverSessionForQr,
   getDriverSession,
 } from "./session-manager.js";
+import {
+  detectNeighborhood,
+  calculateDistanceKm,
+  generateWazeUrl,
+  BEIT_SHEMESH_ZONES,
+} from "./geo-helper.js";
 
 const DEBUG_FILTER = true;
 const DEDUPE_MINUTES = 15;
@@ -90,6 +96,176 @@ function persistAlertsCacheSoon() {
       fs.writeFileSync(ALERTS_CACHE_FILE, JSON.stringify(obj), "utf8");
     } catch (e) {}
   }, 3000);
+}
+
+// מיקומי נהגים לשירות מרחק ורדאר בזמן אמת
+const driverLocations = new Map();
+
+export function getDriverLocation(phone) {
+  const clean = cleanPhone(phone);
+  if (driverLocations.has(clean)) return driverLocations.get(clean);
+  const def = BEIT_SHEMESH_ZONES['רמה ד'];
+  return {
+    lat: def.lat,
+    lng: def.lng,
+    label: "רמת בית שמש ד'",
+  };
+}
+
+export function setDriverLocation(phone, loc) {
+  const clean = cleanPhone(phone);
+  if (!clean) return;
+  driverLocations.set(clean, loc);
+}
+
+// קבלת נסיעות אחרונות עבור רדאר הנסיעות החי באתר
+export function getLiveRides(driverPhone = null) {
+  const clean = driverPhone ? cleanPhone(driverPhone) : null;
+  const list = [];
+  const entries = Array.from(sentAlertsCache.entries()).reverse();
+
+  for (const [id, info] of entries) {
+    if (clean && info.driverPhone && cleanPhone(info.driverPhone) !== clean) {
+      continue;
+    }
+
+    const text = info.rideData?.cleanedText || info.rawText || "";
+    const detected = detectNeighborhood(text);
+    const destinationCoords = detected?.coords || BEIT_SHEMESH_ZONES['רמה ג'];
+    const originCoords = BEIT_SHEMESH_ZONES['רמה ד'];
+
+    // זיהוי מחיר מתוך הטקסט
+    const priceMatch = text.match(/(?:₪|\b)(\d{2,4})\s*(?:₪|ש"ח|שח|מידי|מיידי|\b)/);
+    const price = priceMatch ? Number(priceMatch[1]) : null;
+
+    list.push({
+      id,
+      timestamp: info.sentAt || Date.now(),
+      timeFormatted: new Date(info.sentAt || Date.now()).toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem" }),
+      rawText: info.rawText || text,
+      cleanedText: text,
+      origin: "בית שמש",
+      originNeighborhood: "רמה ד",
+      originCoords,
+      destination: detected?.matchedStreet || "יעד כללי",
+      destinationNeighborhood: detected?.zoneKey || "בית שמש",
+      destinationCoords,
+      price,
+      groupName: info.groupName || "קבוצת נסיעות",
+      groupJid: info.groupJid || null,
+      dispatcherName: info.senderName || "סדרן",
+      dispatcherPhone: info.senderPhone || "לא צוין",
+      wazeUrl: generateWazeUrl(detected?.matchedStreet || "בית שמש", "בית שמש", destinationCoords),
+      claimed: Boolean(info.claimed),
+      claimedBy: info.claimedBy || null,
+      claimedAt: info.claimedAt || null,
+    });
+
+    if (list.length >= 60) break;
+  }
+
+  return list;
+}
+
+// תפיסת נסיעה מהירה מהאתר ("תן")
+export async function claimRideFromWeb(rideId, driverPhone, claimText = "תן") {
+  const targetAlertInfo = sentAlertsCache.get(rideId);
+  if (!targetAlertInfo) {
+    throw new Error("נסיעה זו לא נמצאה במאגר או שפג תוקפה");
+  }
+
+  const phone = driverPhone ? cleanPhone(driverPhone) : cleanPhone(targetAlertInfo.driverPhone);
+  const driverSession = getDriverSession(phone);
+  const driverSock = driverSession?.sock;
+  const quoteObj = buildQuotedRideMessage(targetAlertInfo);
+
+  let sentInGroup = false;
+  let sentDirect = false;
+  const sentDirectPhones = [];
+
+  if (driverSock && driverSession?.status === "connected") {
+    if (targetAlertInfo.groupJid) {
+      const ok = await sendRideClaimReply(driverSock, targetAlertInfo.groupJid, claimText, quoteObj);
+      if (ok) sentInGroup = true;
+    }
+
+    const directRecipients = new Set();
+    const senderPhoneClean = cleanPhone(targetAlertInfo.senderPhone);
+    if (senderPhoneClean && senderPhoneClean.length >= 9 && !isLid(senderPhoneClean) && senderPhoneClean !== "זמין בקבוצה") {
+      directRecipients.add(senderPhoneClean);
+    }
+    const textPhone = extractDispatcherContact(targetAlertInfo);
+    if (textPhone && textPhone.length >= 9 && !isLid(textPhone)) {
+      directRecipients.add(cleanPhone(textPhone));
+    }
+
+    for (const p of directRecipients) {
+      const targetJid = `${p}@s.whatsapp.net`;
+      const ok = await sendRideClaimReply(driverSock, targetJid, claimText, quoteObj);
+      if (ok) {
+        sentDirect = true;
+        sentDirectPhones.push(p);
+      }
+    }
+  }
+
+  targetAlertInfo.claimed = true;
+  targetAlertInfo.claimedBy = phone;
+  targetAlertInfo.claimedAt = Date.now();
+  sentAlertsCache.set(rideId, targetAlertInfo);
+
+  return {
+    success: true,
+    sentInGroup,
+    sentDirect,
+    sentDirectPhones,
+    dispatcherPhone: targetAlertInfo.senderPhone,
+    groupName: targetAlertInfo.groupName,
+    message: `הנסיעה נתפסה בהצלחה! נשלח "${claimText}" ${sentInGroup ? 'בקבוצה' : ''} ${sentDirect ? 'ולסדרן' : ''}`,
+  };
+}
+
+// יצירת נסיעת בדיקה עבור הדגמה מהירה של הרדאר
+export function simulateLiveRide(simulated = {}) {
+  const id = `sim-${Date.now()}`;
+  const text = simulated.rawText || simulated.cleanedText || "פנימי שמש\nזכריה הנביא לד\n150 שח מידי";
+  const detected = detectNeighborhood(text);
+  const coords = detected?.coords || BEIT_SHEMESH_ZONES['רמה ג'];
+
+  const rideObj = {
+    id,
+    timestamp: Date.now(),
+    timeFormatted: new Date().toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem" }),
+    rawText: text,
+    cleanedText: text,
+    origin: "בית שמש",
+    originNeighborhood: "רמה ד",
+    originCoords: BEIT_SHEMESH_ZONES['רמה ד'],
+    destination: detected?.matchedStreet || "זכריה הנביא",
+    destinationNeighborhood: detected?.zoneKey || "רמה ג",
+    destinationCoords: coords,
+    price: simulated.price || 150,
+    groupName: simulated.groupName || "👥 נסיעות בית שמש פנימי",
+    groupJid: "120363000000000000@g.us",
+    dispatcherName: simulated.dispatcherName || "יוסי סדרן",
+    dispatcherPhone: simulated.dispatcherPhone || "0528101833",
+    wazeUrl: generateWazeUrl(detected?.matchedStreet || "זכריה הנביא", "בית שמש", coords),
+    claimed: false,
+  };
+
+  sentAlertsCache.set(id, {
+    msgId: id,
+    rawText: text,
+    rideData: { cleanedText: text, rawText: text },
+    driverPhone: simulated.driverPhone || "972515157166",
+    groupName: rideObj.groupName,
+    groupJid: rideObj.groupJid,
+    senderName: rideObj.dispatcherName,
+    senderPhone: rideObj.dispatcherPhone,
+    sentAt: Date.now(),
+  });
+
+  return rideObj;
 }
 
 const deduper = createDeduper(findPlaces, { windowMs: DEDUPE_MINUTES * 60 * 1000 });
@@ -781,8 +957,18 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
     const isGroup = jid.endsWith("@g.us");
 
-    // הבוט הראשי אינו סורק קבוצות כלל! קבוצות נסרקות אך ורק ע"י חשבון הנהג
-    if (isGroup && sessionContext.isMainBot) {
+    // 0.5. זיהוי מיקום GPS שנשלח ע"י הנהג (סיכת מיקום בוואטסאפ)
+    const locMsg = m.message?.locationMessage || m.message?.liveLocationMessage;
+    if (locMsg && !isGroup && sessionContext.isMainBot) {
+      let senderPhone = cleanPhone(jid);
+      setDriverLocation(senderPhone, {
+        lat: locMsg.degreesLatitude,
+        lng: locMsg.degreesLongitude,
+        label: "מיקום GPS חי",
+      });
+      await sock.sendMessage(jid, {
+        text: `📍 *מיקומך נקלט בהצלחה במערכת!*\n\nהקואורדינטות שלך עודכנו. מעכשיו בכל שאלה של *"מרחק"* או *"איפה זה"* הבוט יחשב קילומטרים וזמן הגעה מדויקים מהרכב שלך! 🚕`,
+      }, { quoted: m });
       continue;
     }
 
@@ -1076,6 +1262,71 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
+      // 0.1 מענה לשאלת מרחק ושכונה ("מרחק", "איפה זה", "איפה", "איזה שכונה")
+      const isDistanceQuestion =
+        norm === "מרחק" || norm === "מרחק?" ||
+        norm === "איפה זה" || norm === "איפה" || norm === "איפה זה יוצא" ||
+        norm === "איזה שכונה" || norm === "איפה הרחוב" ||
+        norm === "קרוב" || norm === "רחוק" || norm === "מרחק מפה";
+
+      if (isDistanceQuestion) {
+        const targetRide = targetAlertInfo || getLatestAlertForDriver(senderPhone);
+        if (!targetRide) {
+          await sock.sendMessage(jid, {
+            text: `ℹ️ *לא זוהתה נסיעה אחרונה לבדיקה.*\nצטט נסיעה ספציפית ושלח *"איפה זה"* או *"מרחק"* לקבלת שכונה, ק"מ וקישור Waze!`,
+          }, { quoted: m });
+          continue;
+        }
+
+        const rideText = targetRide.rideData?.cleanedText || targetRide.rawText || "";
+        const detected = detectNeighborhood(rideText);
+        const driverLoc = getDriverLocation(senderPhone);
+
+        if (!detected || !detected.coords) {
+          await sock.sendMessage(jid, {
+            text: `📍 *בדיקת מיקום נסיעה:*\nנסיעה: "${rideText.slice(0, 100)}"\nלא זוהה רחוב ספציפי מוכר בטקסט.\n🚗 Waze כללי: https://waze.com/ul?q=בית+שמש&navigate=yes`,
+          }, { quoted: m });
+          continue;
+        }
+
+        const dist = calculateDistanceKm(driverLoc.lat, driverLoc.lng, detected.coords.lat, detected.coords.lng);
+        let badge = "🟡 מרחק בינוני";
+        if (dist.km <= 1.8) badge = "🟢 קרוב מאוד!";
+        else if (dist.km > 4.5) badge = "🔴 רחוק יחסית";
+
+        const wazeUrl = generateWazeUrl(detected.matchedStreet, "בית שמש", detected.coords);
+
+        let infoReply = `📍 *עוזר נהג חכם – מידע שכונה ומרחק* 🚕\n`;
+        infoReply += `━━━━━━━━━━━━━━━━━━━━\n`;
+        infoReply += `🎯 *רחוב / יעד שזוהה:* ${detected.matchedStreet}\n`;
+        infoReply += `🏙️ *שכונה:* *${detected.zoneName}* (בית שמש)\n`;
+        infoReply += `📏 *מרחק ממך (${driverLoc.label}):* כ-*${dist.km} ק"מ* (כ-${dist.timeMinutes} דקות) ${badge}\n`;
+        infoReply += `🧭 *ניווט ישיר ב-Waze:*\n${wazeUrl}\n`;
+        infoReply += `━━━━━━━━━━━━━━━━━━━━\n`;
+        infoReply += `💡 לתפיסת הנסיעה שלח עכשיו *"ת"* או *"תן"*`;
+
+        await sock.sendMessage(jid, { text: infoReply }, { quoted: m });
+        recordEvent("command", `נהג ${senderPhone} בירר מרחק ליעד: ${detected.matchedStreet} (${dist.km} ק"מ)`);
+        continue;
+      }
+
+      // 0.2 עדכון מיקום ידני של הנהג (לדוגמה: "אני ברמה ד", "מיקום רמה ג", "אני בנחל קישון")
+      const locMatch = text.match(/^(?:אני ב|אני נמצא ב|מיקום|אני)\s*(.+)$/i);
+      if (locMatch && !locMatch[1].startsWith("פנוי") && !locMatch[1].startsWith("מחפש") && !locMatch[1].startsWith("פ ")) {
+        const detectedLoc = detectNeighborhood(locMatch[1]);
+        if (detectedLoc && detectedLoc.coords) {
+          setDriverLocation(senderPhone, {
+            lat: detectedLoc.coords.lat,
+            lng: detectedLoc.coords.lng,
+            label: detectedLoc.zoneName,
+          });
+          await sock.sendMessage(jid, {
+            text: `📍 *מיקומך עודכן בהצלחה ל-${detectedLoc.zoneName}!* 🚕\nמעכשיו בכל נסיעה שתשאל *"מרחק"* או *"איפה זה"*, המרחק יחושב ביחס ל${detectedLoc.zoneName}.`,
+          }, { quoted: m });
+          continue;
+        }
+      }
+
       if (norm === "ת" || /(^| )(תפוס|עצור|סגור)( |$)/.test(norm)) {
         stopUserSearch(senderPhone);
         recordEvent("command", `חיפוש הופסק ע"י ${pushName} (${senderPhone})`);
@@ -1299,6 +1550,11 @@ startDashboard({
   groupCount: () => groupMetadataCache.size,
   dedupeSize: () => deduper.size,
   getAllSessions: () => getAllSessionsSummary(),
+  getLiveRides: (phone) => getLiveRides(phone),
+  claimRideFromWeb: (rideId, phone, claimText) => claimRideFromWeb(rideId, phone, claimText),
+  simulateLiveRide: (sim) => simulateLiveRide(sim),
+  getDriverLocation: (phone) => getDriverLocation(phone),
+  setDriverLocation: (phone, loc) => setDriverLocation(phone, loc),
   notifyOwner: async (text) => {
     const sock = getMainBotSock();
     if (!sock) return;

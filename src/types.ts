@@ -168,3 +168,37 @@ export interface UsersDataPayload {
   pendingUsers: PendingUser[];
 }
 
+export interface LiveRideItem {
+  id: string;
+  rawText: string;
+  cleanedText: string;
+  originText: string;
+  destinationText: string;
+  originNeighborhood?: string;
+  destNeighborhood?: string;
+  city: string;
+  price?: number | null;
+  groupName: string;
+  senderName: string;
+  senderPhone: string;
+  timestamp: number;
+  timeFormatted: string;
+  isInternal: boolean;
+  coords?: { lat: number; lng: number } | null;
+  distanceKm?: number | null;
+  driveTimeMinutes?: number | null;
+  wazeUrl?: string;
+  claimed?: boolean;
+  claimedAt?: number;
+}
+
+export interface DriverGeoLocation {
+  lat: number;
+  lng: number;
+  label: string;
+  neighborhood?: string;
+  source: 'gps' | 'manual';
+  updatedAt: number;
+}
+
+

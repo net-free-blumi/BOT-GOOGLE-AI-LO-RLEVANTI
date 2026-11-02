@@ -189,13 +189,22 @@ export function createMatcher(citiesData, streetsData = {}) {
     const hits = [];
 
     tokens.forEach((tok, i) => {
+      // אם המילה השלמה היא "מנחם", אסור לחתוך "מ" כדי להתאים למושב "נחם"
+      const isMenachemName = tok === "מנחם";
+
       for (let cut = 0; cut <= 2 && cut < tok.length; cut++) {
+        if (cut > 0 && isMenachemName) continue;
+
         const prefix = tok.slice(0, cut);
         if ([...prefix].some((ch) => !PREFIX_LETTERS.has(ch))) break;
 
         const subWord = tok.slice(cut);
         for (const e of byFirstToken.get(subWord) || []) {
           if (cut > e.maxCut) continue;
+
+          // אם המילה היא "מלאכי" ואחריה "הנביא" - זה רחוב מלאכי הנביא בבית שמש, לא קריית מלאכי!
+          if (e.phrase === "מלאכי" && tokens[i + 1] === "הנביא") continue;
+
           if (e.tokens.every((t, k) => k === 0 || tokens[i + k] === t)) {
             hits.push({ ...e, start: i, end: i + e.tokens.length - 1, prefix });
           }
@@ -233,23 +242,77 @@ export function createMatcher(citiesData, streetsData = {}) {
     return places.sort((a, b) => a.start - b.start);
   }
 
-  function resolveRoles(places) {
+  // מילים מקובלות שיכולות להקדים עיר מוצא מבלי להפוך אותה ליעד
+  const ROUTE_PREFIX_MODIFIERS = new Set([
+    "דחוף", "מיידי", "מידי", "זמן", "זמנים", "הלוך", "הוש", "הלוש", "הלוך ושוב",
+    "ספיישל", "טנדר", "מיניק", "וואן", "משלוח", "שקית", "חבילה", "הפצה",
+    "נסיעה", "מ", "יוצא", "יציאה", "פ", "פנימי", "קבוצה", "סדרן", "נהג",
+    "שמ", "בוט", "דרייבוט", "אובר", "רעדליך", "חסדיש", "חסידיש", "הקפצה", "מינק", "גגון"
+  ]);
+
+  function resolveRoles(places, text = "") {
     const seen = new Map();
     for (const p of places) {
       if (!seen.has(p.city)) {
-        seen.set(p.city, { city: p.city, role: p.role });
+        seen.set(p.city, {
+          city: p.city,
+          role: p.role,
+          start: p.start,
+          end: p.end,
+          phrase: p.phrase,
+          kind: p.kind
+        });
       } else if (!seen.get(p.city).role && p.role) {
         seen.get(p.city).role = p.role;
       }
     }
     const cities = [...seen.values()];
+    if (cities.length === 0) {
+      return { from: null, to: null, cities: [] };
+    }
+
     if (cities.length === 1) {
+      const single = cities[0];
+
+      // אם העיר קיבלה תפקיד 'to' מפורש (כגון "לשמש", "לבית שמש", "ל-ים", "אל שמש")
+      if (single.role === "to") {
+        return {
+          from: null,
+          to: single.city,
+          cities: [single.city],
+        };
+      }
+
+      // בדיקת הטוקנים המקדימים שמופיעים לפני העיר
+      const normTokens = normalizeText(text).split(" ").filter(Boolean);
+      const tokensBefore = normTokens.slice(0, single.start);
+
+      // בדיקה האם בטקסט לפני הביטוי יש סימן מחבר ברור (למשל: "נווה דניאל & שמש", "צור הדסה - שמש")
+      const rawStr = String(text || "");
+      const phraseIdx = rawStr.indexOf(single.phrase);
+      const textBefore = phraseIdx > 0 ? rawStr.slice(0, phraseIdx) : "";
+      const hasConnectorBefore = /(?:&|\-|–|->|>|⬅️|➡️|ל|אל|עד)\s*$/.test(textBefore.trim());
+
+      // האם קיימים טוקנים לפני העיר שאינם מילות סטטוס מותרות?
+      const nonStatusTokens = tokensBefore.filter((t) => !ROUTE_PREFIX_MODIFIERS.has(t));
+
+      if (hasConnectorBefore || nonStatusTokens.length > 0) {
+        // העיר מופיעה במיקום השני, וקודם לה מוקד/מילה שאינה סטטוס!
+        // במבנה מוניות ישראלי קלאסי: [מוצא] [יעד] [מחיר] -> העיר היא היעד ולא המוצא!
+        return {
+          from: null,
+          to: single.city,
+          cities: [single.city],
+        };
+      }
+
       return {
-        from: cities[0].city,
+        from: single.city,
         to: null,
-        cities: [cities[0].city],
+        cities: [single.city],
       };
     }
+
     const asFrom = cities.find((c) => c.role === "from");
     const asTo = cities.find((c) => c.role === "to" && c !== asFrom);
     const from = asFrom || (asTo ? cities.find((c) => c !== asTo) : cities[0]);
@@ -273,7 +336,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     }
 
     // 2. מעבר בין שני מוקדים בבית שמש עם גבולות מילה מחמירים ומחבר מפורש חובה
-    const NAMED = "רמת\\s*בית\\s*שמש\\s*[א-ה]|רמה\\s*[א-ה]|רמ[א-ה]|לב\\s*הרמה|חפציבה|ה?קרייה|ה?קריה|מרכז\\s*ביג|אזור\\s*התעשייה\\s*ביג|אזה\"ת\\s*ביג|ה?ביג|ה?נעימי|סאן\\s*מול|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|בית\\s*שמש\\s*הישנה|העיר\\s*הוותיקה|ה?וותיקה|הישנה|סמטת\\s*הגפן|(?:סמטת\\s*)?ה?גפן|כינור\\s*דוד|הר\\s*מירון|חבקוק\\s*הנביא|יואל\\s*הנביא|אלישע\\s*הנביא|עליית\\s*הנוער|עלית\\s*הנוער|שדרות\\s*האמוראים|שד'?\\s*האמוראים|קדושת\\s*אהרן|קדושת\\s*אהרון|הרב\\s*הרצוג|הרצוג|נהרדעא?|המכללה\\s*לשוטרים|מכללת\\s*השוטרים|מכללה\\s*לשוטרים|ריבל|תלמוד\\s*בבלי|אור\\s*שמח|נהר\\s*הירדן|הירדן|נחל\\s*[א-ת]+|משמר|ברכיהו?|ה?ברוש|מחסיה|אדרת|צרעה|הרטוב|הר\\s*טוב|אזה\"ת\\s*הרטוב|ישעי|זכריה";
+    const NAMED = "רמת\\s*בית\\s*שמש\\s*[א-ה]|רמה\\s*[א-ה]|רמ[א-ה]|לב\\s*הרמה|חפציבה|ה?קרייה|ה?קריה|מרכז\\s*ביג|אזור\\s*התעשייה\\s*ביג|אזה\"ת\\s*ביג|ה?ביג|ה?נעימי|סאן\\s*מול|שיינפלד|יפה\\s*נוף|נווה\\s*שמיר|משקפיים|רמת\\s*אברהם|בית\\s*שמש\\s*הישנה|העיר\\s*הוותיקה|ה?וותיקה|הישנה|סמטת\\s*הגפן|(?:סמטת\\s*)?ה?גפן|כינור\\s*דוד|הר\\s*מירון|מלאכי\\s*הנביא|זכריה\\s*הנביא|חגי\\s*הנביא|צפניה\\s*הנביא|חבקוק\\s*הנביא|עמוס\\s*הנביא|מיכה\\s*הנביא|יונה\\s*הנביא|הושע\\s*הנביא|נחום\\s*הנביא|יואל\\s*הנביא|אלישע\\s*הנביא|אליהו\\s*הנביא|שמואל\\s*הנביא|ישעיהו\\s*הנביא|ירמיהו\\s*הנביא|יחזקאל\\s*הנביא|עליית\\s*הנוער|עלית\\s*הנוער|שדרות\\s*האמוראים|שד'?\\s*האמוראים|קדושת\\s*אהרן|קדושת\\s*אהרון|הרב\\s*הרצוג|הרצוג|נהרדעא?|המכללה\\s*לשוטרים|מכללת\\s*השוטרים|מכללה\\s*לשוטרים|ריבל|תלמוד\\s*בבלי|אור\\s*שמח|נהר\\s*הירדן|הירדן|נחל\\s*[א-ת]+|משמר|ברכיהו?|ה?ברוש|מחסיה|אדרת|צרעה|הרטוב|הר\\s*טוב|אזה\"ת\\s*הרטוב|ישעי|זכריה";
 
     const SYMBOL_CONN = "(?:=>|->>|-->|->|>|⬅️|➡️|👈|👉|—|-|–|&|\\+|\\/|\\\\)";
 
@@ -298,6 +361,17 @@ export function createMatcher(citiesData, streetsData = {}) {
       toLetterRe2.test(raw)
     ) {
       return true;
+    }
+
+    // ד. שני מוקדים נקובים מובהקים בבית שמש על שורות נפרדות או מופרדים במחיר (למשל: "שמש הר טוב 70\nמלאכי הנביא זמן")
+    const namedRe = new RegExp(`(?<![א-ת])(?:${NAMED})(?![א-ת])`, "gi");
+    const allNamedMatches = [...norm.matchAll(namedRe)].map((m) => m[0].trim());
+    const uniqueNamed = [...new Set(allNamedMatches)];
+    if (uniqueNamed.length >= 2) {
+      const price = extractPrice(raw);
+      if (!price || price <= 110) {
+        return true;
+      }
     }
 
     // "בתוך רמה ד", "בתוך שמש", "בתוך בית שמש", "בתוך הרמה"
@@ -407,7 +481,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     }
 
     // פקודת מסלול רגילה: "פנוי בית שמש לירושלים"
-    const roles = resolveRoles(findPlaces(clean));
+    const roles = resolveRoles(findPlaces(clean), clean);
     if (roles.from && roles.to && roles.from !== roles.to) {
       return { mode: "route", origin: roles.from, destination: roles.to, displayText: `${roles.from} ⬅️ ${roles.to}` };
     }
@@ -468,7 +542,7 @@ export function createMatcher(citiesData, streetsData = {}) {
       }
 
       // 2. האם זו נסיעה שיוצאת מעיר הבית לכל יעד בינעירוני?
-      const roles = resolveRoles(places);
+      const roles = resolveRoles(places, matchText);
       if (roles.cities.includes(home)) {
         // הגנה 1: אם ההודעה פותחת בכינוי מובהק של עיר אחרת (כמו "בב 70" או "שמש 50"),
         // עיר המוצא היא אותה עיר ולא עיר הבית!
@@ -497,7 +571,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     // מצב 3: יוצא מעיר לכל יעד (from)
     // ==========================================
     if (state.mode === "from") {
-      const roles = resolveRoles(places);
+      const roles = resolveRoles(places, matchText);
       if (!roles.cities.includes(home)) return no(`${home} לא מופיעה בהודעה`);
       if (roles.from !== home) return no(`${home} מופיעה כיעד ולא כמוצא (נסיעה נכנסת)`);
       return yes(`יוצאת מ${home}`);
@@ -508,7 +582,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     // ==========================================
     if (state.mode === "route") {
       const dest = state.destination;
-      const roles = resolveRoles(places);
+      const roles = resolveRoles(places, matchText);
 
       if (!roles.cities.includes(home)) return no(`עיר מוצא (${home}) לא מופיעה בהודעה`);
       if (!roles.cities.includes(dest)) return no(`עיר יעד (${dest}) לא מופיעה בהודעה`);
@@ -623,6 +697,17 @@ export const CITY_ALIAS_MAP = {
   "נתיבות": "נתיבות",
   "רכסים": "רכסים",
   "קוממיות": "קוממיות",
+  "יסודות": "יסודות",
+  "כפר קאסם": "כפר קאסם",
+  "קסם": "כפר קאסם",
+  "נווה דניאל": "נווה דניאל",
+  "נוה דניאל": "נווה דניאל",
+  "בית חנן": "בית חנן",
+  "עיכ": "עין כרם",
+  "עין כרם": "עין כרם",
+  "בית חלקיה": "בית חלקיה",
+  "חזון יחזקאל": "חזון יחזקאל",
+  "אלומה": "חזון יחזקאל",
 };
 
 export function processDriverCommand(rawText) {

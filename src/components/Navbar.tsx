@@ -35,6 +35,7 @@ interface NavbarProps {
   onSelectDriverPhone?: (phone: string) => void;
   onRefresh: () => void;
   onOpenConnectionModal: () => void;
+  onOpenRadarModal?: () => void;
   onOpenNetlifyModal?: () => void;
   onOpenShortcutsModal: () => void;
   onOpenSpamModal: () => void;
@@ -60,6 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectDriverPhone,
   onRefresh,
   onOpenConnectionModal,
+  onOpenRadarModal,
   onOpenNetlifyModal,
   onOpenShortcutsModal,
   onOpenSpamModal,
@@ -169,6 +171,25 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* Live Rides Radar Modal Button */}
+          {onOpenRadarModal && (
+            <button
+              onClick={onOpenRadarModal}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-amber-500/20 via-emerald-500/20 to-teal-500/20 hover:from-amber-500/30 hover:to-emerald-500/30 border border-emerald-500/50 text-emerald-200 hover:text-white shadow-[0_0_15px_rgba(16,185,129,0.25)] transition-all cursor-pointer relative group"
+              title="פתיחת רדאר נסיעות חי במסך מלא - צפייה, מדידת מרחק ותפיסה מהירה דרך האתר"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <span className="font-bold">רדאר נסיעות חי</span>
+              <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/30 text-emerald-300 font-mono font-black border border-emerald-500/40 hidden sm:inline">
+                LIVE
+              </span>
+            </button>
+          )}
+
           {/* Users & Approval Management */}
           <button
             onClick={onOpenUsersModal}

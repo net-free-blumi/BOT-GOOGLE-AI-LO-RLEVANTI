@@ -44,6 +44,7 @@ import { BugTrackerModal } from './components/BugTrackerModal.tsx';
 import { BroadcastModal } from './components/BroadcastModal.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { AccessibilityWidget } from './components/AccessibilityWidget.tsx';
+import { DriverRadarModal } from './components/DriverRadarModal.tsx';
 import { LegalModal, LegalTab } from './components/LegalModal.tsx';
 import { Footer } from './components/Footer.tsx';
 import { AlertCircle, CheckCircle2, X, Bug } from 'lucide-react';
@@ -80,6 +81,7 @@ export default function App() {
   const [usersModalOpen, setUsersModalOpen] = useState(false);
   const [broadcastModalOpen, setBroadcastModalOpen] = useState(false);
   const [bugModalOpen, setBugModalOpen] = useState(false);
+  const [radarModalOpen, setRadarModalOpen] = useState(false);
   const [errorsList, setErrorsList] = useState<ErrorReport[]>([]);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
   const [legalModalTab, setLegalModalTab] = useState<LegalTab>('about');
@@ -396,6 +398,7 @@ export default function App() {
           localStorage.setItem('rides_selected_driver', phone);
         }}
         onRefresh={() => refreshData(true)}
+        onOpenRadarModal={() => setRadarModalOpen(true)}
         onOpenConnectionModal={() => setConnectionModalOpen(true)}
         onOpenNetlifyModal={() => setNetlifyModalOpen(true)}
         onOpenShortcutsModal={() => setShortcutsModalOpen(true)}
@@ -443,6 +446,41 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Quick Launch Banner for Driver Radar (Full-Screen Live Rides & Distance) */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-950/60 via-[#101b2a] to-amber-950/40 border border-emerald-500/30 p-4 sm:p-5 shadow-[0_4px_25px_rgba(16,185,129,0.15)] flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+              <span className="relative flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+              </span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                  רדאר נסיעות חי & עוזר מרחק לנהג
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  חדש במסך מלא
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5 max-w-2xl leading-relaxed">
+                לא מכיר רחוב מסוים (למשל ״זכריה הנביא״)? הרדאר מזהה אוטומטית את השכונה, מחשב מרחק מדויק בק״מ מהרכב שלך, ומאפשר תפיסת נסיעה (״תן״) וניווט Waze ישירות מהאתר!
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setRadarModalOpen(true)}
+              className="px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all cursor-pointer flex items-center gap-2 active:scale-95"
+            >
+              <span>פתח רדאר נסיעות חי</span>
+              <span className="text-sm">🚕</span>
+            </button>
+          </div>
+        </div>
 
         {/* 1. Stats Telemetry Cards */}
         <StatsCards server={serverState} stats={statsState} />
@@ -557,6 +595,14 @@ export default function App() {
         approvedUsers={approvedUsersList}
         activeSessionsCount={status?.stats?.totalConnectedDrivers ?? approvedUsersList.filter(u => u.connectionStatus === 'connected').length}
         onSendBroadcast={handleSendBroadcast}
+      />
+
+      {/* Driver Live Rides Radar Full-Screen Modal */}
+      <DriverRadarModal
+        isOpen={radarModalOpen}
+        onClose={() => setRadarModalOpen(false)}
+        selectedDriverPhone={selectedDriverPhone}
+        driverName={approvedUsersList.find(u => u.phone === selectedDriverPhone)?.name || 'נהג'}
       />
 
       {/* Legal & Accessibility Modals */}
