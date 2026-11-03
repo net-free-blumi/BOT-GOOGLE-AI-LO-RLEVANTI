@@ -56,6 +56,8 @@ import {
   calculateDistanceKm,
   generateWazeUrl,
   BEIT_SHEMESH_ZONES,
+  parseRideRoute,
+  extractDispatcherPhone,
 } from "./geo-helper.js";
 
 const DEBUG_FILTER = true;
@@ -130,13 +132,13 @@ export function getLiveRides(driverPhone = null) {
     }
 
     const text = info.rideData?.cleanedText || info.rawText || "";
-    const detected = detectNeighborhood(text);
-    const destinationCoords = detected?.coords || BEIT_SHEMESH_ZONES['רמה ג'];
-    const originCoords = BEIT_SHEMESH_ZONES['רמה ד'];
+    const parsed = parseRideRoute(text, info.senderPhone);
 
-    // זיהוי מחיר מתוך הטקסט
-    const priceMatch = text.match(/(?:₪|\b)(\d{2,4})\s*(?:₪|ש"ח|שח|מידי|מיידי|\b)/);
-    const price = priceMatch ? Number(priceMatch[1]) : null;
+    // חילוץ סדרן מדויק (אם היה 0 או לא תקין, נחלץ מהטקסט)
+    let dispatcherPhone = parsed.dispatcherPhone || info.senderPhone;
+    if (!dispatcherPhone || dispatcherPhone === "0" || dispatcherPhone === "לא צוין") {
+      dispatcherPhone = extractDispatcherPhone(text) || null;
+    }
 
     list.push({
       id,
@@ -145,17 +147,21 @@ export function getLiveRides(driverPhone = null) {
       rawText: info.rawText || text,
       cleanedText: text,
       origin: "בית שמש",
-      originNeighborhood: "רמה ד",
-      originCoords,
-      destination: detected?.matchedStreet || "יעד כללי",
-      destinationNeighborhood: detected?.zoneKey || "בית שמש",
-      destinationCoords,
-      price,
+      originText: parsed.originText,
+      originNeighborhood: parsed.originNeighborhood,
+      originCoords: parsed.originCoords,
+      destination: parsed.destinationText,
+      destinationText: parsed.destinationText,
+      destNeighborhood: parsed.destNeighborhood,
+      destinationNeighborhood: parsed.destNeighborhood,
+      destinationCoords: parsed.destCoords,
+      isInternal: parsed.isInternal,
+      price: parsed.price,
       groupName: info.groupName || "קבוצת נסיעות",
       groupJid: info.groupJid || null,
       dispatcherName: info.senderName || "סדרן",
-      dispatcherPhone: info.senderPhone || "לא צוין",
-      wazeUrl: generateWazeUrl(detected?.matchedStreet || "בית שמש", "בית שמש", destinationCoords),
+      dispatcherPhone: dispatcherPhone || "",
+      wazeUrl: generateWazeUrl(parsed.originText || parsed.originNeighborhood, "בית שמש", parsed.originCoords),
       claimed: Boolean(info.claimed),
       claimedBy: info.claimedBy || null,
       claimedAt: info.claimedAt || null,
@@ -865,14 +871,50 @@ export function cancelPairingReminder(phone) {
   }
 }
 
-// התראה למנהל המערכת (0515157166) כאשר נהג חיבר בהצלחה את חשבון הוואטסאפ שלו
+// קובץ מעקב קבוע לדיסק - שולחים התראת חיבור למנהל והודעת ברכה לנהג אך ורק פעם אחת בהתחברות הראשונית בלבד!
+// מונע לחלוטין כל הודעה חוזרת בעת התעוררות שרת, PM2 restart, או התחברות סוקט מחדש.
+const ONBOARDING_ALERTS_FILE = new URL("./onboarding-alerts.json", import.meta.url);
+const onboardingAlertsSent = new Map(); // cleanPhone -> { adminAlertSent: boolean, driverWelcomeSent: boolean, completedAt: string }
+
+try {
+  if (fs.existsSync(ONBOARDING_ALERTS_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(ONBOARDING_ALERTS_FILE, "utf8"));
+    for (const [p, obj] of Object.entries(saved || {})) {
+      onboardingAlertsSent.set(cleanPhone(p), obj);
+    }
+  }
+} catch (e) {
+  console.error("שגיאה בקריאת onboarding-alerts.json:", e.message);
+}
+
+function persistOnboardingAlerts() {
+  try {
+    const obj = {};
+    for (const [p, val] of onboardingAlertsSent.entries()) {
+      obj[p] = val;
+    }
+    fs.writeFileSync(ONBOARDING_ALERTS_FILE, JSON.stringify(obj, null, 2), "utf8");
+  } catch (e) {
+    console.error("שגיאה בשמירת onboarding-alerts.json:", e.message);
+  }
+}
+
+// התראה למנהל המערכת (0515157166) כאשר נהג חיבר בהצלחה את חשבון הוואטסאפ שלו (אך ורק בהתחברות הראשונית!)
 export async function notifyAdminOnDriverConnected(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  if (!clean) return;
+
+  // אם המנהל כבר קיבל התראה על נהג זה בעבר - לא שולחים שוב לעולם!
+  const record = onboardingAlertsSent.get(clean) || {};
+  if (record.adminAlertSent) {
+    return;
+  }
+
   const mainSock = getMainBotSock();
   if (!mainSock || !getMainBotStatus().connected) return;
 
   const usersData = loadUsersData();
   const adminPhone = cleanPhone(usersData.adminPhone || "972515157166");
-  const clean = cleanPhone(driverPhone);
 
   if (!adminPhone || clean === adminPhone) return;
 
@@ -886,17 +928,29 @@ export async function notifyAdminOnDriverConnected(driverPhone) {
 
   try {
     await mainSock.sendMessage(`${adminPhone}@s.whatsapp.net`, { text: adminMsg });
-    console.log(`📢 נשלחה התראה למנהל (${adminPhone}) על התחברות נהג ${clean}`);
+    console.log(`📢 נשלחה התראה ראשונית חד-פעמית למנהל (${adminPhone}) על התחברות נהג ${clean}`);
+    record.adminAlertSent = true;
+    record.completedAt = new Date().toISOString();
+    onboardingAlertsSent.set(clean, record);
+    persistOnboardingAlerts();
   } catch (e) {
     console.error(`שגיאה בשליחת התראת התחברות למנהל:`, e.message);
   }
 }
 
-// הודעת ברכה והדרכה לנהג ברגע שהוואטסאפ שלו מתחבר בהצלחה
+// הודעת ברכה והדרכה לנהג ברגע שהוואטסאפ שלו מתחבר בהצלחה (אך ורק פעם אחת בהתחברות הראשונית!)
 export async function notifyDriverWelcomeOnConnected(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  if (!clean) return;
+
+  // אם הנהג כבר קיבל הודעת ברכה בעבר - לא שולחים שוב לעולם!
+  const record = onboardingAlertsSent.get(clean) || {};
+  if (record.driverWelcomeSent) {
+    return;
+  }
+
   const mainSock = getMainBotSock();
   if (!mainSock || !getMainBotStatus().connected) return;
-  const clean = cleanPhone(driverPhone);
 
   const welcomeMsg = `✅ *הוואטסאפ שלך חובר ומסונכרן בהצלחה למערכת!* 🎉\n\n` +
     `מעכשיו הבוט יסנן עבורך נסיעות בזמן אמת מכל הקבוצות שלך.\n\n` +
@@ -909,13 +963,27 @@ export async function notifyDriverWelcomeOnConnected(driverPhone) {
   try {
     const jid = getDestinationJid(clean);
     await mainSock.sendMessage(jid, { text: welcomeMsg });
-  } catch (e) {}
+    console.log(`📢 נשלחה הודעת ברכה ראשונית חד-פעמית לנהג ${clean}`);
+    record.driverWelcomeSent = true;
+    record.completedAt = new Date().toISOString();
+    onboardingAlertsSent.set(clean, record);
+    persistOnboardingAlerts();
+  } catch (e) {
+    console.error(`שגיאה בשליחת הודעת ברכה לנהג ${clean}:`, e.message);
+  }
 }
 
-// טיפול בשינוי סטטוס סשן נהג
+// טיפול בשינוי סטטוס סשן נהג - מסונן לחלוטין כנגד התעוררות שרת, שחזור סשנים והתחברויות חוזרות
 export async function handleDriverStatusChange(driverPhone, sessionObj) {
   if (sessionObj?.status === "connected") {
     cancelPairingReminder(driverPhone);
+
+    // אם מדובר בסשן שנשמר על הדיסק ושוחזר בהפעלת השרת, או התעוררות/התחברות מחדש - אין עניין לשלוח שום הודעה!
+    if (sessionObj.isRestoredSession || !sessionObj.isInitialPairing) {
+      return;
+    }
+
+    // נשלח אך ורק בהתחברות הראשונית (הפונקציות עצמן בודקות שוב את הרישום הקבוע בדיסק)
     await notifyAdminOnDriverConnected(driverPhone);
     await notifyDriverWelcomeOnConnected(driverPhone);
   }

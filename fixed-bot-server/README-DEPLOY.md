@@ -28,22 +28,29 @@
 - כולל תבניות מוכנות (עדכון גרסה, תזכורת לילית, הודעה דחופה, בוקר טוב), סרגל עיצוב וואטסאפ (מודגש, נטוי, קו חוצה, מונוספייס) ותצוגה מקדימה חיה של בועת וואטסאפ אמיתית.
 - קצה שרת מאובטח: `POST /api/broadcast` השולח הודעות עם הגנת הצפה (מרווח 600ms בין הודעות).
 
+# מדריך הפעלה, עדכון גרסה 3.0 (רדאר נסיעות חי, מרחקים בק"מ ועוזר שכונות)
+
+## 📋 פירוט השינויים האחרונים (גרסה 3.0):
+1. **רדאר נסיעות חי (מסך מלא):** הוספת קצוות שרת `/api/rides/live`, `/api/rides/claim`, `/api/rides/simulate`.
+2. **עוזר מרחק ושכונות לנהג (`geo-helper.js`):** זיהוי רחובות (כגון "זכריה הנביא" -> רמה ג', "שדרות האמוראים" -> רמה ד'), חישוב מרחק בק"מ וקישורי Waze ישירים.
+3. **תמיכה בפקודות וואטסאפ למיקום ומרחק:** מענה מיידי על שאלות "מרחק", "איפה זה", "איזה שכונה", קליטת סיכת מיקום GPS ועדכון שכונה ידני ("אני ברמה ד").
+4. **תיקון דיסלייקים מקיף:** חסימת נסיעות נכנסות שפותחות בשם עיר אחרת (עין כרם, יסודות, כפר קאסם) והפרדת "מנחם משיב".
+
 ---
 
-## 🚀 פקודות לעדכון השרת ב-VPS:
+## 🚀 פקודות לעדכון השרת ב-VPS (82.70.210.206):
 
-### 1. העלאת הקבצים המעודכנים (ב-PowerShell מקומי או טרמינל):
+### אפשרות 1: העלאת הקבצים ששונו בלבד (דרך PowerShell / CMD במחשב):
 ```powershell
-scp -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" index.js matcher.js dedupe.js cities.json streets-full.json dashboard-api.js users-manager.js interactive.js ubuntu@82.70.210.206:/home/ubuntu/wa-rides-bot/
+scp -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" geo-helper.js dashboard-api.js index.js matcher.js cities.json ubuntu@82.70.210.206:/home/ubuntu/wa-rides-bot/
 ```
 
-### 2. כניסה לשרת והפעלה מחדש (SSH):
-```powershell
-ssh -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" ubuntu@82.70.210.206
-```
-ובשרת:
+### אפשרות 2: הורדת חבילת העדכון המוכנה ישירות בתוך השרת (ב-SSH):
 ```bash
-cd ~/wa-rides-bot
+ssh -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" ubuntu@82.70.210.206
+cd /home/ubuntu/wa-rides-bot
+curl -sL https://ais-pre-ogepdml7yksj3njqbvf4no-597988249598.europe-west1.run.app/fixed-bot-server-v3.0.tar.gz | tar -xz
 pm2 restart wa-bot --update-env
-pm2 logs wa-bot --lines 30
+pm2 logs wa-bot --lines 20
 ```
+

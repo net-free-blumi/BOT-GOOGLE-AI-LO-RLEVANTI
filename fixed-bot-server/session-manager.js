@@ -193,6 +193,17 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
   const driverAuthDir = path.join(SESSIONS_DIR, driverPhone);
   if (!fs.existsSync(driverAuthDir)) fs.mkdirSync(driverAuthDir, { recursive: true });
 
+  const credsPath = path.join(driverAuthDir, "creds.json");
+  let wasAlreadyRegisteredOnDisk = false;
+  if (fs.existsSync(credsPath)) {
+    try {
+      const parsedCreds = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+      if (parsedCreds && parsedCreds.registered) {
+        wasAlreadyRegisteredOnDisk = true;
+      }
+    } catch (e) {}
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(driverAuthDir);
   let version;
   try {
@@ -214,6 +225,8 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     sock,
     status: sock.authState.creds.registered ? "connecting" : "pairing_required",
     registered: Boolean(sock.authState.creds.registered),
+    wasAlreadyRegisteredOnDisk,
+    isRestoredSession: wasAlreadyRegisteredOnDisk,
     pairingCode: null,
     qr: null,
     qrTimestamp: null,
@@ -236,7 +249,11 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     }
 
     if (connection === "open") {
-      console.log(`🚕 [נהג ${driverPhone}] וואטסאפ מחובר ומסונכרן בהצלחה!`);
+      const isFirstEverPairing = !sessionObj.wasAlreadyRegisteredOnDisk;
+      sessionObj.isInitialPairing = isFirstEverPairing;
+      sessionObj.wasAlreadyRegisteredOnDisk = true;
+
+      console.log(`🚕 [נהג ${driverPhone}] וואטסאפ מחובר ומסונכרן בהצלחה! (התחברות ראשונית: ${isFirstEverPairing ? "כן" : "לא - שחזור/התחברות מחדש"})`);
       sessionObj.status = "connected";
       sessionObj.registered = true;
       sessionObj.pairingCode = null;
