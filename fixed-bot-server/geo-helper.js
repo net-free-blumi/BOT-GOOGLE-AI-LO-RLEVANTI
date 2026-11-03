@@ -311,6 +311,39 @@ export function detectNeighborhood(text) {
 }
 
 
+// חילוץ מידע ייעודי עבור דרייבוט (קישור תפיסה, פקודת תפיסה, טלפון בוט)
+export function extractDriveBotInfo(rawText) {
+  const text = String(rawText || '');
+  const waMatch = text.match(/(?:https?:\/\/)?wa\.me\/(\d+)\?text=([^&\s\n]+)/i);
+  const isDriveBot = Boolean(waMatch) || /prod_drivebot|drivebot|דרייבוט/i.test(text);
+
+  let drivebotPhone = '972552732722';
+  let drivebotUrl = null;
+  let drivebotCommand = null;
+
+  if (waMatch) {
+    drivebotPhone = waMatch[1] || '972552732722';
+    drivebotUrl = `https://wa.me/${drivebotPhone}?text=${waMatch[2]}`;
+    try {
+      drivebotCommand = decodeURIComponent(waMatch[2].replace(/\+/g, ' '));
+    } catch (e) {
+      drivebotCommand = waMatch[2].replace(/\+/g, ' ');
+    }
+  } else {
+    const tgMatch = text.match(/(?:https?:\/\/)?t\.me\/prod_drivebot\?start=([^&\s\n]+)/i);
+    if (tgMatch) {
+      drivebotUrl = `https://t.me/prod_drivebot?start=${tgMatch[1]}`;
+    }
+  }
+
+  return {
+    isDriveBot,
+    drivebotPhone,
+    drivebotUrl,
+    drivebotCommand,
+  };
+}
+
 // פענוח נתיב נסיעה מלא (מוצא מול יעד - שלילה של טעויות היפוך "מב לד")
 export function parseRideRoute(rawText, rawSenderPhone = null) {
   const text = String(rawText || '').trim();
@@ -324,6 +357,7 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
   }
 
   const dispatcherPhone = extractDispatcherPhone(text, rawSenderPhone);
+  const driveBotInfo = extractDriveBotInfo(text);
   const isInternal =
     text.includes('פנימי') ||
     text.includes('שמש פנימי') ||
@@ -419,9 +453,14 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
     isInternal: isInternal || (originNeighborhood.includes('בית שמש') && destNeighborhood.includes('בית שמש')),
     price,
     dispatcherPhone,
+    isDriveBot: driveBotInfo.isDriveBot,
+    drivebotUrl: driveBotInfo.drivebotUrl,
+    drivebotCommand: driveBotInfo.drivebotCommand,
+    drivebotPhone: driveBotInfo.drivebotPhone,
     rawText: text,
   };
 }
+
 
 // חישוב מרחק בקילומטרים וזמן נסיעה מוערך בדקות
 export function calculateDistanceKm(lat1, lon1, lat2, lon2) {

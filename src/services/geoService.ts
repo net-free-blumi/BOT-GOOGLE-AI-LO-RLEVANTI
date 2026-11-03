@@ -357,6 +357,39 @@ export function detectNeighborhood(text: string): { key: string; name: string; p
   return null;
 }
 
+// חילוץ מידע ייעודי עבור דרייבוט (קישור תפיסה, פקודת תפיסה, טלפון בוט)
+export function extractDriveBotInfo(rawText: string) {
+  const text = String(rawText || '');
+  const waMatch = text.match(/(?:https?:\/\/)?wa\.me\/(\d+)\?text=([^&\s\n]+)/i);
+  const isDriveBot = Boolean(waMatch) || /prod_drivebot|drivebot|דרייבוט/i.test(text);
+
+  let drivebotPhone = '972552732722';
+  let drivebotUrl: string | null = null;
+  let drivebotCommand: string | null = null;
+
+  if (waMatch) {
+    drivebotPhone = waMatch[1] || '972552732722';
+    drivebotUrl = `https://wa.me/${drivebotPhone}?text=${waMatch[2]}`;
+    try {
+      drivebotCommand = decodeURIComponent(waMatch[2].replace(/\+/g, ' '));
+    } catch (e) {
+      drivebotCommand = waMatch[2].replace(/\+/g, ' ');
+    }
+  } else {
+    const tgMatch = text.match(/(?:https?:\/\/)?t\.me\/prod_drivebot\?start=([^&\s\n]+)/i);
+    if (tgMatch) {
+      drivebotUrl = `https://t.me/prod_drivebot?start=${tgMatch[1]}`;
+    }
+  }
+
+  return {
+    isDriveBot,
+    drivebotPhone,
+    drivebotUrl,
+    drivebotCommand,
+  };
+}
+
 export interface ParsedRideRoute {
   originText: string;
   originNeighborhood: string;
@@ -367,6 +400,10 @@ export interface ParsedRideRoute {
   isInternal: boolean;
   price: number | null;
   dispatcherPhone: string | null;
+  isDriveBot: boolean;
+  drivebotUrl: string | null;
+  drivebotCommand: string | null;
+  drivebotPhone: string;
   rawText: string;
 }
 
@@ -388,7 +425,10 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
   // 2. סדרן / טלפון
   const dispatcherPhone = extractDispatcherPhone(text, rawSenderPhone);
 
-  // 3. האם נסיעה פנימית
+  // 3. זיהוי דרייבוט
+  const driveBotInfo = extractDriveBotInfo(text);
+
+  // 4. האם נסיעה פנימית
   const isInternal =
     text.includes('פנימי') ||
     text.includes('שמש פנימי') ||
@@ -488,6 +528,10 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
     isInternal: isInternal || (originNeighborhood.includes('בית שמש') && destNeighborhood.includes('בית שמש')),
     price,
     dispatcherPhone,
+    isDriveBot: driveBotInfo.isDriveBot,
+    drivebotUrl: driveBotInfo.drivebotUrl,
+    drivebotCommand: driveBotInfo.drivebotCommand,
+    drivebotPhone: driveBotInfo.drivebotPhone,
     rawText: text,
   };
 }

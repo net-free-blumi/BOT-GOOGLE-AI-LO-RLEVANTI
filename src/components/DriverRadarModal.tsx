@@ -21,7 +21,10 @@ import {
   BellRing,
   ArrowDownRight,
   ShieldCheck,
-  ChevronLeft
+  ChevronLeft,
+  MessageCircle,
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
 import { LiveRideItem, DriverGeoLocation } from '../types.ts';
 import { fetchLiveRidesApi, claimRideApi, simulateRideApi } from '../services/api.ts';
@@ -34,6 +37,37 @@ import {
   parseRideRoute,
   extractDispatcherPhone,
 } from '../services/geoService.ts';
+
+// עוזר להפיכת טקסט וקישורים פעילים (wa.me, t.me, https, קישורי דרייבוט) ללחיצים
+function renderClickableText(content: string) {
+  if (!content) return null;
+  const urlRegex = /(https?:\/\/[^\s]+|wa\.me\/[^\s]+|t\.me\/[^\s]+|drivebot\.co\.il[^\s]*)/gi;
+  const parts = content.split(urlRegex);
+
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    const isUrl = /(https?:\/\/[^\s]+|wa\.me\/[^\s]+|t\.me\/[^\s]+|drivebot\.co\.il[^\s]*)/i.test(part);
+
+    if (isUrl) {
+      const href = part.startsWith('http://') || part.startsWith('https://')
+        ? part
+        : `https://${part}`;
+      return (
+        <a
+          key={idx}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-bold break-all bg-emerald-500/15 px-1.5 py-0.5 rounded mx-0.5 inline-block"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return <span key={idx}>{part}</span>;
+  });
+}
 
 interface DriverRadarModalProps {
   isOpen: boolean;
@@ -73,6 +107,15 @@ export function DriverRadarModal({
   const [claimedSuccessId, setClaimedSuccessId] = useState<string | null>(null);
   const [maxDistanceFilter, setMaxDistanceFilter] = useState<number>(0); // 0 = all
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [alertVolume, setAlertVolume] = useState<number>(() => {
+    const saved = localStorage.getItem('rides_radar_volume');
+    if (saved !== null) {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+    }
+    return 0.85; // ווליום ברירת מחדל חזק וברור
+  });
+  const [selectedRideForDetails, setSelectedRideForDetails] = useState<LiveRideItem | null>(null);
   const [isGettingGps, setIsGettingGps] = useState<boolean>(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [currentTimeStr, setCurrentTimeStr] = useState<string>('');
@@ -103,9 +146,11 @@ export function DriverRadarModal({
     return () => clearInterval(interval);
   }, []);
 
-  // צלצול התראה חזק, בולט ועוצמתי ברגע שנכנסת נסיעה חדשה (תואם מסוף מוניות ורכב)
-  const playLoudChime = () => {
+  // צלצול התראה חזק, בולט ועוצמתי ברגע שנכנסת נסיעה חדשה עם שליטה על עוצמת שמע
+  const playLoudChime = (overrideVol?: number) => {
     if (!soundEnabled) return;
+    const vol = overrideVol !== undefined ? overrideVol : alertVolume;
+    if (vol <= 0) return;
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
@@ -119,10 +164,10 @@ export function DriverRadarModal({
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      osc1.type = 'triangle'; // גל משולש חד ועוצמתי
+      osc1.type = 'triangle'; // גל משולש חד, צורם ומעורר (חודר רעש מנוע ורדיו)
       osc2.type = 'sine';
 
-      // דינג ראשון: 784Hz + 1174Hz (סולם התראה ברור)
+      // דינג ראשון: 784Hz + 1174Hz
       osc1.frequency.setValueAtTime(784, now);
       osc2.frequency.setValueAtTime(1174.66, now);
 
@@ -130,10 +175,10 @@ export function DriverRadarModal({
       osc1.frequency.setValueAtTime(1046.5, now + 0.13);
       osc2.frequency.setValueAtTime(1567.98, now + 0.13);
 
-      // ווליום עוצמתי (0.90) כדי שישמעו היטב בנסיעה מעל רעש כביש
-      gain.gain.setValueAtTime(0.85, now);
-      gain.gain.setValueAtTime(0.92, now + 0.13);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.58);
+      // ווליום מתואם עם מחוון העוצמה של הנהג
+      gain.gain.setValueAtTime(vol * 0.9, now);
+      gain.gain.setValueAtTime(vol, now + 0.13);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
 
       osc1.connect(gain);
       osc2.connect(gain);
@@ -141,8 +186,8 @@ export function DriverRadarModal({
 
       osc1.start(now);
       osc2.start(now);
-      osc1.stop(now + 0.58);
-      osc2.stop(now + 0.58);
+      osc1.stop(now + 0.6);
+      osc2.stop(now + 0.6);
     } catch (e) {}
   };
 
@@ -320,15 +365,25 @@ export function DriverRadarModal({
     }
   };
 
-  // Handle Instant Claim ("תן")
+  // Handle Instant Claim ("תן" או תפיסה בדרייבוט)
   const handleClaimRide = async (ride: LiveRideItem) => {
     setClaimingId(ride.id);
     try {
-      const res = await claimRideApi(ride.id, selectedDriverPhone, 'תן');
+      // אם זו נסיעת דרייבוט - פותחים מיד את הקישור הרשמי של דרייבוט בחלון חדש
+      if (ride.drivebotUrl) {
+        window.open(ride.drivebotUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      const claimText = ride.isDriveBot && ride.drivebotCommand ? ride.drivebotCommand : 'תן';
+      const res = await claimRideApi(ride.id, selectedDriverPhone, claimText);
       if (res.ok) {
         setClaimedSuccessId(ride.id);
         playLoudChime();
-        showToast(`🚕 הנסיעה נתפסה בהצלחה! נשלחה תגובת "תן" בקבוצה ולסדרן.`);
+        if (ride.isDriveBot) {
+          showToast(`⚡ נסיעת דרייבוט נתפסה! הפקודה נשלחה לבוט דרייבוט הרשמי ללא שליחה לקבוצה.`);
+        } else {
+          showToast(`🚕 הנסיעה נתפסה בהצלחה! נשלחה תגובת "תן" בקבוצה ולסדרן.`);
+        }
         setTimeout(() => {
           setClaimedSuccessId(null);
         }, 5000);
@@ -385,6 +440,14 @@ export function DriverRadarModal({
       const price = parsed.price || ride.price || null;
       const isInternal = parsed.isInternal || ride.isInternal || false;
 
+      // שעת שליחת ההודעה המדויקת בוואטסאפ (שעה ודקה)
+      const timeFormatted = ride.timeFormatted || (ride.timestamp ? new Date(ride.timestamp).toLocaleTimeString('he-IL', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }) : '');
+
       return {
         ...ride,
         originText,
@@ -398,6 +461,11 @@ export function DriverRadarModal({
         price,
         isInternal,
         cleanDispatcher,
+        timeFormatted,
+        isDriveBot: parsed.isDriveBot ?? ride.isDriveBot ?? false,
+        drivebotUrl: parsed.drivebotUrl ?? ride.drivebotUrl ?? null,
+        drivebotCommand: parsed.drivebotCommand ?? ride.drivebotCommand ?? null,
+        drivebotPhone: parsed.drivebotPhone ?? ride.drivebotPhone ?? null,
       };
     });
   }, [rides, driverLocation]);
@@ -462,7 +530,44 @@ export function DriverRadarModal({
             <span>{isCockpitMode ? 'יציאה מקוקפיט' : 'מצב קוקפיט (מסך מלא)'}</span>
           </button>
 
-          {/* Loud Audio Chime Toggle & Test */}
+          {/* Audio Chime Volume Slider & Test */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#080d14] border border-[#1e2b3c]">
+            <button
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) playLoudChime(alertVolume);
+              }}
+              className="text-slate-400 hover:text-white cursor-pointer"
+              title={soundEnabled ? 'השתק צליל התראה' : 'הפעל צליל התראה'}
+            >
+              {soundEnabled && alertVolume > 0 ? (
+                <Volume2 className="w-4 h-4 text-emerald-400" />
+              ) : (
+                <VolumeX className="w-4 h-4 text-slate-500" />
+              )}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={soundEnabled ? Math.round(alertVolume * 100) : 0}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10) / 100;
+                setAlertVolume(val);
+                localStorage.setItem('rides_radar_volume', String(val));
+                if (!soundEnabled && val > 0) setSoundEnabled(true);
+              }}
+              onMouseUp={() => playLoudChime()}
+              onTouchEnd={() => playLoudChime()}
+              className="w-14 sm:w-20 accent-emerald-400 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
+              title={`עוצמת צלצול: ${Math.round(alertVolume * 100)}%`}
+            />
+            <span className="text-[10px] font-mono text-emerald-300 font-bold w-7 text-left">
+              {soundEnabled ? `${Math.round(alertVolume * 100)}%` : '0%'}
+            </span>
+          </div>
+
           <button
             onClick={() => {
               playLoudChime();
@@ -472,19 +577,7 @@ export function DriverRadarModal({
             title="בדוק צלצול חזק כעת"
           >
             <BellRing className="w-3.5 h-3.5 text-teal-300 animate-bounce" />
-            <span className="hidden sm:inline">בדוק צליל חזק</span>
-          </button>
-
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2 rounded-xl border text-xs flex items-center gap-1 cursor-pointer transition-colors ${
-              soundEnabled
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
-                : 'bg-[#121924] border-[#223044] text-slate-400 hover:text-white'
-            }`}
-            title={soundEnabled ? 'צליל התראה מופעל' : 'צליל התראה מושתק'}
-          >
-            {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4" />}
+            <span className="hidden sm:inline">בדיקת צליל</span>
           </button>
 
           {/* Test Ride Simulation Button (only in regular view) */}
@@ -661,7 +754,7 @@ export function DriverRadarModal({
               ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'
               : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
           }`}>
-            {filteredRides.slice(0, isCockpitMode ? 6 : 40).map((ride) => {
+            {filteredRides.slice(0, 20).map((ride) => {
               const prox = ride.distanceKm !== null && ride.distanceKm !== undefined
                 ? getProximityBadge(ride.distanceKm)
                 : null;
@@ -680,12 +773,12 @@ export function DriverRadarModal({
                   }`}
                 >
                   {/* ========================================= */}
-                  {/* CARD HEADER: BADGE + PRICE + SENDER */}
+                  {/* CARD HEADER: BADGES + EXACT TIME + SENDER + PRICE */}
                   {/* ========================================= */}
                   <div className="p-3 sm:p-4 pb-2.5 border-b border-[#162130] flex items-start justify-between gap-2 bg-[#0d131c]">
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {/* Internal vs Intercity Tag (Fixed: Shows פנימי בעיר in Emerald!) */}
+                        {/* Internal vs Intercity Tag */}
                         <span
                           className={`px-2.5 py-0.5 rounded-lg text-[11px] font-black uppercase tracking-wider ${
                             ride.isInternal
@@ -696,13 +789,29 @@ export function DriverRadarModal({
                           {ride.isInternal ? '🚕 פנימי (בתוך העיר)' : '🛣️ בינעירוני'}
                         </span>
 
+                        {/* DriveBot Badge if applicable */}
+                        {ride.isDriveBot && (
+                          <span className="px-2 py-0.5 rounded-lg text-[11px] font-black bg-amber-400/20 border border-amber-400/50 text-amber-300 flex items-center gap-1 shadow-sm">
+                            ⚡ דרייבוט
+                          </span>
+                        )}
+
+                        {/* Exact WhatsApp Sent Time (שעה ודקה מדויקת) */}
+                        <span
+                          className="px-2 py-0.5 rounded-md bg-[#080d14] border border-[#1e2c3d] text-teal-300 font-mono text-[11px] font-bold flex items-center gap-1 shrink-0"
+                          title="שעת שידור הנסיעה המקורית בוואטסאפ"
+                        >
+                          <Clock className="w-3 h-3 text-teal-400" />
+                          <span>{ride.timeFormatted || 'כרגע'}</span>
+                        </span>
+
                         {/* Group Name */}
-                        <span className="text-[11px] text-slate-300 font-medium truncate max-w-[150px]" title={ride.groupName}>
+                        <span className="text-[11px] text-slate-300 font-medium truncate max-w-[140px]" title={ride.groupName}>
                           📍 {ride.groupName}
                         </span>
                       </div>
 
-                      {/* Dispatcher: Never shows 0! */}
+                      {/* Dispatcher info */}
                       {ride.cleanDispatcher ? (
                         <div className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
                           <span>👤 סדרן:</span>
@@ -799,19 +908,33 @@ export function DriverRadarModal({
                       </div>
                     )}
 
-                    {/* ORIGINAL RAW MESSAGE SNIPPET */}
-                    <div className="p-2 rounded-lg bg-[#05080c] border border-[#141d29] text-[11px] font-mono text-slate-300 line-clamp-2 select-text">
-                      {ride.cleanedText || ride.rawText}
+                    {/* ORIGINAL RAW MESSAGE SNIPPET (לחץ להגדלה ולקישורים פעילים בחלון קופץ) */}
+                    <div
+                      onClick={() => setSelectedRideForDetails(ride)}
+                      className="p-2.5 rounded-xl bg-[#05080c] hover:bg-[#0c1420] border border-[#141d29] hover:border-teal-500/50 text-[11px] font-mono text-slate-300 cursor-pointer transition-all group"
+                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ עם קישורים לחיצים"
+                    >
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                        <span className="font-sans font-bold text-teal-400 group-hover:text-teal-300 flex items-center gap-1">
+                          📄 הודעה מקורית מהקבוצה (לחץ להגדלה ולקישורים פעילים):
+                        </span>
+                        <span className="text-[10px] text-teal-400 font-sans group-hover:underline flex items-center gap-0.5">
+                          פתח הודעה <ExternalLink className="w-2.5 h-2.5" />
+                        </span>
+                      </div>
+                      <div className="line-clamp-2 select-text leading-relaxed">
+                        {ride.cleanedText || ride.rawText}
+                      </div>
                     </div>
                   </div>
 
                   {/* ========================================= */}
-                  {/* CARD FOOTER ACTIONS: WAZE + PHONE + "תן" */}
+                  {/* CARD FOOTER ACTIONS: WAZE + הצג בוואטסאפ + תן */}
                   {/* ========================================= */}
                   <div className={`p-3 bg-[#080d14] border-t border-[#162130] flex items-center gap-2 ${
                     isCockpitMode ? 'py-3' : 'py-2.5'
                   }`}>
-                    {/* Waze Quick Navigation Button (Takes to PICKUP SPOT!) */}
+                    {/* Waze Quick Navigation Button (Takes directly to PICKUP SPOT!) */}
                     <a
                       href={ride.wazeUrl}
                       target="_blank"
@@ -823,42 +946,58 @@ export function DriverRadarModal({
                       <span>Waze לאיסוף</span>
                     </a>
 
-                    {/* Direct WhatsApp to Dispatcher */}
-                    {ride.cleanDispatcher && (
-                      <a
-                        href={`https://wa.me/${ride.cleanDispatcher.replace(/\D/g, '').startsWith('0') ? '972' + ride.cleanDispatcher.replace(/\D/g, '').slice(1) : ride.cleanDispatcher.replace(/\D/g, '')}?text=${encodeURIComponent(
-                          `שלום, לגבי הנסיעה שפרסמת בקבוצה: ${ride.cleanedText || ride.rawText}`
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-2.5 rounded-xl bg-[#141d29] hover:bg-[#1b2737] border border-[#233348] text-teal-300 hover:text-white transition-colors cursor-pointer shrink-0"
-                        title="פנה לסדרן בוואטסאפ אישי"
-                      >
-                        <Phone className="w-4 h-4 text-teal-400" />
-                      </a>
-                    )}
+                    {/* WhatsApp Action Button ("הצג בוואטסאפ") - במקום כפתור השיחה הישן */}
+                    <a
+                      href={
+                        ride.drivebotUrl ||
+                        (ride.cleanDispatcher
+                          ? `https://wa.me/${ride.cleanDispatcher.replace(/\D/g, '').startsWith('0') ? '972' + ride.cleanDispatcher.replace(/\D/g, '').slice(1) : ride.cleanDispatcher.replace(/\D/g, '')}?text=${encodeURIComponent(
+                              `שלום, לגבי הנסיעה שפרסמת בקבוצה:\n${ride.cleanedText || ride.rawText}`
+                            )}`
+                          : ride.senderPhone
+                          ? `https://wa.me/${ride.senderPhone.replace(/\D/g, '').startsWith('0') ? '972' + ride.senderPhone.replace(/\D/g, '').slice(1) : ride.senderPhone.replace(/\D/g, '')}?text=${encodeURIComponent(
+                              `שלום, לגבי הנסיעה שפרסמת בקבוצה:\n${ride.cleanedText || ride.rawText}`
+                            )}`
+                          : '#')
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2.5 rounded-xl bg-[#25D366]/15 hover:bg-[#25D366]/25 border border-[#25D366]/40 text-[#25D366] hover:text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 shadow-sm"
+                      title={ride.isDriveBot ? 'פתח קישור ישיר לבוט דרייבוט בוואטסאפ' : 'פתח צ\'אט בוואטסאפ עם הסדרן'}
+                    >
+                      <MessageCircle className="w-4 h-4 text-[#25D366]" />
+                      <span>הצג בוואטסאפ</span>
+                    </a>
 
-                    {/* GIANT CLAIM RIDE BUTTON ("תפוס נסיעה - תן") */}
+                    {/* GIANT CLAIM RIDE BUTTON ("תפוס נסיעה - תן" או "תפוס בדרייבוט") */}
                     <button
                       onClick={() => handleClaimRide(ride)}
                       disabled={isClaiming || isClaimedSuccess}
                       className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 shadow-md ${
                         isClaimedSuccess
                           ? 'bg-emerald-500 text-slate-950 font-black'
+                          : ride.isDriveBot
+                          ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 font-black ring-2 ring-amber-400/50 shadow-amber-400/20'
                           : prox?.isClose
                           ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black shadow-emerald-500/30 ring-1 ring-emerald-300'
                           : 'bg-teal-500 hover:bg-teal-400 text-slate-950 font-black'
                       }`}
+                      title={ride.isDriveBot ? 'תפיסה דרך בוט דרייבוט בלבד - לא שולח הודעה לקבוצה!' : 'שולח הודעת "תן" בקבוצה'}
                     >
                       {isClaimedSuccess ? (
                         <>
                           <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                          <span>נתפס בהצלחה! ("תן")</span>
+                          <span>נתפס בהצלחה!</span>
                         </>
                       ) : isClaiming ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                          <span>שולח "תן"...</span>
+                          <span>{ride.isDriveBot ? 'שולח לדרייבוט...' : 'שולח "תן"...'}</span>
+                        </>
+                      ) : ride.isDriveBot ? (
+                        <>
+                          <Sparkles className="w-4 h-4 text-slate-950 fill-slate-950" />
+                          <span>תפוס בדרייבוט ("תן")</span>
                         </>
                       ) : (
                         <>
@@ -874,6 +1013,91 @@ export function DriverRadarModal({
           </div>
         )}
       </main>
+
+      {/* ========================================================= */}
+      {/* 4. MODAL POP-UP FOR FULL RAW WHATSAPP MESSAGE WITH ACTIVE LINKS */}
+      {/* ========================================================= */}
+      {selectedRideForDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-lg rounded-2xl bg-[#0b1018] border border-[#233348] shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+            {/* Header */}
+            <div className="p-4 border-b border-[#1b2636] flex items-center justify-between bg-[#0e141f]">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-teal-500/15 border border-teal-500/30 text-teal-300">
+                  <Radio className="w-4 h-4 text-teal-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">הודעה מלאה מקבוצת הוואטסאפ</h3>
+                  <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                    <span>{selectedRideForDetails.groupName}</span>
+                    <span>•</span>
+                    <span className="text-teal-300 font-mono font-bold flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-teal-400" />
+                      {selectedRideForDetails.timeFormatted || 'בזמן אמת'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedRideForDetails(null)}
+                className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body with Live Links */}
+            <div className="p-4 overflow-y-auto flex-1 font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap select-text bg-[#070b10] border-y border-[#182333]">
+              {renderClickableText(selectedRideForDetails.rawText || selectedRideForDetails.cleanedText || '')}
+            </div>
+
+            {/* Footer with actions */}
+            <div className="p-3.5 bg-[#0d131c] flex items-center justify-between gap-2 flex-wrap">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(selectedRideForDetails.rawText || selectedRideForDetails.cleanedText || '');
+                  showToast('📋 נוסח ההודעה המלא הועתק בהצלחה ללוח!');
+                }}
+                className="px-3 py-2 rounded-xl bg-[#162130] hover:bg-[#1f2e42] border border-[#233348] text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5 text-slate-300" />
+                <span>העתק טקסט מלא</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                {selectedRideForDetails.drivebotUrl ? (
+                  <a
+                    href={selectedRideForDetails.drivebotUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <MessageCircle className="w-4 h-4 text-slate-950" />
+                    <span>פתח בוט דרייבוט בוואטסאפ</span>
+                  </a>
+                ) : selectedRideForDetails.cleanDispatcher ? (
+                  <a
+                    href={`https://wa.me/${selectedRideForDetails.cleanDispatcher.replace(/\D/g, '').startsWith('0') ? '972' + selectedRideForDetails.cleanDispatcher.replace(/\D/g, '').slice(1) : selectedRideForDetails.cleanDispatcher.replace(/\D/g, '')}?text=${encodeURIComponent(`שלום, לגבי הנסיעה שפרסמת בקבוצה:\n${selectedRideForDetails.cleanedText || selectedRideForDetails.rawText}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <MessageCircle className="w-4 h-4 text-slate-950" />
+                    <span>פתח שיחה עם הסדרן בוואטסאפ</span>
+                  </a>
+                ) : null}
+
+                <button
+                  onClick={() => setSelectedRideForDetails(null)}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  סגור
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

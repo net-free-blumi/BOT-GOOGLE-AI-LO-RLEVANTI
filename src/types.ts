@@ -181,6 +181,7 @@ export interface LiveRideItem {
   groupName: string;
   senderName: string;
   senderPhone: string;
+  cleanDispatcher?: string;
   timestamp: number;
   timeFormatted: string;
   isInternal: boolean;
@@ -188,6 +189,11 @@ export interface LiveRideItem {
   distanceKm?: number | null;
   driveTimeMinutes?: number | null;
   wazeUrl?: string;
+  whatsappUrl?: string;
+  isDriveBot?: boolean;
+  drivebotUrl?: string | null;
+  drivebotCommand?: string | null;
+  drivebotPhone?: string | null;
   claimed?: boolean;
   claimedAt?: number;
 }
