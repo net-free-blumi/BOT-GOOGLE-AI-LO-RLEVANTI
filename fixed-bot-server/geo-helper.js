@@ -119,11 +119,28 @@ export const STREET_TO_ZONE_MAP = {
   'סלונים': 'הקריה החרדית',
   'שפת אמת': 'הקריה החרדית',
 
-  // מרכזים
+  // אזורי מסחר, מוקדים וסופרמרקטים
+  'אושר עד': 'מרכז ביג',
+  'אושרעד': 'מרכז ביג',
+  'מתחם אושר עד': 'מרכז ביג',
+  'שערי העיר': 'מרכז ביג',
+  'מרכז נעימי': 'קניון נעימי',
+  'קניון נעימי': 'קניון נעימי',
+  'מתחם נעימי': 'קניון נעימי',
+  'נעימי': 'קניון נעימי',
+  'הנעימי': 'קניון נעימי',
+  'סאן מול': 'קניון נעימי',
   'ביג': 'מרכז ביג',
   'שער העיר': 'מרכז ביג',
-  'נעימי': 'קניון נעימי',
-  'סאן מול': 'קניון נעימי',
+  'יש חסד': 'רמה א',
+  'יש חסד נחלים': 'רמה א',
+  'יש חסד ד': 'רמה ד',
+  'יש חסד ג': 'רמה ג',
+  'יש חסד קריה': 'הקריה החרדית',
+  'שדרות האמוראים': 'רמה ד',
+  'שד האמוראים': 'רמה ד',
+  'האמוראים': 'רמה ד',
+  'אמוראים': 'רמה ד',
   'הר טוב': 'הר טוב',
   'איזור תעשיה': 'הר טוב',
   'יער צרעה': 'הר טוב',
@@ -364,13 +381,29 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
     text.includes('בתוך העיר') ||
     text.includes('פנימי שמש');
 
-  const defaultOrigin = BEIT_SHEMESH_ZONES['רמה ד'];
+  // 4. זיהוי עיר
+  let isBneiBrak = /(?:^|\s)(?:בני\s*ברק|ב"ב|בב|ז'בוטינסקי|זבוטינסקי|סופרים|דסלר|רשב"ם|אהרונוביץ)(?:\s|$|[0-9ש₪])/i.test(text) ||
+                   (text.includes('בב') && (text.includes('רע') || text.includes('סופרים')));
+  let isJerusalem = /(?:^|\s)(?:ירושלים|י-ם|י\s*ם|גאולה|שמגר|ירמיהו|רמות|בית\s*וגן|רוממה|הר\s*נוף|מלכי\s*ישראל|מאה\s*שערים)(?:\s|$|[0-9ש₪])/i.test(text);
+
+  let defaultOrigin = BEIT_SHEMESH_ZONES['רמה ד'];
+  let defaultOriginName = "בית שמש (מרכז)";
+  let defaultOriginCoords = { lat: 31.7456, lng: 34.9854 };
+
+  if (isBneiBrak) {
+    defaultOriginName = "בני ברק";
+    defaultOriginCoords = { lat: 32.0845, lng: 34.8341 };
+  } else if (isJerusalem) {
+    defaultOriginName = "ירושלים";
+    defaultOriginCoords = { lat: 31.7850, lng: 35.2100 };
+  }
+
   let originText = '';
-  let originNeighborhood = defaultOrigin.name;
-  let originCoords = { lat: defaultOrigin.lat, lng: defaultOrigin.lng };
+  let originNeighborhood = defaultOriginName;
+  let originCoords = defaultOriginCoords;
 
   let destinationText = '';
-  let destNeighborhood = 'יעד בעיר';
+  let destNeighborhood = isBneiBrak ? 'בני ברק' : isJerusalem ? 'ירושלים' : 'יעד בעיר';
   let destCoords = null;
 
   let originCandidate = '';
@@ -383,7 +416,7 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
     destCandidate = arrowMatch[2].trim();
   } else {
     // 2. בדיקת קיצור נפוץ במוניות: מב לד, מא לג, מג לד
-    const shortRouteMatch = text.match(/(?:^|\s)מ([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|הר\s*טוב)\s+ל([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|הר\s*טוב)(?:\s|$|[0-9ש₪])/i);
+    const shortRouteMatch = text.match(/(?:^|\s)מ([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|אושר\s*עד|הר\s*טוב)\s+ל([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|אושר\s*עד|הר\s*טוב)(?:\s|$|[0-9ש₪])/i);
     if (shortRouteMatch) {
       originCandidate = shortRouteMatch[1].trim();
       destCandidate = shortRouteMatch[2].trim();
@@ -395,7 +428,7 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
         destCandidate = generalMlMatch[2].trim();
       } else {
         // 4. בדיקת " ל "
-        const lMatch = text.match(/(.*?)\s+ל(רמה\s+[א-ה]|רמ[א-ה]|[א-ה]\b|ביג|קריה|חפציבה|ישנה|וותיקה|הר טוב|נעימי|[א-ת]+ הנביא|[א-ת]+ הנביאה|נחל [א-ת]+|נהר [א-ת]+)(.*)/i);
+        const lMatch = text.match(/(.*?)\s+ל(רמה\s+[א-ה]|רמ[א-ה]|[א-ה]\b|ביג|קריה|חפציבה|ישנה|וותיקה|הר טוב|נעימי|אושר\s*עד|סופרים|[א-ת]+ הנביא|[א-ת]+ הנביאה|נחל [א-ת]+|נהר [א-ת]+)(.*)/i);
         if (lMatch) {
           originCandidate = lMatch[1].trim();
           destCandidate = (lMatch[2] + (lMatch[3] || '')).trim();
@@ -412,6 +445,8 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
       originText = found.matchedStreet || originCandidate.replace(/[*\-_#]/g, '').trim();
     } else {
       originText = originCandidate.replace(/[*\-_#]/g, '').trim();
+      if (isBneiBrak) originNeighborhood = `בני ברק (${originText})`;
+      else if (isJerusalem) originNeighborhood = `ירושלים (${originText})`;
     }
   }
 
@@ -423,6 +458,8 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
       destinationText = found.matchedStreet || destCandidate.replace(/[*\-_#]/g, '').trim();
     } else {
       destinationText = destCandidate.replace(/[*\-_#]/g, '').trim();
+      if (isBneiBrak) destNeighborhood = `בני ברק (${destinationText})`;
+      else if (isJerusalem) destNeighborhood = `ירושלים (${destinationText})`;
     }
   }
 
@@ -434,8 +471,8 @@ export function parseRideRoute(rawText, rawSenderPhone = null) {
       originText = detectedAll.matchedStreet || detectedAll.zoneName;
       destinationText = 'יעד בעיר';
     } else {
-      originText = 'נקודת איסוף (בית שמש)';
-      destinationText = 'יעד נסיעה';
+      originText = isBneiBrak ? 'איסוף בבני ברק' : isJerusalem ? 'איסוף בירושלים' : 'נקודת איסוף בעיר';
+      destinationText = isBneiBrak ? 'יעד בבני ברק' : isJerusalem ? 'יעד בירושלים' : 'יעד נסיעה';
     }
   } else if (!originText) {
     originText = originNeighborhood;

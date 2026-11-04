@@ -50,6 +50,11 @@ function resolveEndpoint(path: string): string {
     return cleanPath;
   }
   const base = cfg.baseUrl.replace(/\/+$/, '');
+  // תמיכה מלאה ב-Vercel וב-Netlify: אם האתר רץ ב-HTTPS וכתובת השרת היא http:// (למשל IP ישיר),
+  // הדפדפן יחסום את הבקשה ב-Mixed Content. לכן נפנה אוטומטית דרך הפרוקסי היחסי של השרת
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && base.startsWith('http://')) {
+    return cleanPath;
+  }
   return `${base}${cleanPath}`;
 }
 

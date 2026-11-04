@@ -183,6 +183,7 @@ export interface LiveRideItem {
   senderPhone: string;
   cleanDispatcher?: string;
   timestamp: number;
+  createdAt?: number;
   timeFormatted: string;
   isInternal: boolean;
   coords?: { lat: number; lng: number } | null;

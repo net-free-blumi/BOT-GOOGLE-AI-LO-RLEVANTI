@@ -17,10 +17,25 @@ export const BEIT_SHEMESH_ZONES: Record<string, GeoPoint> = {
   'רמה ה': { lat: 31.7224, lng: 35.0081, name: "נווה שמיר (רמה ה')", city: 'בית שמש', zone: 'דרום-מזרח' },
   'רמת אברהם': { lat: 31.7382, lng: 34.9751, name: 'רמת אברהם', city: 'בית שמש', zone: 'מערב' },
   'הקריה החרדית': { lat: 31.7456, lng: 34.9785, name: 'הקריה / חפציבה', city: 'בית שמש', zone: 'מרכז-מערב' },
-  'העיר הוותיקה': { lat: 31.7554, lng: 34.9951, name: 'העיר הוותיקה (הישנה)', city: 'בית שמש', zone: 'צפון' },
-  'מרכז ביג': { lat: 31.7588, lng: 34.9802, name: 'מרכז ביג / שער העיר', city: 'בית שמש', zone: 'צפון-מערב' },
-  'קניון נעימי': { lat: 31.7521, lng: 34.9856, name: 'קניון נעימי / סאן מול', city: 'בית שמש', zone: 'צפון' },
-  'הר טוב': { lat: 31.7654, lng: 34.9988, name: 'אזור תעשייה הר טוב', city: 'בית שמש', zone: 'צפון-מזרח' },
+  'העיר הוותיקה': { lat: 31.7554, lng: 34.9951, name: 'העיר הוותיקה (הישנה / סמוך לנעימי)', city: 'בית שמש', zone: 'צפון' },
+  'מרכז ביג': { lat: 31.7588, lng: 34.9802, name: 'מרכז ביג / שער העיר / אושר עד', city: 'בית שמש', zone: 'צפון-מערב' },
+  'קניון נעימי': { lat: 31.7521, lng: 34.9856, name: 'קניון נעימי / אושר עד / סאן מול', city: 'בית שמש', zone: 'צפון' },
+  'הר טוב': { lat: 31.7654, lng: 34.9988, name: 'אזור תעשייה הר טוב / צרעה', city: 'בית שמש', zone: 'צפון-מזרח' },
+};
+
+// ערים מרכזיות בישראל לזיהוי נסיעות בכל הארץ
+export const MAJOR_CITIES_ZONES: Record<string, GeoPoint> = {
+  'בני ברק': { lat: 32.0845, lng: 34.8341, name: 'בני ברק', city: 'בני ברק' },
+  'ירושלים': { lat: 31.7850, lng: 35.2100, name: 'ירושלים', city: 'ירושלים' },
+  'מודיעין עילית': { lat: 31.9317, lng: 35.0417, name: 'מודיעין עילית (קרית ספר)', city: 'מודיעין עילית' },
+  'אשדוד': { lat: 31.7950, lng: 34.6450, name: 'אשדוד', city: 'אשדוד' },
+  'אלעד': { lat: 32.0519, lng: 34.9511, name: 'אלעד', city: 'אלעד' },
+  'צפת': { lat: 32.9658, lng: 35.4963, name: 'צפת', city: 'צפת' },
+  'מירון': { lat: 32.9822, lng: 35.4397, name: 'מירון', city: 'מירון' },
+  'טבריה': { lat: 32.7922, lng: 35.5312, name: 'טבריה', city: 'טבריה' },
+  'תל אביב': { lat: 32.0853, lng: 34.7818, name: 'תל אביב', city: 'תל אביב' },
+  'פתח תקווה': { lat: 32.0840, lng: 34.8878, name: 'פתח תקווה', city: 'פתח תקווה' },
+  'נתניה': { lat: 32.3215, lng: 34.8532, name: 'נתניה', city: 'נתניה' },
 };
 
 // מיפוי רחובות ומוקדים ידועים לשכונות בבית שמש
@@ -67,6 +82,7 @@ const STREET_TO_ZONE_MAP: Record<string, string> = {
   'שדרות האמוראים': 'רמה ד',
   'שד האמוראים': 'רמה ד',
   'האמוראים': 'רמה ד',
+  'אמוראים': 'רמה ד',
   'רב חנן': 'רמה ד',
   'אביי': 'רמה ד',
   'רבא': 'רמה ד',
@@ -153,20 +169,33 @@ const STREET_TO_ZONE_MAP: Record<string, string> = {
   'וותיקה': 'העיר הוותיקה',
   'הוותיקה': 'העיר הוותיקה',
   'הישנה': 'העיר הוותיקה',
+  'ישנה': 'העיר הוותיקה',
   'ברכיה': 'העיר הוותיקה',
   'ברכיהו': 'העיר הוותיקה',
   'עליית הנוער': 'העיר הוותיקה',
   'עלית הנוער': 'העיר הוותיקה',
   'המכללה לשוטרים': 'העיר הוותיקה',
 
-  // אזורי מסחר ותעשייה
+  // אזורי מסחר, מוקדים וסופרמרקטים
+  'אושר עד': 'מרכז ביג',
+  'אושרעד': 'מרכז ביג',
+  'מתחם אושר עד': 'מרכז ביג',
+  'שערי העיר': 'מרכז ביג',
+  'מרכז נעימי': 'קניון נעימי',
+  'קניון נעימי': 'קניון נעימי',
+  'מתחם נעימי': 'קניון נעימי',
+  'נעימי': 'קניון נעימי',
+  'הנעימי': 'קניון נעימי',
+  'סאן מול': 'קניון נעימי',
   'ביג': 'מרכז ביג',
   'הביג': 'מרכז ביג',
   'מרכז ביג': 'מרכז ביג',
   'שער העיר': 'מרכז ביג',
-  'נעימי': 'קניון נעימי',
-  'הנעימי': 'קניון נעימי',
-  'סאן מול': 'קניון נעימי',
+  'יש חסד': 'רמה א',
+  'יש חסד נחלים': 'רמה א',
+  'יש חסד ד': 'רמה ד',
+  'יש חסד ג': 'רמה ג',
+  'יש חסד קריה': 'הקריה החרדית',
   'הר טוב': 'הר טוב',
   'הרטוב': 'הר טוב',
   'אזהת הרטוב': 'הר טוב',
@@ -227,7 +256,7 @@ export const ZONE_ALIAS_MAP: Record<string, string> = {
   'מה': 'רמה ה',
   'לה': 'רמה ה',
 
-  // שכונות נוספות
+  // שכונות ומוקדים נוספים
   'קריה': 'הקריה החרדית',
   'הקריה': 'הקריה החרדית',
   'חפציבה': 'הקריה החרדית',
@@ -235,9 +264,12 @@ export const ZONE_ALIAS_MAP: Record<string, string> = {
   'וותיקה': 'העיר הוותיקה',
   'הישנה': 'העיר הוותיקה',
   'הוותיקה': 'העיר הוותיקה',
+  'אושר עד': 'מרכז ביג',
+  'אושרעד': 'מרכז ביג',
+  'נעימי': 'קניון נעימי',
+  'הנעימי': 'קניון נעימי',
   'ביג': 'מרכז ביג',
   'שער העיר': 'מרכז ביג',
-  'נעימי': 'קניון נעימי',
   'סאן מול': 'קניון נעימי',
   'הר טוב': 'הר טוב',
   'הרטוב': 'הר טוב',
@@ -397,6 +429,7 @@ export interface ParsedRideRoute {
   destinationText: string;
   destNeighborhood: string;
   destCoords: { lat: number; lng: number } | null;
+  city: string;
   isInternal: boolean;
   price: number | null;
   dispatcherPhone: string | null;
@@ -407,7 +440,100 @@ export interface ParsedRideRoute {
   rawText: string;
 }
 
-// אלגוריתם לפענוח נתיב הנסיעה (איסוף מול יעד - חוק "מב לד" / "רמה א > רמה ד")
+// זיהוי עיר ראשית מתוך הטקסט של הנסיעה
+export function detectCityFromText(text: string): { city: string; point: GeoPoint; isExternal: boolean } {
+  const clean = text.toLowerCase();
+
+  // בני ברק
+  if (
+    /(?:^|\s)(?:בני\s*ברק|ב"ב|בב|ז'בוטינסקי|זבוטינסקי|סופרים|דסלר|רשב"ם|אהרונוביץ)(?:\s|$|[0-9ש₪])/i.test(clean) ||
+    (clean.includes('בב') && (clean.includes('רע') || clean.includes('סופרים')))
+  ) {
+    return { city: 'בני ברק', point: MAJOR_CITIES_ZONES['בני ברק'], isExternal: true };
+  }
+
+  // ירושלים
+  if (
+    /(?:^|\s)(?:ירושלים|י-ם|י\s*ם|גאולה|שמגר|ירמיהו|רמות|בית\s*וגן|רוממה|הר\s*נוף|מלכי\s*ישראל|מאה\s*שערים)(?:\s|$|[0-9ש₪])/i.test(clean)
+  ) {
+    return { city: 'ירושלים', point: MAJOR_CITIES_ZONES['ירושלים'], isExternal: true };
+  }
+
+  // מודיעין עילית
+  if (/(?:^|\s)(?:מודיעין\s*עילית|קרית\s*ספר|ברכפלד|נאות\s*הפסגה|גרין\s*פארק)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'מודיעין עילית', point: MAJOR_CITIES_ZONES['מודיעין עילית'], isExternal: true };
+  }
+
+  // אשדוד
+  if (/(?:^|\s)(?:אשדוד|רובע\s*[א-י]|רובע\s*ז|רובע\s*ג)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'אשדוד', point: MAJOR_CITIES_ZONES['אשדוד'], isExternal: true };
+  }
+
+  // אלעד
+  if (/(?:^|\s)(?:אלעד|בן\s*זכאי|שמעיה|אבטליון)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'אלעד', point: MAJOR_CITIES_ZONES['אלעד'], isExternal: true };
+  }
+
+  // מירון
+  if (/(?:^|\s)(?:מירון|קבר\s*רשב"?י|מושב\s*מירון)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'מירון', point: MAJOR_CITIES_ZONES['מירון'], isExternal: true };
+  }
+
+  // צפת
+  if (/(?:^|\s)(?:צפת|העתיקה\s*צפת)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'צפת', point: MAJOR_CITIES_ZONES['צפת'], isExternal: true };
+  }
+
+  // טבריה
+  if (/(?:^|\s)(?:טבריה)(?:\s|$|[0-9ש₪])/i.test(clean)) {
+    return { city: 'טבריה', point: MAJOR_CITIES_ZONES['טבריה'], isExternal: true };
+  }
+
+  // ברירת מחדל בית שמש
+  return { city: 'בית שמש', point: BEIT_SHEMESH_ZONES['רמה ד'], isExternal: false };
+}
+
+// יצירת קישור וואטסאפ אמין ויציב שפועל 100% בכל מכשיר (מחשב/סלולר)
+export function getCleanWhatsAppLink(ride: {
+  cleanDispatcher?: string;
+  senderPhone?: string;
+  rawText?: string;
+  cleanedText?: string;
+  drivebotUrl?: string | null;
+}): string {
+  if (ride.drivebotUrl) {
+    if (!ride.drivebotUrl.startsWith('http://') && !ride.drivebotUrl.startsWith('https://')) {
+      return `https://${ride.drivebotUrl}`;
+    }
+    return ride.drivebotUrl;
+  }
+
+  const text = ride.cleanedText || ride.rawText || '';
+  const cand = [ride.cleanDispatcher, ride.senderPhone, extractDispatcherPhone(text)];
+  let phoneDigits = '';
+  for (const c of cand) {
+    if (!c) continue;
+    const d = String(c).replace(/@.*$/, '').replace(/\D/g, '');
+    if (d.length >= 7 && d !== '0') {
+      phoneDigits = d;
+      break;
+    }
+  }
+
+  if (phoneDigits) {
+    const intl = phoneDigits.startsWith('0')
+      ? '972' + phoneDigits.slice(1)
+      : phoneDigits.startsWith('972')
+      ? phoneDigits
+      : '972' + phoneDigits;
+    const msg = `שלום, לגבי הנסיעה שפרסמת בקבוצה:\n${text}`;
+    return `https://wa.me/${intl}?text=${encodeURIComponent(msg)}`;
+  }
+
+  return 'https://web.whatsapp.com';
+}
+
+// אלגוריתם לפענוח נתיב הנסיעה (איסוף מול יעד - מותאם לכל עיר בישראל)
 export function parseRideRoute(rawText: string, rawSenderPhone?: string): ParsedRideRoute {
   const text = String(rawText || '').trim();
 
@@ -428,21 +554,28 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
   // 3. זיהוי דרייבוט
   const driveBotInfo = extractDriveBotInfo(text);
 
-  // 4. האם נסיעה פנימית
+  // 4. זיהוי עיר
+  const cityInfo = detectCityFromText(text);
+  const city = cityInfo.city;
+
+  // 5. האם נסיעה פנימית
   const isInternal =
     text.includes('פנימי') ||
     text.includes('שמש פנימי') ||
     text.includes('בתוך העיר') ||
-    text.includes('פנימי שמש');
+    text.includes('פנימי שמש') ||
+    (cityInfo.isExternal && text.includes('פנימי'));
 
-  // ברירת מחדל לאיסוף - רמה ד' או ג'
-  const defaultOrigin = BEIT_SHEMESH_ZONES['רמה ד'];
+  // ברירת מחדל לאיסוף - תלוי עיר (לא הכל רמה ד'!)
+  let defaultOriginCoords = { lat: cityInfo.point.lat, lng: cityInfo.point.lng };
+  let defaultOriginName = cityInfo.isExternal ? cityInfo.city : "בית שמש (מרכז)";
+
   let originText = '';
-  let originNeighborhood = defaultOrigin.name;
-  let originCoords = { lat: defaultOrigin.lat, lng: defaultOrigin.lng };
+  let originNeighborhood = defaultOriginName;
+  let originCoords = defaultOriginCoords;
 
   let destinationText = '';
-  let destNeighborhood = 'יעד בעיר';
+  let destNeighborhood = cityInfo.isExternal ? cityInfo.city : 'יעד בעיר';
   let destCoords: { lat: number; lng: number } | null = null;
 
   let originCandidate = '';
@@ -455,7 +588,7 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
     destCandidate = arrowMatch[2].trim();
   } else {
     // 2. בדיקת קיצור נפוץ במוניות: מב לד, מא לג, מג לד
-    const shortRouteMatch = text.match(/(?:^|\s)מ([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|הר\s*טוב)\s+ל([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|הר\s*טוב)(?:\s|$|[0-9ש₪])/i);
+    const shortRouteMatch = text.match(/(?:^|\s)מ([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|אושר\s*עד|הר\s*טוב)\s+ל([א-ה]|רמ[א-ה]|רמה\s+[א-ה]|קריה|חפציבה|ישנה|ביג|נעימי|אושר\s*עד|הר\s*טוב)(?:\s|$|[0-9ש₪])/i);
     if (shortRouteMatch) {
       originCandidate = shortRouteMatch[1].trim();
       destCandidate = shortRouteMatch[2].trim();
@@ -466,8 +599,8 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
         originCandidate = generalMlMatch[1].trim();
         destCandidate = generalMlMatch[2].trim();
       } else {
-        // 4. בדיקת " ל " (למשל: "רמה ג לרמה ד חולדה הנביאה", "זכריה הנביא לד", "נחל משמר לביג")
-        const lMatch = text.match(/(.*?)\s+ל(רמה\s+[א-ה]|רמ[א-ה]|[א-ה]\b|ביג|קריה|חפציבה|ישנה|וותיקה|הר טוב|נעימי|[א-ת]+ הנביא|[א-ת]+ הנביאה|נחל [א-ת]+|נהר [א-ת]+)(.*)/i);
+        // 4. בדיקת " ל " (למשל: "רמה ג לרמה ד חולדה הנביאה", "זכריה הנביא לד", "נחל משמר לביג", "ז'בוטינסקי רע לסופרים")
+        const lMatch = text.match(/(.*?)\s+ל(רמה\s+[א-ה]|רמ[א-ה]|[א-ה]\b|ביג|קריה|חפציבה|ישנה|וותיקה|הר טוב|נעימי|אושר\s*עד|סופרים|[א-ת]+ הנביא|[א-ת]+ הנביאה|נחל [א-ת]+|נהר [א-ת]+)(.*)/i);
         if (lMatch) {
           originCandidate = lMatch[1].trim();
           destCandidate = (lMatch[2] + (lMatch[3] || '')).trim();
@@ -476,7 +609,7 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
     }
   }
 
-  // זיהוי האיסוף (Origin) מתוך החלק הראשון
+  // זיהוי האיסוף (Origin)
   if (originCandidate) {
     const originFound = detectNeighborhood(originCandidate);
     if (originFound) {
@@ -485,10 +618,13 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
       originText = originFound.street || originCandidate.replace(/[*\-_#]/g, '').trim();
     } else {
       originText = originCandidate.replace(/[*\-_#]/g, '').trim();
+      if (cityInfo.isExternal) {
+        originNeighborhood = `${cityInfo.city} (${originText})`;
+      }
     }
   }
 
-  // זיהוי היעד (Destination) מתוך החלק השני
+  // זיהוי היעד (Destination)
   if (destCandidate) {
     const destFound = detectNeighborhood(destCandidate);
     if (destFound) {
@@ -497,6 +633,9 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
       destinationText = destFound.street || destCandidate.replace(/[*\-_#]/g, '').trim();
     } else {
       destinationText = destCandidate.replace(/[*\-_#]/g, '').trim();
+      if (cityInfo.isExternal) {
+        destNeighborhood = `${cityInfo.city} (${destinationText})`;
+      }
     }
   }
 
@@ -509,14 +648,18 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
       originText = detectedAll.street || detectedAll.name;
       destinationText = 'יעד בעיר';
     } else {
-      originText = 'נקודת איסוף (בית שמש)';
-      destinationText = 'יעד נסיעה';
+      originText = cityInfo.isExternal ? `איסוף ב${cityInfo.city}` : 'איסוף בעיר';
+      destinationText = cityInfo.isExternal ? `יעד ב${cityInfo.city}` : 'יעד בעיר';
     }
   } else if (!originText) {
     originText = originNeighborhood;
   } else if (!destinationText) {
     destinationText = destNeighborhood;
   }
+
+  // ניקוי ביטויי ספאם/מחיר משם המוקד
+  originText = originText.replace(/(?:פנימי|שמש|בינעירוני|\b\d{2,4}\s*(?:ש|שח|ש"ח|₪)?\b|זמן|מיידי|מידי)/gi, '').trim();
+  destinationText = destinationText.replace(/(?:פנימי|שמש|בינעירוני|\b\d{2,4}\s*(?:ש|שח|ש"ח|₪)?\b|זמן|מיידי|מידי)/gi, '').trim();
 
   return {
     originText: originText || originNeighborhood,
@@ -525,6 +668,7 @@ export function parseRideRoute(rawText: string, rawSenderPhone?: string): Parsed
     destinationText: destinationText || 'יעד בעיר',
     destNeighborhood,
     destCoords,
+    city,
     isInternal: isInternal || (originNeighborhood.includes('בית שמש') && destNeighborhood.includes('בית שמש')),
     price,
     dispatcherPhone,
@@ -577,7 +721,6 @@ export function generateWazeUrl(destinationName: string, city: string = 'בית 
   return `https://waze.com/ul?q=${query}&navigate=yes`;
 }
 
-// דירוג קרבה (קרוב מאוד, בינוני, רחוק)
 export function getProximityBadge(distanceKm: number): {
   label: string;
   colorClass: string;
@@ -586,9 +729,9 @@ export function getProximityBadge(distanceKm: number): {
 } {
   if (distanceKm <= 1.8) {
     return {
-      label: 'קרוב מאוד',
+      label: 'קרוב מאוד (מיידי)',
       colorClass: 'text-emerald-400',
-      badgeBg: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
+      badgeBg: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300',
       isClose: true,
     };
   }
@@ -597,6 +740,14 @@ export function getProximityBadge(distanceKm: number): {
       label: 'מרחק בינוני',
       colorClass: 'text-amber-400',
       badgeBg: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+      isClose: false,
+    };
+  }
+  if (distanceKm > 15) {
+    return {
+      label: 'עיר אחרת / בינעירוני',
+      colorClass: 'text-sky-400',
+      badgeBg: 'bg-sky-500/15 border-sky-500/40 text-sky-300',
       isClose: false,
     };
   }
