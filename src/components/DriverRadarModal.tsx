@@ -59,7 +59,7 @@ function renderClickableText(content: string) {
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-emerald-400 hover:text-emerald-300 underline font-bold break-all bg-emerald-500/15 px-1.5 py-0.5 rounded mx-0.5 inline-block"
+          className="text-emerald-300 hover:text-emerald-100 underline font-black break-all bg-emerald-500/25 px-2 py-0.5 rounded mx-1 inline-block shadow-sm"
           onClick={(e) => e.stopPropagation()}
         >
           {part}
@@ -251,51 +251,51 @@ export function DriverRadarModal({
     }
   };
 
-  // פונקציית עזר להצגת זמן יחסי מודגש וחי (שניות ודקות) ממתי הנסיעה שודרה
+  // פונקציית עזר להצגת זמן יחסי ענקקק וחי (שניות ודקות) ממתי הנסיעה שודרה
   const getRelativeTimeDisplay = (rideTimestamp: number | undefined, currentMs: number) => {
     if (!rideTimestamp) {
       return {
-        badgeText: 'עכשיו ממש! ⚡',
+        badgeText: '⚡ עכשיו ממש!',
         isFresh: true,
-        styleClass: 'bg-emerald-500/25 border-emerald-400 text-emerald-300 animate-pulse font-black',
+        styleClass: 'bg-emerald-500 text-slate-950 font-black border-2 border-emerald-300 animate-pulse shadow-[0_0_20px_rgba(52,211,153,0.7)]',
       };
     }
     const diffSec = Math.max(0, Math.floor((currentMs - rideTimestamp) / 1000));
     if (diffSec < 15) {
       return {
-        badgeText: 'עכשיו ממש! ⚡',
+        badgeText: '⚡ עכשיו ממש!',
         isFresh: true,
-        styleClass: 'bg-emerald-500/30 border-emerald-400 text-emerald-200 animate-pulse font-black',
+        styleClass: 'bg-emerald-500 text-slate-950 font-black border-2 border-emerald-200 animate-pulse shadow-[0_0_25px_rgba(52,211,153,0.8)]',
       };
     }
     if (diffSec < 60) {
       return {
-        badgeText: `לפני ${diffSec} שניות`,
+        badgeText: `⚡ לפני ${diffSec} שניות`,
         isFresh: true,
-        styleClass: 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-black',
+        styleClass: 'bg-emerald-500/30 border-2 border-emerald-400 text-emerald-200 font-black shadow-[0_0_15px_rgba(52,211,153,0.3)]',
       };
     }
     const diffMin = Math.floor(diffSec / 60);
     if (diffMin === 1) {
       const remainingSec = diffSec % 60;
       return {
-        badgeText: `לפני דקה ו-${remainingSec} שנ'`,
+        badgeText: `⏱️ לפני דקה ו-${remainingSec} שנ'`,
         isFresh: false,
-        styleClass: 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold',
+        styleClass: 'bg-amber-500/25 border-2 border-amber-400 text-amber-200 font-black',
       };
     }
     if (diffMin < 60) {
       return {
-        badgeText: `לפני ${diffMin} דקות`,
+        badgeText: `⏱️ לפני ${diffMin} דקות`,
         isFresh: false,
-        styleClass: 'bg-slate-800 border-slate-700 text-slate-300 font-bold',
+        styleClass: 'bg-slate-800/90 border-2 border-slate-700 text-slate-100 font-bold',
       };
     }
     const diffHours = Math.floor(diffMin / 60);
     return {
       badgeText: `לפני ${diffHours} שעות`,
       isFresh: false,
-      styleClass: 'bg-slate-900 border-slate-800 text-slate-400',
+      styleClass: 'bg-slate-900 border border-slate-800 text-slate-400',
     };
   };
 
@@ -869,126 +869,105 @@ export function DriverRadarModal({
                   }`}
                 >
                   {/* ========================================= */}
-                  {/* CARD HEADER: BADGES + EXACT TIME + RELATIVE TIME + PRICE */}
+                  {/* CARD HEADER: GIANT ELAPSED TIME + COMPACT PRICE */}
                   {/* ========================================= */}
-                  <div className="p-3 sm:p-4 pb-3 border-b border-[#182333] flex items-start justify-between gap-3 bg-[#0d131d]">
-                    <div className="space-y-1.5 min-w-0 flex-1">
-                      {/* Top status badges */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {/* Internal vs Intercity Tag */}
-                        <span
-                          className={`px-2.5 py-0.5 rounded-lg text-xs font-black uppercase tracking-wider ${
-                            ride.isInternal
-                              ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 shadow-sm'
-                              : 'bg-purple-500/20 border border-purple-500/40 text-purple-300 shadow-sm'
-                          }`}
-                        >
-                          {ride.isInternal ? '🚕 פנימי' : '🛣️ בינעירוני'}
-                        </span>
-
-                        {/* DriveBot Badge if applicable */}
-                        {ride.isDriveBot && (
-                          <span className="px-2 py-0.5 rounded-lg text-xs font-black bg-amber-400/20 border border-amber-400/50 text-amber-300 flex items-center gap-1 shadow-sm">
-                            ⚡ דרייבוט
-                          </span>
-                        )}
-
-                        {/* Group Name */}
-                        <span className="text-xs text-slate-300 font-bold truncate max-w-[150px]" title={ride.groupName}>
-                          👥 {ride.groupName}
+                  <div className="p-3 pb-2.5 border-b border-[#182333] bg-[#0c121c] space-y-2">
+                    {/* GIANT ELAPSED TIME BANNER - ענקקק וקריא מיידית ברכב */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 shadow-md ${relTime.styleClass}`}>
+                        <Clock className="w-5 h-5 text-current shrink-0 animate-pulse" />
+                        <span className="text-lg sm:text-xl md:text-2xl font-black tracking-tight leading-none">
+                          {relTime.badgeText}
                         </span>
                       </div>
 
-                      {/* Time Details: Exact Time & Prominent Relative Elapsed Time */}
-                      <div className="flex items-center gap-2 flex-wrap pt-0.5">
-                        {/* Exact WhatsApp Sent Time */}
-                        <span
-                          className="px-2.5 py-1 rounded-lg bg-[#060a10] border border-[#1e2c3d] text-teal-300 font-mono text-xs font-black flex items-center gap-1 shrink-0"
-                          title="שעת שידור הנסיעה המקורית בוואטסאפ"
-                        >
-                          <Clock className="w-3.5 h-3.5 text-teal-400" />
-                          <span>{ride.timeFormatted || 'בזמן אמת'}</span>
-                        </span>
-
-                        {/* Dynamic Live Elapsed Time (הגיע עכשיו ממש / לפני 25 שניות / לפני דקה) */}
-                        <span
-                          className={`px-2.5 py-1 rounded-lg border text-xs sm:text-sm flex items-center gap-1 shrink-0 shadow-sm ${relTime.styleClass}`}
-                          title="זמן שחלף מרגע קבלת הנסיעה"
-                        >
-                          <span>{relTime.badgeText}</span>
-                        </span>
-                      </div>
-
-                      {/* Dispatcher info */}
-                      {ride.cleanDispatcher ? (
-                        <div className="text-xs text-slate-400 flex items-center gap-1 font-mono">
-                          <span>👤 סדרן:</span>
-                          <strong className="text-teal-300 font-black">{ride.cleanDispatcher}</strong>
-                          {ride.senderName && ride.senderName !== 'סדרן' && (
-                            <span className="text-slate-400">({ride.senderName})</span>
-                          )}
+                      {/* Compact Smaller Price - מחיר קטן יותר כפי שביקשת */}
+                      {ride.price ? (
+                        <div className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 font-bold text-xs sm:text-sm shrink-0 flex items-center gap-1 shadow-sm">
+                          <span className="text-slate-400 text-[10px]">מחיר:</span>
+                          <span className="text-sm sm:text-base font-black text-emerald-300">₪{ride.price}</span>
                         </div>
-                      ) : (
-                        <div className="text-xs text-slate-400">
-                          <span>👤 שולח: {ride.senderName || 'סדרן בקבוצה'}</span>
-                        </div>
-                      )}
+                      ) : null}
                     </div>
 
-                    {/* Prominent Price Tag - Large and readable while driving */}
-                    {ride.price ? (
-                      <div className="px-3.5 py-1.5 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/60 text-emerald-300 font-black text-xl sm:text-2xl shrink-0 shadow-lg text-center">
-                        ₪ {ride.price}
-                      </div>
-                    ) : null}
+                    {/* Metadata Sub-bar: Exact timestamp + Group name + Dispatcher */}
+                    <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                      {/* Internal vs Intercity Tag */}
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider ${
+                          ride.isInternal
+                            ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
+                            : 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
+                        }`}
+                      >
+                        {ride.isInternal ? '🚕 פנימי' : '🛣️ בינעירוני'}
+                      </span>
+
+                      {/* DriveBot Badge if applicable */}
+                      {ride.isDriveBot && (
+                        <span className="px-1.5 py-0.5 rounded-md text-[11px] font-black bg-amber-400/20 border border-amber-400/40 text-amber-300">
+                          ⚡ דרייבוט
+                        </span>
+                      )}
+
+                      {/* Exact WhatsApp Sent Time */}
+                      <span className="px-2 py-0.5 rounded-md bg-[#06090f] border border-[#1b2738] text-teal-300 font-mono text-[11px] font-bold">
+                        שודר ב-{ride.timeFormatted || 'בזמן אמת'}
+                      </span>
+
+                      {/* Group Name */}
+                      <span className="text-[11px] text-slate-300 font-medium truncate max-w-[130px]" title={ride.groupName}>
+                        👥 {ride.groupName}
+                      </span>
+
+                      {/* Dispatcher info */}
+                      {ride.cleanDispatcher && (
+                        <span className="text-[11px] text-slate-400 font-mono truncate">
+                          👤 {ride.cleanDispatcher}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* ========================================= */}
-                  {/* CARD BODY: CLEAR ROUTE + DISTANCE TO PICKUP */}
+                  {/* CARD BODY: COMPACT ROUTE + DISTANCE + ENLARGED MESSAGE */}
                   {/* ========================================= */}
-                  <div className="p-3 sm:p-4 space-y-3">
-                    {/* Visual Route Box: איסוף ו-יעד בגדול וברור לנהג תוך כדי נסיעה */}
-                    <div className="rounded-2xl bg-[#06090e] border border-[#1b2738] p-3.5 space-y-3 shadow-inner">
-                      {/* ORIGIN (איסוף) - הובלט בגדול ביותר כדי שהנהג יקרא בקלות! */}
-                      <div className="flex items-start gap-3">
-                        <div className="w-4 h-4 rounded-full bg-emerald-400 ring-4 ring-emerald-500/30 shrink-0 mt-1" />
+                  <div className="p-3 space-y-2.5">
+                    {/* Visual Route Box: מוקטן מעט כדי לחסוך מקום במסך */}
+                    <div className="rounded-xl bg-[#06090e] border border-[#182333] p-2.5 space-y-1.5 shadow-inner">
+                      {/* ORIGIN (איסוף) */}
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-emerald-500/30 shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-emerald-400 font-black tracking-wide">
-                              איסוף (מאיפה נוסעים):
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/25 border border-emerald-500/50 text-emerald-300 text-xs font-black">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[11px] text-emerald-400 font-bold">איסוף מ:</span>
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
                               {ride.originNeighborhood}
                             </span>
                           </div>
-                          <div className="text-lg sm:text-2xl font-black text-white leading-tight tracking-tight mt-1 break-words">
+                          <div className="text-sm sm:text-base font-bold text-white leading-tight truncate mt-0.5">
                             {ride.originText || ride.originNeighborhood}
                           </div>
                         </div>
                       </div>
 
-                      {/* Line connector with direction arrow */}
-                      <div className="flex items-center gap-2 mr-1">
-                        <div className="border-r-2 border-dashed border-[#2b3d54] h-3.5 mr-1" />
-                        <span className="text-xs text-slate-400 font-black flex items-center gap-1">
-                          <ArrowDownRight className="w-3.5 h-3.5 text-slate-400" />
-                          <span>נוסע אל</span>
-                        </span>
+                      {/* Short connector */}
+                      <div className="flex items-center gap-1 mr-1 text-[10px] text-slate-400 font-medium">
+                        <ArrowDownRight className="w-3 h-3 text-slate-400" />
+                        <span>אל יעד:</span>
                       </div>
 
                       {/* DESTINATION (יעד) */}
-                      <div className="flex items-start gap-3">
-                        <div className="w-4 h-4 rounded-full bg-rose-400 ring-4 ring-rose-500/30 shrink-0 mt-1" />
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 rounded-full bg-rose-400 ring-2 ring-rose-500/30 shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-slate-400 font-bold">
-                              יעד נסיעה:
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-xs font-bold">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[11px] text-slate-400 font-medium">יעד:</span>
+                            <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 text-[10px]">
                               {ride.destNeighborhood}
                             </span>
                           </div>
-                          <div className="text-base sm:text-lg font-bold text-slate-100 leading-snug mt-0.5 break-words">
+                          <div className="text-xs sm:text-sm font-semibold text-slate-200 leading-tight truncate mt-0.5">
                             {ride.destinationText || ride.destNeighborhood || 'יעד בעיר'}
                           </div>
                         </div>
@@ -998,113 +977,110 @@ export function DriverRadarModal({
                     {/* LIVE DISTANCE TO PICKUP (מרחק מהנהג לאיסוף הלקוח) */}
                     {ride.distanceKm !== null && prox ? (
                       <div
-                        className={`p-3 rounded-xl border flex items-center justify-between gap-2 shadow-sm ${prox.badgeBg}`}
+                        className={`p-2 rounded-xl border flex items-center justify-between gap-2 shadow-sm ${prox.badgeBg}`}
                       >
-                        <div className="flex items-center gap-2.5">
-                          <Navigation className={`w-5 h-5 shrink-0 ${prox.colorClass}`} />
-                          <div>
-                            <span className="text-xs block opacity-90 font-medium">מרחק ממיקומך לאיסוף:</span>
-                            <span className="text-sm sm:text-base font-black tracking-tight">
-                              כ-{ride.distanceKm} ק"מ (כ-{ride.driveTimeMinutes} דק' נסיעה לאיסוף)
-                            </span>
-                          </div>
+                        <div className="flex items-center gap-2">
+                          <Navigation className={`w-4 h-4 shrink-0 ${prox.colorClass}`} />
+                          <span className="text-xs font-bold">
+                            כ-{ride.distanceKm} ק"מ (כ-{ride.driveTimeMinutes} דק' נסיעה לאיסוף)
+                          </span>
                         </div>
-                        <span className={`text-xs font-black px-2.5 py-1 rounded-full bg-black/50 ${prox.colorClass}`}>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/40 ${prox.colorClass}`}>
                           {prox.label}
                         </span>
                       </div>
                     ) : (
-                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 flex items-center gap-1.5">
-                        <Compass className="w-4 h-4 text-slate-400" />
-                        <span>מרחק משוער: מחושב לאיסוף ב-{ride.originNeighborhood}</span>
+                      <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex items-center gap-1.5">
+                        <Compass className="w-3.5 h-3.5 text-slate-400" />
+                        <span>איסוף משוער ב-{ride.originNeighborhood}</span>
                       </div>
                     )}
 
-                    {/* ORIGINAL RAW MESSAGE BOX (אותיות מודגשות וגדולות יותר + קבוצה ושעה + לחץ להגדלה) */}
+                    {/* ORIGINAL RAW MESSAGE BOX (מוגדל בהרבה, פונט מודגש וקריא + לחץ להגדלה נוספת) */}
                     <div
                       onClick={() => setSelectedRideForDetails(ride)}
-                      className="p-3 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border border-[#1c293a] hover:border-teal-500/50 cursor-pointer transition-all group shadow-sm"
-                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ עם קישורים לחיצים"
+                      className="p-3 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border-2 border-[#1c293a] hover:border-teal-500/60 cursor-pointer transition-all group shadow-sm"
+                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ בגופן ענק עם קישורים לחיצים"
                     >
-                      <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 pb-1 border-b border-[#141e2b]">
+                      <div className="flex items-center justify-between text-xs text-slate-400 mb-1 pb-1 border-b border-[#141e2b]">
                         <span className="font-sans font-black text-teal-400 group-hover:text-teal-300 flex items-center gap-1.5">
-                          📄 הודעה מקורית • {ride.groupName}
+                          📄 תוכן הודעה מקורית • {ride.groupName}
                         </span>
-                        <span className="text-xs text-teal-400 font-sans group-hover:underline flex items-center gap-1">
-                          פתח הודעה <ExternalLink className="w-3 h-3" />
+                        <span className="text-xs text-teal-400 font-sans group-hover:underline flex items-center gap-1 font-bold">
+                          פתח בגדול <ExternalLink className="w-3 h-3" />
                         </span>
                       </div>
-                      <div className="text-xs sm:text-sm font-bold font-mono text-slate-100 select-text leading-relaxed line-clamp-3">
+                      <div className="text-xs sm:text-sm md:text-base font-bold font-mono text-slate-50 select-text leading-relaxed line-clamp-3">
                         {ride.cleanedText || ride.rawText}
                       </div>
                     </div>
                   </div>
 
                   {/* ========================================= */}
-                  {/* CARD FOOTER ACTIONS: WAZE + הצג בוואטסאפ + תן */}
+                  {/* CARD FOOTER ACTIONS: WAZE + הצג בוואטסאפ + תן (כפתורים מוקטנים ונוחים) */}
                   {/* ========================================= */}
-                  <div className={`p-3 bg-[#080d14] border-t border-[#182333] flex items-center gap-2 ${
-                    isCockpitMode ? 'py-3' : 'py-2.5'
+                  <div className={`p-2 sm:p-2.5 bg-[#080d14] border-t border-[#182333] flex items-center gap-1.5 ${
+                    isCockpitMode ? 'py-2.5' : 'py-2'
                   }`}>
-                    {/* Waze Quick Navigation Button (Takes directly to PICKUP SPOT!) */}
+                    {/* Waze Quick Navigation Button */}
                     <a
                       href={ride.wazeUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3.5 py-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-300 hover:text-white font-black text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 shadow-sm"
+                      className="px-2.5 py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/50 text-blue-300 hover:text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm"
                       title="נווט ישירות לנקודת האיסוף ב-Waze"
                     >
-                      <Navigation className="w-4 h-4 text-blue-400" />
-                      <span>Waze לאיסוף</span>
+                      <Navigation className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Waze</span>
                     </a>
 
-                    {/* WhatsApp Action Button ("הצג בוואטסאפ") - פועל 100% ומפנה למספר הנכון */}
+                    {/* WhatsApp Action Button */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         const url = getCleanWhatsAppLink(ride);
                         window.open(url, '_blank', 'noopener,noreferrer');
                       }}
-                      className="px-3.5 py-2.5 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 shadow-md active:scale-95"
+                      className="px-2.5 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm active:scale-95"
                       title={ride.isDriveBot ? 'פתח קישור ישיר לבוט דרייבוט בוואטסאפ' : 'פתח צ\'אט בוואטסאפ עם הסדרן'}
                     >
-                      <MessageCircle className="w-4 h-4 text-slate-950 fill-slate-950" />
-                      <span>פתח בוואטסאפ</span>
+                      <MessageCircle className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
+                      <span>וואטסאפ</span>
                     </button>
 
-                    {/* GIANT CLAIM RIDE BUTTON ("תפוס נסיעה - תן" או "תפוס בדרייבוט") */}
+                    {/* CLAIM RIDE BUTTON ("תפוס נסיעה - תן" או "תפוס בדרייבוט") - מוקטן מעט כדי לא לחנוק את הכרטיס */}
                     <button
                       onClick={() => handleClaimRide(ride)}
                       disabled={isClaiming || isClaimedSuccess}
-                      className={`flex-1 py-3 px-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95 shadow-lg ${
+                      className={`flex-1 py-2 px-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md ${
                         isClaimedSuccess
                           ? 'bg-emerald-500 text-slate-950 font-black'
                           : ride.isDriveBot
-                          ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 font-black ring-2 ring-amber-400/50 shadow-amber-400/20'
+                          ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 font-black ring-2 ring-amber-400/50'
                           : prox?.isClose
-                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black shadow-emerald-500/30 ring-2 ring-emerald-300'
+                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black shadow-emerald-500/30 ring-1 ring-emerald-300'
                           : 'bg-teal-500 hover:bg-teal-400 text-slate-950 font-black'
                       }`}
                       title={ride.isDriveBot ? 'תפיסה דרך בוט דרייבוט בלבד - לא שולח הודעה לקבוצה!' : 'שולח הודעת "תן" בקבוצה'}
                     >
                       {isClaimedSuccess ? (
                         <>
-                          <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                          <span>נתפס בהצלחה!</span>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                          <span>נתפס!</span>
                         </>
                       ) : isClaiming ? (
                         <>
-                          <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                          <span>{ride.isDriveBot ? 'שולח לדרייבוט...' : 'שולח "תן"...'}</span>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
+                          <span>שולח...</span>
                         </>
                       ) : ride.isDriveBot ? (
                         <>
-                          <Sparkles className="w-4 h-4 text-slate-950 fill-slate-950" />
-                          <span>תפוס בדרייבוט ("תן")</span>
+                          <Sparkles className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
+                          <span>תפוס דרייבוט ("תן")</span>
                         </>
                       ) : (
                         <>
-                          <Car className="w-4 h-4 text-slate-950" />
+                          <Car className="w-3.5 h-3.5 text-slate-950" />
                           <span>תפוס נסיעה ("תן")</span>
                         </>
                       )}
@@ -1149,8 +1125,8 @@ export function DriverRadarModal({
               </button>
             </div>
 
-            {/* Body with Live Links */}
-            <div className="p-4 overflow-y-auto flex-1 font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap select-text bg-[#070b10] border-y border-[#182333]">
+            {/* Body with Live Links - גופן מוגדל ומודגש ביותר כפי שביקש הנהג */}
+            <div className="p-5 sm:p-6 overflow-y-auto flex-1 font-mono text-base sm:text-lg md:text-xl font-bold text-slate-50 leading-loose whitespace-pre-wrap select-text bg-[#05080d] border-y-2 border-[#1e2e42] tracking-wide">
               {renderClickableText(selectedRideForDetails.rawText || selectedRideForDetails.cleanedText || '')}
             </div>
 
