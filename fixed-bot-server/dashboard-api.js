@@ -496,6 +496,11 @@ export function startDashboard(runtime) {
     const cleanP = cleanPhone(phone);
     const cmd = String(req.body?.command || req.body?.text || "").trim();
 
+    if (cmd === "ת") {
+      const state = ctx?.getUserSearch ? ctx.getUserSearch(cleanP) : {};
+      return res.json({ ok: true, success: true, message: "האות 'ת' לבדה אינה פקודת תפוס", search: state });
+    }
+
     if (/(^| )(תפוס|עצור|סגור)( |$)/.test(cmd)) {
       const empty = ctx?.stopUserSearch ? ctx.stopUserSearch(cleanP) : {};
       recordEvent("command", `חיפוש הופסק (תפוס) עבור ${cleanP}`);

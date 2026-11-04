@@ -744,7 +744,7 @@ async function sendHelpMenu(sock, jid, driverPhone) {
   menuText += `• *פ שמש ים* (מבית שמש לירושלים)\n\n`;
   menuText += `⚡ *חיפוש מקבילי:* שליחת פקודת חיפוש נוספת תאפשר לך להוסיף אותה במקביל (למשל: גם שמש וגם ים בו-זמנית!)\n`;
   menuText += `🚕 *לתפיסת נסיעה מהירה:* השב *"ת"* או *"תן"* על הודעת הנסיעה (הבוט יגיב בקבוצה ולסדרן בשמך!)\n`;
-  menuText += `🛑 *תפוס* או *ת* (עצירת כל החיפושים)\n\n`;
+  menuText += `🛑 *תפוס* (עצירת כל החיפושים)\n\n`;
   menuText += `📖 *למדריך שימוש מפורט ומקצועי:* השב *"מדריך"*\n`;
   menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*`;
 
@@ -781,7 +781,7 @@ export async function sendDriverGuide(sock, jid) {
     `  3. מחזיר לך אישור שהנסיעה נתפסה בהצלחה.\n\n`;
 
   guideText += `🔹 *5. עצירת חיפוש (מצב תפוס)*\n` +
-    `• תפסת נסיעה או סיימת משמרת? שלח: *"תפוס"* או *"ת"* (בלי ציטוט נסיעה).\n` +
+    `• תפסת נסיעה או סיימת משמרת? שלח: *"תפוס"*.\n` +
     `• הבוט יעצור את כל הסינונים מיד ולא ישלח התראות.\n\n`;
 
   guideText += `🔹 *6. פקודת "תפריט"*\n` +
@@ -1291,6 +1291,15 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         m.message?.buttonsResponseMessage?.contextInfo?.stanzaId ||
         m.message?.templateButtonReplyMessage?.contextInfo?.stanzaId ||
         m.message?.interactiveResponseMessage?.contextInfo?.stanzaId;
+
+      // 0.0 בדיקה האם נשלחה האות "ת" לבדה ללא ציטוט נסיעה ספציפית
+      // דרישת משתמש מפורשת: "אם אני שולח את המילה ת שלא יהיה כמו הפקודה תפוס!"
+      // לכן: שליחת "ת" לבדה אינה עוצרת חיפוש, אינה פקודת תפוס, ואינה עושה כלום!
+      const isLoneTav = /^[\s\.\,\!\?]*ת[\s\.\,\!\?]*$/.test(raw) || norm === "ת" || norm === "תת";
+      if (isLoneTav && !quotedStanzaId) {
+        console.log(`ℹ️ [הודעת נהג ${senderPhone}]: נשלחה האות "ת" לבדה ללא ציטוט נסיעה. לא מבצעים תפוס ולא מפסיקים חיפוש!`);
+        continue;
+      }
 
       let targetAlertInfo = quotedStanzaId ? sentAlertsCache.get(quotedStanzaId) : null;
       const isClaimWord = norm === "תן" || norm === "קח" || norm === "תן לי" || norm === "שלי" ||

@@ -25,6 +25,7 @@ import {
   MessageCircle,
   Copy,
   ExternalLink,
+  Trash2,
 } from 'lucide-react';
 import { LiveRideItem, DriverGeoLocation } from '../types.ts';
 import { fetchLiveRidesApi, claimRideApi, simulateRideApi } from '../services/api.ts';
@@ -326,13 +327,26 @@ export function DriverRadarModal({
         }
 
         setRides((prev) => {
-          const simRides = prev.filter((r) => r.id.startsWith('sim-'));
-          const merged = [...simRides];
-          for (const s of incoming) {
-            if (!merged.some((m) => m.id === s.id)) {
-              merged.push(s);
-            }
-          }
+          // מפת מזהים למניעת כפילויות
+          const map = new Map<string, LiveRideItem>();
+          
+          // שומרים נסיעות קודמות (כולל הדגמות אם היו)
+          prev.forEach((r) => map.set(r.id, r));
+          
+          // מוסיפים / מעדכנים את הנסיעות החדשות שהגיעו מהקבוצות
+          incoming.forEach((s) => {
+            map.set(s.id, s);
+          });
+
+          const merged = Array.from(map.values());
+
+          // מיון קפדני: הנסיעה האחרונה שנשלחה (הכי עדכנית) תמיד ראשונה בראש הרשימה!
+          merged.sort((a, b) => {
+            const timeA = a.createdAt || a.timestamp || 0;
+            const timeB = b.createdAt || b.timestamp || 0;
+            return timeB - timeA;
+          });
+
           return merged;
         });
 
@@ -449,7 +463,16 @@ export function DriverRadarModal({
       const pick = sampleList[Math.floor(Math.random() * sampleList.length)];
       const res = await simulateRideApi(pick);
       if (res && res.ride) {
-        setRides((prev) => [res.ride, ...prev.filter((r) => r.id !== res.ride.id)]);
+        const sim = {
+          ...res.ride,
+          createdAt: Date.now(),
+          timestamp: Date.now(),
+        };
+        setRides((prev) => {
+          const list = [sim, ...prev.filter((r) => r.id !== sim.id)];
+          list.sort((a, b) => (b.createdAt || b.timestamp || 0) - (a.createdAt || a.timestamp || 0));
+          return list;
+        });
       }
       playLoudChime();
       showToast('🚀 נסיעת בדיקה שודרה לרדאר בהצלחה עם צלצול חזק!');
@@ -562,6 +585,10 @@ export function DriverRadarModal({
         drivebotCommand: parsed.drivebotCommand ?? ride.drivebotCommand ?? null,
         drivebotPhone: parsed.drivebotPhone ?? ride.drivebotPhone ?? null,
       };
+    }).sort((a, b) => {
+      const timeA = a.createdAt || a.timestamp || 0;
+      const timeB = b.createdAt || b.timestamp || 0;
+      return timeB - timeA;
     });
   }, [rides, driverLocation]);
 
@@ -684,17 +711,33 @@ export function DriverRadarModal({
             <span className="hidden sm:inline">בדיקת צליל</span>
           </button>
 
-          {/* Test Ride Simulation Button (only in regular view) */}
+          {/* Test Ride Simulation Button & Clear Button (only in regular view) */}
           {!isCockpitMode && (
-            <button
-              onClick={handleSimulateTestRide}
-              disabled={simulating}
-              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500/20 to-blue-500/20 hover:from-teal-500/30 hover:to-blue-500/30 border border-teal-500/40 text-teal-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all active:scale-95"
-              title="שלח נסיעת בדיקה ברגע זה לבדיקת המערכת והרדאר"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-teal-300" />
-              <span>נסיעת הדגמה</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleSimulateTestRide}
+                disabled={simulating}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500/20 to-blue-500/20 hover:from-teal-500/30 hover:to-blue-500/30 border border-teal-500/40 text-teal-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all active:scale-95"
+                title="שלח נסיעת בדיקה ברגע זה לבדיקת המערכת והרדאר"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-teal-300" />
+                <span>נסיעת הדגמה</span>
+              </button>
+
+              {rides.some((r) => r.id.startsWith('sim-')) && (
+                <button
+                  onClick={() => {
+                    setRides((prev) => prev.filter((r) => !r.id.startsWith('sim-')));
+                    showToast('🧹 נסיעות ההדגמה הוסרו. מוצגות רק נסיעות אמת מהקבוצות!');
+                  }}
+                  className="px-2 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
+                  title="נקה נסיעות הדגמה והשאר רק נסיעות אמת מהקבוצות"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">נקה הדגמה</span>
+                </button>
+              )}
+            </div>
           )}
 
           {/* Live Clock */}
