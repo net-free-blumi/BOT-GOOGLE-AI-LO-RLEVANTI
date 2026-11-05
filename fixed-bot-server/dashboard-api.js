@@ -703,6 +703,33 @@ export function startDashboard(runtime) {
     res.json(result);
   });
 
+  // ==========================================
+  // GitHub Webhook & 1-Click Auto Sync Endpoint
+  // ==========================================
+  app.all("/api/deploy/webhook", (_req, res) => {
+    recordEvent("system", "📥 התקבלה בקשת סנכרון אוטומטי מ-GitHub Webhook...");
+    res.json({ ok: true, message: "הסנכרון החל ברקע מ-GitHub" });
+
+    const syncCmd = `(
+      if [ -d ".git" ]; then
+        echo "Updating from git..." && git fetch origin && (git reset --hard origin/main || git reset --hard origin/master || git pull) && ([ -d "fixed-bot-server" ] && cp -rf fixed-bot-server/* ./ 2>/dev/null || true);
+      else
+        echo "Updating from bundle..." && curl -sSL https://nsiot.vercel.app/fixed-bot-server-v3.0.tar.gz | tar -xz --strip-components=1 2>/dev/null || true;
+      fi
+      pm2 restart all || pm2 restart wa-rides-bot || pm2 restart index.js
+    )`;
+
+    exec(syncCmd, { cwd: process.cwd() }, (err, stdout, stderr) => {
+      if (err) {
+        recordError("github_sync_error", err);
+        console.error("❌ שגיאה בסנכרון מ-GitHub:", err.message);
+      } else {
+        recordEvent("system", "✅ סנכרון אוטומטי מ-GitHub הושלם והשרת הופעל מחדש בהצלחה!");
+        console.log("✅ סנכרון אוטומטי מ-GitHub הושלם:", stdout);
+      }
+    });
+  });
+
   // יומן שגיאות ובאגים ייעודי (Live Error Tracker API)
   app.get("/api/errors", (_req, res) => {
     res.json({ ok: true, errors: errorReports });

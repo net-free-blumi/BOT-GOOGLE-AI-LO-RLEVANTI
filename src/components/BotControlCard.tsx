@@ -10,9 +10,12 @@ import {
   Terminal, 
   Smartphone,
   ShieldAlert,
-  Loader2
+  Loader2,
+  GitBranch,
+  Download
 } from 'lucide-react';
 import { WhatsAppState } from '../types.ts';
+import { syncFromGitHubApi } from '../services/api.ts';
 
 interface BotControlCardProps {
   wa: WhatsAppState;
@@ -63,6 +66,24 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   const handleStop = async () => {
     setStopConfirm(false);
     await onStopBot();
+  };
+
+  const [syncingGit, setSyncingGit] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  const handleSyncGit = async () => {
+    setSyncingGit(true);
+    setSyncMessage(null);
+    try {
+      const res = await syncFromGitHubApi();
+      setSyncMessage(res.message || 'הסנכרון מ-GitHub החל בהצלחה!');
+      setTimeout(() => setSyncMessage(null), 5000);
+    } catch (e: any) {
+      setSyncMessage(e.message || 'שגיאה בסנכרון מ-GitHub');
+      setTimeout(() => setSyncMessage(null), 5000);
+    } finally {
+      setSyncingGit(false);
+    }
   };
 
   return (
@@ -166,21 +187,55 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
         </button>
       </div>
 
+      {/* 1-Click Sync from GitHub Button */}
+      <div className="pt-1 space-y-2">
+        <button
+          onClick={handleSyncGit}
+          disabled={loading || syncingGit}
+          className="w-full p-3 rounded-xl bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-teal-500/20 hover:from-indigo-500/30 hover:to-teal-500/30 border border-indigo-500/40 text-indigo-200 hover:text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-98"
+          title="סנכרן את שרת ה-VPS ישירות מול הגרסה העדכנית ב-GitHub בלחיצה אחת"
+        >
+          {syncingGit ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+              <span>מבצע סנכרון ישיר מ-GitHub ומפעיל מחדש...</span>
+            </>
+          ) : (
+            <>
+              <GitBranch className="w-4 h-4 text-indigo-400" />
+              <span>סנכרן שרת מול GitHub עכשיו (1-Click Sync)</span>
+              <Download className="w-3.5 h-3.5 text-teal-400" />
+            </>
+          )}
+        </button>
+        {syncMessage && (
+          <div className="text-center text-xs font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg py-1.5 px-2 animate-in fade-in">
+            {syncMessage}
+          </div>
+        )}
+      </div>
+
       {/* SSH CLI Helper Hint */}
-      <div className="p-3 rounded-xl bg-[#090d14] border border-[#1b2635] text-[11px] text-slate-400 space-y-1">
+      <div className="p-3 rounded-xl bg-[#090d14] border border-[#1b2635] text-[11px] text-slate-400 space-y-2">
         <div className="font-semibold text-slate-300 flex items-center gap-1.5">
           <Terminal className="w-3.5 h-3.5 text-amber-400" />
-          פקודות ניהול מהירות ב-SSH:
+          סנכרון אוטומטי מלא ב-GitHub Webhook:
+        </div>
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          הגדר בהגדרות ה-Repository ב-GitHub תחת Webhooks את הכתובת הבאה, וכל Push יעדכן את השרת מיידית ללא צורך בפקודות:
+        </p>
+        <div className="font-mono text-[10px] text-emerald-300 bg-[#06090e] p-2 rounded-lg border border-[#233348] select-all break-all">
+          http://[IP_של_השרת]:3000/api/deploy/webhook
         </div>
         <div className="flex flex-wrap gap-2 pt-1 font-mono text-[10px]">
           <code className="px-2 py-0.5 rounded bg-[#131b26] border border-[#223044] text-amber-300">
-            pm2 logs wa-bot
+            pm2 logs
           </code>
           <code className="px-2 py-0.5 rounded bg-[#131b26] border border-[#223044] text-teal-300">
-            pm2 restart wa-bot
+            pm2 restart all
           </code>
           <code className="px-2 py-0.5 rounded bg-[#131b26] border border-[#223044] text-slate-300">
-            pm2 status
+            ./auto-sync.sh
           </code>
         </div>
       </div>

@@ -368,6 +368,20 @@ export async function restartBot(): Promise<{ success: boolean; message?: string
   };
 }
 
+export async function syncFromGitHubApi(): Promise<{ ok: boolean; message: string }> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, message: 'מצב הדגמה: פקודת סנכרון מ-GitHub נשלחה בהצלחה' };
+  }
+  const res = await request<any>('/api/deploy/webhook', {
+    method: 'POST',
+  });
+  return {
+    ok: Boolean(res.ok ?? res.success ?? true),
+    message: res.message || 'הסנכרון מ-GitHub החל בהצלחה',
+  };
+}
+
 export async function stopBot(): Promise<{ success: boolean; message?: string }> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) {
