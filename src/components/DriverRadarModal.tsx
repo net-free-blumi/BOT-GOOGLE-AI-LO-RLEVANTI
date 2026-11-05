@@ -28,7 +28,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { LiveRideItem, DriverGeoLocation } from '../types.ts';
-import { fetchLiveRidesApi, claimRideApi, simulateRideApi } from '../services/api.ts';
+import { fetchLiveRidesApi, claimRideApi, simulateRideApi, sendSearchCommand, stopSearch } from '../services/api.ts';
 import {
   BEIT_SHEMESH_ZONES,
   detectNeighborhood,
@@ -249,6 +249,27 @@ export function DriverRadarModal({
         }
       } catch (e) {}
       showToast('יציאה ממצב קוקפיט לתצוגה רגילה');
+    }
+  };
+
+  const [searchCommandLoading, setSearchCommandLoading] = useState(false);
+
+  // הפעלת חיפושים מהירים ישירות מתוך הרדאר (פנוי שמש פנימי / שמש הכל / תפוס)
+  const handleQuickSearch = async (cmd: string) => {
+    setSearchCommandLoading(true);
+    try {
+      if (cmd === 'תפוס') {
+        const res = await stopSearch(selectedDriverPhone);
+        showToast(res.message || '🛑 החיפוש הופסק (תפוס / מצב שינה)');
+      } else {
+        const res = await sendSearchCommand(cmd, selectedDriverPhone);
+        showToast(`✅ ${res.message || `החיפוש הופעל: ${cmd}`}`);
+      }
+      await loadRides(true);
+    } catch (err: any) {
+      showToast(err.message || 'שגיאה בהפעלת חיפוש');
+    } finally {
+      setSearchCommandLoading(false);
     }
   };
 
@@ -647,6 +668,36 @@ export function DriverRadarModal({
 
         {/* Live Clock & Quick Controls */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Quick Search Shortcut Controls (Internal / All / Stop) */}
+          <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-[#1e2a3c]">
+            <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">חיפוש:</span>
+            <button
+              onClick={() => handleQuickSearch('פנוי שמש פנימי')}
+              disabled={searchCommandLoading}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/60 text-emerald-300 font-black text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-[0_0_10px_rgba(16,185,129,0.25)]"
+              title="הפעל חיפוש פנימי בית שמש בלבד"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]" />
+              <span>🚕 פנימי שמש</span>
+            </button>
+            <button
+              onClick={() => handleQuickSearch('פנוי שמש')}
+              disabled={searchCommandLoading}
+              className="px-2 py-1 rounded-lg bg-[#101722] hover:bg-[#182333] border border-[#223044] hover:border-amber-400/50 text-amber-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+              title="הפעל חיפוש בית שמש (בתוך ומחוץ לעיר)"
+            >
+              <span>⚡ שמש הכל</span>
+            </button>
+            <button
+              onClick={() => handleQuickSearch('תפוס')}
+              disabled={searchCommandLoading}
+              className="px-2 py-1 rounded-lg bg-[#140e14] hover:bg-[#20131b] border border-rose-500/30 text-rose-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+              title="עצור חיפוש / מצב תפוס"
+            >
+              <span>🛑 תפוס</span>
+            </button>
+          </div>
+
           {/* Button: True Fullscreen Cockpit Mode */}
           <button
             onClick={toggleCockpitFullscreen}

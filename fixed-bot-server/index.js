@@ -1,8 +1,16 @@
 import cron from "node-cron";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
 import { createDeduper } from "./dedupe.js";
 import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STICKER_WEBP_PATH = path.join(__dirname, "assets", "sticker_confused.webp");
+const STICKER_JPG_PATH = path.join(__dirname, "assets", "sticker_confused.jpg");
+const lastConfusedStickerSent = new Map();
 import {
   extractInteractiveResponse,
   sendInteractiveButtons,
@@ -1015,6 +1023,47 @@ export async function notifyDriverWelcomeOnConnected(driverPhone) {
   }
 }
 
+// שליחת מדבקת בוט מבולבל + הודעת הבהרה כאשר נשלחה אות סתמית או הודעה לא מובנת
+export async function sendConfusedStickerAndMessage(sock, jid, quotedMsg, senderPhone) {
+  const now = Date.now();
+  const lastTime = lastConfusedStickerSent.get(senderPhone) || 0;
+  if (now - lastTime < 3000) {
+    return; // מניעת ספאם/הפצצת מדבקות (cooldown של 3 שניות)
+  }
+  lastConfusedStickerSent.set(senderPhone, now);
+
+  // 1. שליחת המדבקה המעוצבת (WebP / JPG)
+  try {
+    if (fs.existsSync(STICKER_WEBP_PATH)) {
+      const stickerBuf = fs.readFileSync(STICKER_WEBP_PATH);
+      await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: quotedMsg });
+    } else if (fs.existsSync(STICKER_JPG_PATH)) {
+      const imgBuf = fs.readFileSync(STICKER_JPG_PATH);
+      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" }, { quoted: quotedMsg });
+    }
+  } catch (err) {
+    console.warn("⚠️ שגיאה בשליחת מדבקת וואטסאפ:", err?.message);
+  }
+
+  // 2. הודעה ברורה וקולעת מתחת למדבקה בדיוק כפי שהוגדר על ידי המשתמש:
+  const search = getUserSearch(senderPhone);
+  const statusLine = search.active
+    ? `🟢 *חיפוש פעיל כעת:* ${search.displayText}`
+    : `🔴 *מצב שינה / תפוס* (הבוט אינו סורק נסיעות כרגע)`;
+
+  const msg = `🤔 לא הבנתי למה התכוונת, תוכל לשלוח שוב?\n\n` +
+    `${statusLine}\n\n` +
+    `💡 *קיצורים מהירים להפעלת חיפוש נסיעות:*\n` +
+    `• *פנוי שמש פנימי* ⬅️ פנימי בית שמש בלבד 🚕\n` +
+    `• *פנוי שמש* ⬅️ פנימי וגם יציאה מבית שמש\n` +
+    `• *פ ים שמש* ⬅️ מירושלים לבית שמש 🔄\n` +
+    `• *שמש צמצם* ⬅️ מצב צמצום (פנימי ויוצא)\n` +
+    `• *תפוס* ⬅️ הפסקת חיפוש / מצב שינה 🛑\n\n` +
+    `להצגת כל האפשרויות והערים שלח: *"תפריט"*.`;
+
+  await sock.sendMessage(jid, { text: msg }, { quoted: quotedMsg });
+}
+
 // טיפול בשינוי סטטוס סשן נהג - מסונן לחלוטין כנגד התעוררות שרת, שחזור סשנים והתחברויות חוזרות
 export async function handleDriverStatusChange(driverPhone, sessionObj) {
   if (sessionObj?.status === "connected") {
@@ -1297,7 +1346,8 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       // לכן: שליחת "ת" לבדה אינה עוצרת חיפוש, אינה פקודת תפוס, ואינה עושה כלום!
       const isLoneTav = /^[\s\.\,\!\?]*ת[\s\.\,\!\?]*$/.test(text) || norm === "ת" || norm === "תת";
       if (isLoneTav && !quotedStanzaId) {
-        console.log(`ℹ️ [הודעת נהג ${senderPhone}]: נשלחה האות "ת" לבדה ללא ציטוט נסיעה. לא מבצעים תפוס ולא מפסיקים חיפוש!`);
+        console.log(`ℹ️ [הודעת נהג ${senderPhone}]: נשלחה האות "ת" לבדה ללא ציטוט נסיעה. שולחים מדבקה והודעת הבהרה.`);
+        await sendConfusedStickerAndMessage(sock, jid, m, senderPhone);
         continue;
       }
 
@@ -1590,13 +1640,9 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         }
       }
 
-      const search = getUserSearch(senderPhone);
-      let userDefaultMsg = `שלום ${pushName}! 👋\n\n`;
-      userDefaultMsg += `סטטוס החיפוש שלך: ${search.active ? "🟢 סורק עבור: " + search.displayText : "🔴 מופסק (תפוס)"}\n\n`;
-      userDefaultMsg += `שלח למשל: *"פנוי שמש"*, *"פנוי שמש פנימי"*, *"פ ים שמש"*, או *"שמש צמצם"* כדי לקבל נסיעות.\n`;
-      userDefaultMsg += `להצגת כל האפשרויות שלח: *"תפריט"*.`;
-
-      await sock.sendMessage(jid, { text: userDefaultMsg }, { quoted: m });
+      // הודעה שלא זוהתה כפקודת חיפוש, תפיסת נסיעה או פקודת תפריט
+      // דרישת משתמש מפורשת: "כל אות או משהו לא מוגדר ישלח מדבקה ומתחת הודעה לא הבנתי למה התכוונת"
+      await sendConfusedStickerAndMessage(sock, jid, m, senderPhone);
       continue;
     }
 

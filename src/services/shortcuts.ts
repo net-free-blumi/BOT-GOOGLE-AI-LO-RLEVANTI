@@ -109,27 +109,35 @@ export function translateDriverShorthand(raw: string, shortcuts: CityAlias[]): {
     };
   }
 
-  // 2. פקודת פנימי מפורשת: "פנוי פנימי ים", "פנימי ים", "פ פנימי ים", "פנוי שמש פנימי", "שמש פנימי"
+  // 2. פקודת פנימי מפורשת: "פנוי פנימי ים", "פנימי ים", "פ פנימי ים", "פנוי שמש פנימי", "שמש פנימי", "פנוי פ שמש"
   const internalPrefixMatch = lower.match(/^(?:פ|פנוי)?\s*פנימי\s+([א-ת\s]+)$/);
   if (internalPrefixMatch) {
     const token = internalPrefixMatch[1].trim();
     const city = map[token] || token;
-    return { translated: `פנוי פ ${city}` };
+    return { translated: `פנוי ${city} פנימי` };
   }
 
-  const internalSuffixMatch = lower.match(/^(?:פ|פנוי)?\s*([א-ת]+)\s+פנימי$/);
+  const internalSuffixMatch = lower.match(/^(?:פ|פנוי)?\s*([א-ת\s]+)\s+פנימי$/);
   if (internalSuffixMatch) {
     const token = internalSuffixMatch[1].trim();
     const city = map[token] || token;
-    return { translated: `פנוי פ ${city}` };
+    return { translated: `פנוי ${city} פנימי` };
   }
 
-  // 3. קיצורי פנימי מהירים: "פ שמש", "שמש פ", "פ ים", "ים פ" כשהדפוס מכיל "פ" בודדת
+  // Handle "פנוי פ שמש", "פ פ שמש"
+  const fastPInternal = lower.match(/^(?:פ|פנוי)\s+פ\s+([א-ת\s]+)$/);
+  if (fastPInternal) {
+    const token = fastPInternal[1].trim();
+    const city = map[token] || token;
+    return { translated: `פנוי ${city} פנימי` };
+  }
+
+  // 3. קיצורי פנימי מהירים: "שמש פ", "ים פ" כשהדפוס מכיל "פ" בסוף
   const fastInternal = lower.match(/^([א-ת]+)\s+פ(?:\s+\d+)?$/);
   if (fastInternal) {
     const token = fastInternal[1].trim();
     const city = map[token] || token;
-    return { translated: `פנוי פ ${city}` };
+    return { translated: `פנוי ${city} פנימי` };
   }
 
   // 4. Handle "פ ים שמש" or "פנוי ים שמש" or "ים שמש" (Route: from City1 to City2)
@@ -141,12 +149,12 @@ export function translateDriverShorthand(raw: string, shortcuts: CityAlias[]): {
     // If second word is "פנימי"
     if (destToken === 'פנימי') {
       const city = map[originToken] || originToken;
-      return { translated: `פנוי פ ${city}` };
+      return { translated: `פנוי ${city} פנימי` };
     }
     // If first word is "פנימי"
     if (originToken === 'פנימי') {
       const city = map[destToken] || destToken;
-      return { translated: `פנוי פ ${city}` };
+      return { translated: `פנוי ${city} פנימי` };
     }
 
     const fromCity = map[originToken] || originToken;
@@ -159,7 +167,7 @@ export function translateDriverShorthand(raw: string, shortcuts: CityAlias[]): {
   if (fromMatch) {
     const token = fromMatch[1];
     if (token === 'פנימי') {
-      return { translated: 'פנוי פ בית שמש' };
+      return { translated: 'פנוי בית שמש פנימי' };
     }
     const city = map[token] || token;
     return { translated: `פנוי ${city}` };

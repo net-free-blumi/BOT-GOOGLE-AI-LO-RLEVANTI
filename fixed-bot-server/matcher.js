@@ -726,13 +726,19 @@ export function processDriverCommand(rawText) {
     }
   }
 
-  // 2. האם יש פקודת פנימי מפורשת? (חובה שתכיל "פנימי" או קיצור פנימי מובהק כמו "פ שמש פ", "שמש פנימי")
+  // 2. האם יש פקודת פנימי מפורשת? (חובה שתכיל "פנימי" או קיצור פנימי מובהק כמו "פנוי שמש פנימי", "שמש פנימי", "פנוי פ שמש", "פ פ שמש")
   const isExplicitInternalCmd = /(^|\s)פנימי(\s|$)/.test(norm) ||
-    /^(?:פ|פנוי)\s+[א-ת]+\s+פ$/.test(norm) ||
-    /^[א-ת]+\s+פ$/.test(norm);
+    /^(?:פ|פנוי)\s+פ\s+/.test(norm) ||
+    /^(?:פ|פנוי)\s+[א-ת\s]+\s+פ$/.test(norm) ||
+    /^[א-ת\s]+\s+פ$/.test(norm);
 
   if (isExplicitInternalCmd) {
-    const cleanWithoutInternal = cleanCmd.replace(/פנימי/g, "").replace(/\bפ\b/g, "").trim();
+    const cleanWithoutInternal = cleanCmd
+      .replace(/(^|\s)פנימי(\s|$)/g, " ")
+      .replace(/^פ\s+/, "")
+      .replace(/\s+פ$/, "")
+      .replace(/\bפ\b/g, " ")
+      .trim();
     let city = CITY_ALIAS_MAP[cleanWithoutInternal];
     if (!city) {
       const places = findPlaces(cleanWithoutInternal.length > 0 ? cleanWithoutInternal : raw);

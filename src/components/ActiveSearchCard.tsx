@@ -57,7 +57,7 @@ export const ActiveSearchCard: React.FC<ActiveSearchCardProps> = ({
   const handleBuilderApply = () => {
     let cmd = '';
     if (builderMode === 'internal') {
-      cmd = `פנוי פ ${builderOrigin}`;
+      cmd = `פנוי ${builderOrigin} פנימי`;
     } else if (builderMode === 'reduce') {
       cmd = `פנוי ${builderOrigin}`; // handles both internal and outward
     } else if (builderMode === 'from') {
@@ -203,24 +203,47 @@ export const ActiveSearchCard: React.FC<ActiveSearchCardProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {/* פנוי שמש פנימי - לחצן מהיר ומודגש */}
+          <button
+            type="button"
+            onClick={() => handleQuickCommand('פנוי שמש פנימי')}
+            disabled={loading}
+            className="px-3.5 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600/35 to-teal-600/35 hover:from-emerald-600/50 hover:to-teal-600/50 border-2 border-emerald-400/70 text-emerald-300 transition-all cursor-pointer flex items-center gap-2 shadow-[0_0_16px_rgba(16,185,129,0.25)] hover:scale-[1.03]"
+            title="פנוי שמש פנימי: נסיעות פנימיות בתוך בית שמש בלבד!"
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]" />
+            🚕 פנוי שמש פנימי (פנימי בלבד)
+          </button>
+
+          {/* פנוי שמש (בתוך ומחוץ לעיר) */}
+          <button
+            type="button"
+            onClick={() => handleQuickCommand('פנוי שמש')}
+            disabled={loading}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#131d2b] hover:bg-[#1a273b] border border-amber-500/50 text-amber-300 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+            title="פנוי שמש: נסיעות פנימיות וגם נסיעות שיוצאות מבית שמש"
+          >
+            ⚡ פנוי שמש (בתוך ומחוץ לעיר)
+          </button>
+
           {/* Reduced Mode chips */}
           <button
             type="button"
             onClick={() => handleQuickCommand('שמש צמצם')}
             disabled={loading}
-            className="px-3 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500/20 to-amber-600/10 hover:from-amber-500/30 hover:to-amber-600/20 border border-amber-500/40 text-amber-300 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-[#0e1622] hover:bg-[#142031] border border-slate-700 hover:border-amber-500/40 text-amber-200 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
             title="שמש צמצם: נסיעות פנימיות וגם יוצאות מבית שמש"
           >
-            ⚡ שמש צמצם (פנימי + יוצא)
+            ⚡ שמש צמצם
           </button>
           <button
             type="button"
             onClick={() => handleQuickCommand('ים צמצם')}
             disabled={loading}
-            className="px-3 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-teal-500/20 to-teal-600/10 hover:from-teal-500/30 hover:to-teal-600/20 border border-teal-500/40 text-teal-300 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
+            className="px-3 py-2 rounded-xl text-xs font-bold bg-[#0e1622] hover:bg-[#142031] border border-slate-700 hover:border-teal-500/40 text-teal-300 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
             title="ים צמצם: נסיעות פנימיות וגם יוצאות מירושלים"
           >
-            ⚡ ים צמצם (פנימי + יוצא)
+            ⚡ ים צמצם
           </button>
 
           {/* Direct Route shorthand */}
@@ -241,14 +264,6 @@ export const ActiveSearchCard: React.FC<ActiveSearchCardProps> = ({
             title="פ שמש ים: בית שמש לירושלים"
           >
             🚀 פ שמש ים (בית שמש ← י-ם)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickCommand('פ פנימי שמש')}
-            disabled={loading}
-            className="px-3 py-2 rounded-xl text-xs font-semibold bg-[#0e1520] hover:bg-[#152030] border border-[#223044] hover:border-amber-500/40 text-slate-200 hover:text-amber-300 transition-all cursor-pointer flex items-center gap-1.5"
-          >
-            🚕 פ פנימי שמש
           </button>
           <button
             type="button"

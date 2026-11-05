@@ -126,13 +126,13 @@ export function applyMockCommand(cmd: string) {
     return { ok: true, message: 'החיפוש הופסק בהצלחה', search: { ...mockSearch } };
   }
 
-  if (c.includes('פנימי') || c.includes('פ שמש')) {
+  if (c.includes('פנימי') || c.includes('פנוי פ ') || c.includes('פ שמש פ') || /^[א-ת\s]+\s+פ$/.test(c)) {
     mockSearch = {
       active: true,
       mode: 'internal',
       origin: 'בית שמש',
       destination: null,
-      displayText: 'בית שמש (פנימי)',
+      displayText: 'בית שמש (פנימי בלבד)',
       describe: 'רק נסיעות פנימיות בתוך בית שמש',
     };
   } else if (c.includes('לירושלים')) {
