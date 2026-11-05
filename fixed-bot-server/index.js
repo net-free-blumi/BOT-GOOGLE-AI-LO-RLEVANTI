@@ -1295,7 +1295,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       // 0.0 בדיקה האם נשלחה האות "ת" לבדה ללא ציטוט נסיעה ספציפית
       // דרישת משתמש מפורשת: "אם אני שולח את המילה ת שלא יהיה כמו הפקודה תפוס!"
       // לכן: שליחת "ת" לבדה אינה עוצרת חיפוש, אינה פקודת תפוס, ואינה עושה כלום!
-      const isLoneTav = /^[\s\.\,\!\?]*ת[\s\.\,\!\?]*$/.test(raw) || norm === "ת" || norm === "תת";
+      const isLoneTav = /^[\s\.\,\!\?]*ת[\s\.\,\!\?]*$/.test(text) || norm === "ת" || norm === "תת";
       if (isLoneTav && !quotedStanzaId) {
         console.log(`ℹ️ [הודעת נהג ${senderPhone}]: נשלחה האות "ת" לבדה ללא ציטוט נסיעה. לא מבצעים תפוס ולא מפסיקים חיפוש!`);
         continue;
