@@ -11,7 +11,7 @@ import pino from "pino";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings } from "./users-manager.js";
+import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings, approveUser, isUserApproved } from "./users-manager.js";
 import { recordError } from "./dashboard-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -547,6 +547,13 @@ export async function initSavedDriverSessions(callbacks) {
       const credPath = path.join(SESSIONS_DIR, phone, "creds.json");
       if (fs.existsSync(credPath)) {
         console.log(`🔄 משחזר חיבור וואטסאפ שמור עבור נהג: ${phone}...`);
+
+        // הגנה קריטית: אם users.json התאפס או נדרס במהלך שדרוג שרת - משחזרים את אישור הנהג אוטומטית!
+        if (!isUserApproved(phone)) {
+          console.log(`🛡️ נהג עם חיבור וואטסאפ שמור (${phone}) שוחזר אוטומטית לרשימת המאושרים!`);
+          approveUser(phone, `נהג מחובר (${phone})`);
+        }
+
         try {
           await connectDriverSession(phone, callbacks);
         } catch (e) {

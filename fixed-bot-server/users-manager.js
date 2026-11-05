@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const USERS_FILE = path.join(__dirname, "users.json");
+const USERS_BACKUP_FILE = path.join(__dirname, "users.backup.json");
 const LID_MAP_FILE = path.join(__dirname, "lid-map.json");
 
 const DEFAULT_USERS_DATA = {
@@ -496,6 +497,24 @@ export function loadUsersData() {
         return item;
       });
 
+      // שחזור אוטומטי מגיבוי אם users.json נדרס בעדכון שרת
+      if (existsSync(USERS_BACKUP_FILE)) {
+        try {
+          const backupRaw = readFileSync(USERS_BACKUP_FILE, "utf8");
+          const backupParsed = JSON.parse(backupRaw);
+          if (Array.isArray(backupParsed.approvedUsers)) {
+            for (const bu of backupParsed.approvedUsers) {
+              const buPhone = cleanPhone(bu.phone);
+              if (buPhone && !data.approvedUsers.some((u) => cleanPhone(u.phone) === buPhone)) {
+                console.log(`🛡️ משחזר נהג מאושר מגיבוי קבוע: ${bu.name || buPhone}`);
+                data.approvedUsers.push(bu);
+                changed = true;
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
       if (changed) {
         saveUsersData(data);
       }
@@ -512,6 +531,9 @@ export function loadUsersData() {
 export function saveUsersData(data) {
   try {
     writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), "utf8");
+    if (data && Array.isArray(data.approvedUsers) && data.approvedUsers.length > 0) {
+      writeFileSync(USERS_BACKUP_FILE, JSON.stringify(data, null, 2), "utf8");
+    }
   } catch (err) {
     console.error("שגיאה בשמירת users.json:", err.message);
   }

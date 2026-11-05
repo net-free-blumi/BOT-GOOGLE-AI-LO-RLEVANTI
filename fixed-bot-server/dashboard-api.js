@@ -711,12 +711,21 @@ export function startDashboard(runtime) {
     res.json({ ok: true, message: "הסנכרון החל ברקע מ-GitHub" });
 
     const syncCmd = `(
-      if [ -d ".git" ]; then
-        echo "Updating from git..." && git fetch origin && (git reset --hard origin/main || git reset --hard origin/master || git pull) && ([ -d "fixed-bot-server" ] && cp -rf fixed-bot-server/* ./ 2>/dev/null || true);
+      if [ -f "./auto-sync.sh" ]; then
+        chmod +x ./auto-sync.sh && ./auto-sync.sh;
+      elif [ -f "fixed-bot-server/auto-sync.sh" ]; then
+        chmod +x fixed-bot-server/auto-sync.sh && ./fixed-bot-server/auto-sync.sh;
       else
-        echo "Updating from bundle..." && curl -sSL https://nsiot.vercel.app/fixed-bot-server-v3.0.tar.gz | tar -xz --strip-components=1 2>/dev/null || true;
+        mkdir -p /tmp/wa-safe-bak &&
+        for f in users.json users.backup.json searches.json lid-map.json onboarding-alerts.json dashboard.secret auth; do
+          [ -e "$f" ] && cp -rf "$f" /tmp/wa-safe-bak/ || true;
+        done &&
+        (git pull origin main 2>/dev/null || curl -sSL https://nsiot.vercel.app/fixed-bot-server-v3.0.tar.gz | tar -xz --strip-components=1 2>/dev/null || true) &&
+        for f in users.json users.backup.json searches.json lid-map.json onboarding-alerts.json dashboard.secret auth; do
+          [ -e "/tmp/wa-safe-bak/$f" ] && cp -rf "/tmp/wa-safe-bak/$f" ./ || true;
+        done &&
+        pm2 restart all || pm2 restart wa-rides-bot || pm2 restart index.js
       fi
-      pm2 restart all || pm2 restart wa-rides-bot || pm2 restart index.js
     )`;
 
     exec(syncCmd, { cwd: process.cwd() }, (err, stdout, stderr) => {

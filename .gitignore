@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime data files (never overwrite on pull)
+users.json
+users.backup.json
+searches.json
+lid-map.json
+onboarding-alerts.json
+dashboard.secret
+auth/
+data-backup/
