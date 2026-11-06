@@ -557,21 +557,24 @@ export function startDashboard(runtime) {
     });
   });
 
-  // אישור משתמש + שליחת הודעת אישור והדרכה לוואטסאפ של המשתמש מיידית!
+  // אישור משתמש (תומך במצב שקט ללא שליחת הודעה או במצב רגיל עם שליחת מדריך)
   app.post("/api/users/approve", async (req, res) => {
     const phone = req.body?.phone;
     const name = req.body?.name || "נהג";
+    const silent = Boolean(req.body?.silent || req.body?.notify === false);
     if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
     
     const result = approveUser(phone, name);
-    recordEvent("command", `אושר משתמש מהאתר: ${name} (${phone})`);
+    recordEvent("command", `אושר משתמש מהאתר${silent ? " (שקט - ללא הודעה)" : ""}: ${name} (${phone})`);
 
-    // שליחת הודעת וואטסאפ רשמית עם מדריך חיבור מידית!
-    try {
-      await ctx?.sendApprovalAndOnboarding?.(phone, name);
-    } catch (e) {}
+    // שליחת הודעת וואטסאפ אך ורק אם לא נבחר מצב שקט!
+    if (!silent) {
+      try {
+        await ctx?.sendApprovalAndOnboarding?.(phone, name);
+      } catch (e) {}
+    }
 
-    res.json({ ok: true, ...result });
+    res.json({ ok: true, silent, ...result });
   });
 
   // שליחה חוזרת של מדריך חיבור ואישור לוואטסאפ של המשתמש
@@ -622,15 +625,18 @@ export function startDashboard(runtime) {
   app.post("/api/users/add", async (req, res) => {
     const phone = req.body?.phone;
     const name = req.body?.name || "";
+    const silent = Boolean(req.body?.silent || req.body?.notify === false);
     if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
     const result = approveUser(phone, name);
-    recordEvent("command", `הוסף משתמש ישירות מהאתר: ${name} (${phone})`);
+    recordEvent("command", `הוסף משתמש ישירות מהאתר${silent ? " (שקט - ללא הודעה)" : ""}: ${name} (${phone})`);
 
-    try {
-      await ctx?.sendApprovalAndOnboarding?.(phone, name);
-    } catch (e) {}
+    if (!silent) {
+      try {
+        await ctx?.sendApprovalAndOnboarding?.(phone, name);
+      } catch (e) {}
+    }
 
-    res.json({ ok: true, ...result });
+    res.json({ ok: true, silent, ...result });
   });
 
   app.post("/api/users/delete", (req, res) => {

@@ -430,12 +430,12 @@ export async function fetchUsersList(): Promise<any> {
   }
 }
 
-export async function approveUserApi(phone: string, name?: string): Promise<{ ok: boolean; error?: string }> {
+export async function approveUserApi(phone: string, name?: string, silent?: boolean): Promise<{ ok: boolean; error?: string }> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) return { ok: true };
   return await request<any>('/api/users/approve', {
     method: 'POST',
-    body: JSON.stringify({ phone, name }),
+    body: JSON.stringify({ phone, name, silent: Boolean(silent) }),
   });
 }
 
@@ -457,12 +457,12 @@ export async function rejectUserApi(identifier: string): Promise<{ ok: boolean; 
   });
 }
 
-export async function addUserApi(phone: string, name: string): Promise<{ ok: boolean; error?: string }> {
+export async function addUserApi(phone: string, name: string, silent?: boolean): Promise<{ ok: boolean; error?: string }> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) return { ok: true };
   return await request<any>('/api/users/add', {
     method: 'POST',
-    body: JSON.stringify({ phone, name }),
+    body: JSON.stringify({ phone, name, silent: Boolean(silent) }),
   });
 }
 

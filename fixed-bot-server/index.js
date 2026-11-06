@@ -1177,6 +1177,16 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       // 2. מספר המנהל משמש לניהול בלבד
       if (isAdmin) {
+        // אישור שקט ללא שליחת הודעה לנהג: "אשר ללא 0556706325", "אשר שקט 0556706325", "אשר ללא הודעה 0556706325"
+        const silentApproveMatch = text.match(/^(?:אשר\s+ללא(?:\s+הודעה)?|אשר\s+שקט)\s+([0-9+\s-]+)$/);
+        if (silentApproveMatch) {
+          const targetPhone = cleanPhone(silentApproveMatch[1]);
+          approveUser(targetPhone);
+          await sock.sendMessage(jid, { text: `✅ המשתמש *${targetPhone}* אושר בהצלחה במערכת (במצב שקט)!\n🔇 לא נשלחה שום הודעה לוואטסאפ של הנהג.` }, { quoted: m });
+          recordEvent("command", `מנהל אישר משתמש במצב שקט (ללא הודעה לנהג): ${targetPhone}`);
+          continue;
+        }
+
         const approveMatch = text.match(/^(?:אשר|אשר משתמש)\s+([0-9+\s-]+)$/);
         if (approveMatch) {
           const targetPhone = cleanPhone(approveMatch[1]);

@@ -24,7 +24,8 @@ import {
   User,
   KeyRound,
   ExternalLink,
-  Send
+  Send,
+  BellOff
 } from 'lucide-react';
 import { ApprovedUser, PendingUser, DriverSessionItem } from '../types.ts';
 import { 
@@ -162,15 +163,19 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle Approve + Immediate Onboarding Guide
-  const handleApprove = async (phone: string, name?: string) => {
+  // Handle Approve + Immediate Onboarding Guide or Silent Approval
+  const handleApprove = async (phone: string, name?: string, silent = false) => {
     setLoading(true);
     setActionSuccess(null);
     setActionError(null);
     try {
-      const res = await approveUserApi(phone, name);
+      const res = await approveUserApi(phone, name, silent);
       if (res.ok) {
-        setActionSuccess(`משתמש ${name || phone} אושר בהצלחה! נשלחה לו הודעת וואטסאפ עם מדריך חיבור מיידי.`);
+        setActionSuccess(
+          silent
+            ? `משתמש ${name || phone} אושר במצב שקט (ללא שליחת הודעה לנהג).`
+            : `משתמש ${name || phone} אושר בהצלחה! נשלחה לו הודעת וואטסאפ עם מדריך חיבור מיידי.`
+        );
         await loadData();
         onUserModified?.();
       } else {
@@ -338,16 +343,20 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
     }
   };
 
-  const handleAddDirect = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddDirect = async (e?: React.FormEvent, silent = false) => {
+    if (e) e.preventDefault();
     if (!newPhone.trim()) return;
     setLoading(true);
     setActionSuccess(null);
     setActionError(null);
     try {
-      const res = await addUserApi(newPhone.trim(), newName.trim());
+      const res = await addUserApi(newPhone.trim(), newName.trim(), silent);
       if (res.ok) {
-        setActionSuccess(`המשתמש ${newPhone} נוסף בהצלחה ונשלחה אליו הדרכת חיבור!`);
+        setActionSuccess(
+          silent
+            ? `המשתמש ${newPhone} נוסף בהצלחה במצב שקט (ללא שליחת הודעת וואטסאפ לנהג).`
+            : `המשתמש ${newPhone} נוסף בהצלחה ונשלחה אליו הדרכת חיבור!`
+        );
         setNewPhone('');
         setNewName('');
         await loadData();
@@ -641,7 +650,7 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
               </div>
 
               {/* Add Driver inline */}
-              <form onSubmit={handleAddDirect} className="flex gap-1.5 shrink-0">
+              <form onSubmit={(e) => handleAddDirect(e, false)} className="flex flex-wrap items-center gap-1.5 shrink-0">
                 <input
                   type="text"
                   value={newPhone}
@@ -660,11 +669,21 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
-                  title="הוסף נהג מאושר ישירות ושלח לו הדרכה לוואטסאפ"
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0 transition-colors shadow-sm"
+                  title="הוסף נהג מאושר ישירות ושלח לו הודעת אישור והדרכה לוואטסאפ"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">הוסף</span>
+                  <span>הוסף עם הדרכה</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddDirect(undefined, true)}
+                  disabled={loading}
+                  className="px-2.5 py-1.5 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/40 text-teal-300 font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
+                  title="הוסף נהג מאושר ישירות בשקט ללא שליחת שום הודעה לוואטסאפ שלו"
+                >
+                  <BellOff className="w-3.5 h-3.5 text-teal-400" />
+                  <span>הוסף שקט (ללא הודעה)</span>
                 </button>
               </form>
             </div>
@@ -946,15 +965,26 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleApprove(effectivePhone || user.phone, user.name)}
+                          onClick={() => handleApprove(effectivePhone || user.phone, user.name, false)}
                           disabled={loading}
-                          className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-md"
+                          className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-md"
+                          title="אשר ושלח לנהג הודעת אישור והדרכת חיבור לוואטסאפ"
                         >
                           <UserCheck className="w-3.5 h-3.5" />
-                          אשר ושלח הדרכה לוואטסאפ
+                          אשר ושלח הדרכה
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApprove(effectivePhone || user.phone, user.name, true)}
+                          disabled={loading}
+                          className="flex-1 sm:flex-initial px-3 py-2 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/40 text-teal-300 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                          title="אשר את הנהג במערכת בשקט, ללא שליחת שום הודעה לוואטסאפ של הנהג"
+                        >
+                          <BellOff className="w-3.5 h-3.5 text-teal-400" />
+                          אשר שקט (ללא הודעה)
                         </button>
                         <button
                           type="button"
