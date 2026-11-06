@@ -208,4 +208,61 @@ export interface DriverGeoLocation {
   updatedAt: number;
 }
 
+export interface DailyStatPoint {
+  date: string;
+  dayName: string;
+  scanned: number;
+  sent: number;
+  rejected: number;
+  duplicates: number;
+  commands: number;
+}
+
+export interface SearchCategoryStat {
+  category: string;
+  name: string;
+  count: number;
+  percentage: number;
+  avgDurationMinutes: number;
+  color: string;
+}
+
+export interface RoutePopularity {
+  route: string;
+  origin: string;
+  destination: string;
+  count: number;
+  activeDriversCount: number;
+}
+
+export interface HourlyTrafficPoint {
+  hour: string;
+  ridesCount: number;
+  searchesCount: number;
+}
+
+export interface DriverActivityItem {
+  phone: string;
+  name?: string;
+  totalSearches: number;
+  activeMinutes: number;
+  currentSearch?: string;
+  lastActive: string;
+  status: string;
+}
+
+export interface AnalyticsSummary {
+  ok: boolean;
+  totalSearchesTracked: number;
+  avgSearchDurationMinutes: number;
+  activeSearchesNow: number;
+  peakHour: string;
+  topSearchCategory: string;
+  dailyStats: DailyStatPoint[];
+  searchCategories: SearchCategoryStat[];
+  topRoutes: RoutePopularity[];
+  hourlyTraffic: HourlyTrafficPoint[];
+  driverActivity: DriverActivityItem[];
+}
+
 

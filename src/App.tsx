@@ -42,6 +42,7 @@ import { AiHandoffModal } from './components/AiHandoffModal.tsx';
 import { UsersManagementModal } from './components/UsersManagementModal.tsx';
 import { BugTrackerModal } from './components/BugTrackerModal.tsx';
 import { BroadcastModal } from './components/BroadcastModal.tsx';
+import { AnalyticsModal } from './components/AnalyticsModal.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { AccessibilityWidget } from './components/AccessibilityWidget.tsx';
 import { DriverRadarModal } from './components/DriverRadarModal.tsx';
@@ -80,6 +81,7 @@ export default function App() {
   const [aiHandoffModalOpen, setAiHandoffModalOpen] = useState(false);
   const [usersModalOpen, setUsersModalOpen] = useState(false);
   const [broadcastModalOpen, setBroadcastModalOpen] = useState(false);
+  const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
   const [bugModalOpen, setBugModalOpen] = useState(false);
   const [radarModalOpen, setRadarModalOpen] = useState(false);
   const [errorsList, setErrorsList] = useState<ErrorReport[]>([]);
@@ -406,6 +408,7 @@ export default function App() {
         onOpenAiHandoffModal={() => setAiHandoffModalOpen(true)}
         onOpenUsersModal={() => setUsersModalOpen(true)}
         onOpenBroadcastModal={() => setBroadcastModalOpen(true)}
+        onOpenAnalyticsModal={() => setAnalyticsModalOpen(true)}
         onOpenBugModal={() => setBugModalOpen(true)}
         onOpenLegalModal={handleOpenLegalTab}
         errorsCount={errorsList.length}
@@ -595,6 +598,12 @@ export default function App() {
         approvedUsers={approvedUsersList}
         activeSessionsCount={status?.stats?.totalConnectedDrivers ?? approvedUsersList.filter(u => u.connectionStatus === 'connected').length}
         onSendBroadcast={handleSendBroadcast}
+      />
+
+      {/* Analytics & Graphs Modal */}
+      <AnalyticsModal
+        isOpen={analyticsModalOpen}
+        onClose={() => setAnalyticsModalOpen(false)}
       />
 
       {/* Driver Live Rides Radar Full-Screen Modal */}

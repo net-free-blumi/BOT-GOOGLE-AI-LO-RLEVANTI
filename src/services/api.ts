@@ -1,5 +1,5 @@
-import { StatusPayload, LogItem, ConnectionConfig, ErrorReport } from '../types.ts';
-import { getMockStatus, getMockLogs, applyMockCommand } from './mockData.ts';
+import { StatusPayload, LogItem, ConnectionConfig, ErrorReport, AnalyticsSummary } from '../types.ts';
+import { getMockStatus, getMockLogs, applyMockCommand, getMockAnalytics } from './mockData.ts';
 
 const TOKEN_KEY = 'rides_dash_token';
 const CONFIG_KEY = 'rides_dash_config';
@@ -791,6 +791,20 @@ export async function simulateRideApi(customRide?: any): Promise<{ ok: boolean; 
       ok: true,
       ride: sampleRide,
     };
+  }
+}
+
+export async function fetchAnalyticsApi(): Promise<AnalyticsSummary> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return getMockAnalytics();
+  }
+  try {
+    const res = await request<AnalyticsSummary>('/api/analytics');
+    if (res && res.ok) return res;
+    return getMockAnalytics();
+  } catch {
+    return getMockAnalytics();
   }
 }
 

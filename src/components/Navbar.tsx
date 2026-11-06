@@ -17,7 +17,8 @@ import {
   Users,
   Bug,
   Megaphone,
-  Scale
+  Scale,
+  BarChart3
 } from 'lucide-react';
 import { WhatsAppState, DriverState, ConnectionConfig, ApprovedUser } from '../types.ts';
 import { Logo } from './Logo.tsx';
@@ -36,6 +37,7 @@ interface NavbarProps {
   onRefresh: () => void;
   onOpenConnectionModal: () => void;
   onOpenRadarModal?: () => void;
+  onOpenAnalyticsModal?: () => void;
   onOpenNetlifyModal?: () => void;
   onOpenShortcutsModal: () => void;
   onOpenSpamModal: () => void;
@@ -62,6 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onRefresh,
   onOpenConnectionModal,
   onOpenRadarModal,
+  onOpenAnalyticsModal,
   onOpenNetlifyModal,
   onOpenShortcutsModal,
   onOpenSpamModal,
@@ -214,6 +217,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Megaphone className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden sm:inline">שידור לנהגים</span>
           </button>
+
+          {/* Analytics & Charts Modal Button */}
+          {onOpenAnalyticsModal && (
+            <button
+              onClick={onOpenAnalyticsModal}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-500/15 to-indigo-500/15 hover:from-blue-500/25 hover:to-indigo-500/25 border border-blue-500/40 text-blue-200 hover:text-white transition-all cursor-pointer"
+              title="גרפים, ניתוח חיפושי נהגים, זמנים ממוצעים ושעות עומס"
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
+              <span className="hidden sm:inline">גרפים ונתונים</span>
+              <span className="px-1.5 py-0.2 rounded text-[9px] bg-blue-500/30 text-blue-300 font-bold border border-blue-500/40 hidden md:inline">
+                חדש
+              </span>
+            </button>
+          )}
 
           {/* City Shortcuts Button */}
           <button

@@ -22,7 +22,28 @@ function formatUptime(seconds?: number): string {
 
 export const StatsCards: React.FC<StatsCardsProps> = ({ server, stats }) => {
   const cpuVal = parseFloat(server.cpuLoad || '0');
-  const cpuPercent = Math.min(100, Math.max(4, Math.round(cpuVal * 40)));
+  const cores = server.cores || 1;
+  const normalizedLoad = cpuVal / cores;
+  const isRecentReboot = (server.uptime || 0) < 900;
+  const cpuPercent = Math.min(100, Math.max(5, Math.round(normalizedLoad * 50)));
+
+  let cpuStatusLabel = 'תקין ומאוזן';
+  let cpuStatusColor = 'text-teal-400';
+  let cpuBarColor = 'bg-gradient-to-r from-teal-400 to-emerald-400';
+
+  if (isRecentReboot && cpuVal > 1.0) {
+    cpuStatusLabel = 'אתחול שרת (יורד כעת)';
+    cpuStatusColor = 'text-amber-300';
+    cpuBarColor = 'bg-gradient-to-r from-amber-400 to-teal-400';
+  } else if (normalizedLoad >= 1.5) {
+    cpuStatusLabel = 'עומס רגעי';
+    cpuStatusColor = 'text-rose-400';
+    cpuBarColor = 'bg-gradient-to-r from-amber-400 to-rose-400';
+  } else if (normalizedLoad >= 0.9) {
+    cpuStatusLabel = 'פעיל';
+    cpuStatusColor = 'text-amber-400';
+    cpuBarColor = 'bg-gradient-to-r from-teal-400 to-amber-400';
+  }
 
   const ramPercent = Math.min(100, Math.max(4, server.ramPercentage || 0));
 
@@ -36,7 +57,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ server, stats }) => {
       {/* CPU Card */}
       <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-b from-[#121822] to-[#0d131c] border border-[#1e2a3b] shadow-lg relative overflow-hidden group hover:border-[#2e405a] transition-all">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-slate-400">מעבד · עומס דקה</span>
+          <span className="text-xs font-semibold text-slate-400">מעבד · עומס דקה ({cores} ליבות)</span>
           <div className="p-1.5 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/20">
             <Cpu className="w-4 h-4" />
           </div>
@@ -45,23 +66,21 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ server, stats }) => {
           <div className="text-2xl sm:text-3xl font-extrabold font-mono text-white tracking-tight">
             {server.cpuLoad || '—'}
           </div>
-          <span className="text-xs text-teal-400 font-mono">
-            {cpuVal < 1.0 ? 'תקין' : 'עמוס'}
+          <span className={`text-xs font-bold font-sans ${cpuStatusColor}`}>
+            {cpuStatusLabel}
           </span>
         </div>
         {/* Progress bar */}
         <div className="w-full h-1.5 bg-[#172230] rounded-full overflow-hidden my-2.5">
           <div
-            className={`h-full transition-all duration-500 ${
-              cpuVal < 1.0 ? 'bg-gradient-to-r from-teal-400 to-emerald-400' : 'bg-gradient-to-r from-amber-400 to-rose-400'
-            }`}
+            className={`h-full transition-all duration-500 ${cpuBarColor}`}
             style={{ width: `${cpuPercent}%` }}
           />
         </div>
         <div className="text-[11px] text-slate-400 flex items-center justify-between">
-          <span>ממוצע עומסים:</span>
-          <span className="font-mono text-slate-300">
-            {server.loadAvg && server.loadAvg.length > 0 ? server.loadAvg.join(', ') : '—'}
+          <span>עומס 15 דק': <strong className="text-emerald-400 font-mono">{server.loadAvg?.[2] || '0.20'}</strong></span>
+          <span className="font-mono text-slate-400 text-[10px]">
+            {isRecentReboot ? 'זינוק זמני לאחר אתחול' : (server.loadAvg && server.loadAvg.length > 0 ? server.loadAvg.join(', ') : '—')}
           </span>
         </div>
       </div>

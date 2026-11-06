@@ -1,4 +1,4 @@
-import { StatusPayload, LogItem, DriverState } from '../types.ts';
+import { StatusPayload, LogItem, DriverState, AnalyticsSummary } from '../types.ts';
 
 let mockSearch: DriverState = {
   active: true,
@@ -171,4 +171,173 @@ export function applyMockCommand(cmd: string) {
   });
 
   return { ok: true, message: `חיפוש הופעל: ${mockSearch.displayText}`, search: { ...mockSearch } };
+}
+
+export function getMockAnalytics(): AnalyticsSummary {
+  const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  const today = new Date();
+  
+  const dailyStats = Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - (6 - i));
+    const dayName = i === 6 ? 'היום' : i === 5 ? 'אתמול' : `יום ${dayNames[d.getDay()]}`;
+    const base = 420 + i * 45;
+    return {
+      date: d.toISOString().split('T')[0],
+      dayName,
+      scanned: base,
+      sent: Math.round(base * 0.18),
+      rejected: Math.round(base * 0.65),
+      duplicates: Math.round(base * 0.17),
+      commands: 18 + i * 4,
+    };
+  });
+
+  return {
+    ok: true,
+    totalSearchesTracked: 142,
+    avgSearchDurationMinutes: 44,
+    activeSearchesNow: 6,
+    peakHour: '20:00 - 22:30',
+    topSearchCategory: 'פנימי בית שמש (48%)',
+    dailyStats,
+    searchCategories: [
+      {
+        category: 'internal',
+        name: 'פנימי (תוך-עירוני)',
+        count: 68,
+        percentage: 48,
+        avgDurationMinutes: 52,
+        color: '#10b981', // emerald
+      },
+      {
+        category: 'route',
+        name: 'בינעירוני (מסלול בין ערים)',
+        count: 41,
+        percentage: 29,
+        avgDurationMinutes: 38,
+        color: '#3b82f6', // blue
+      },
+      {
+        category: 'reduce',
+        name: 'צמצם ורדיוס מרחבי',
+        count: 22,
+        percentage: 15,
+        avgDurationMinutes: 46,
+        color: '#f59e0b', // amber
+      },
+      {
+        category: 'from',
+        name: 'יציאה מעיר לכל יעד',
+        count: 11,
+        percentage: 8,
+        avgDurationMinutes: 31,
+        color: '#a855f7', // purple
+      },
+    ],
+    topRoutes: [
+      {
+        route: 'בית שמש פנימי (רמות א\', ג\', ד\', קריה)',
+        origin: 'בית שמש',
+        destination: 'פנימי',
+        count: 68,
+        activeDriversCount: 4,
+      },
+      {
+        route: 'ירושלים ⬅️ בית שמש',
+        origin: 'ירושלים',
+        destination: 'בית שמש',
+        count: 26,
+        activeDriversCount: 2,
+      },
+      {
+        route: 'בית שמש ⬅️ בני ברק',
+        origin: 'בית שמש',
+        destination: 'בני ברק',
+        count: 19,
+        activeDriversCount: 1,
+      },
+      {
+        route: 'בית שמש ⬅️ ירושלים',
+        origin: 'בית שמש',
+        destination: 'ירושלים',
+        count: 15,
+        activeDriversCount: 1,
+      },
+      {
+        route: 'שמש צמצם (כולל מושבים ואזורי תעשייה)',
+        origin: 'בית שמש',
+        destination: 'צמצם',
+        count: 14,
+        activeDriversCount: 2,
+      },
+      {
+        route: 'בני ברק פנימי (רבי עקיבא / חזון איש)',
+        origin: 'בני ברק',
+        destination: 'פנימי',
+        count: 9,
+        activeDriversCount: 1,
+      },
+    ],
+    hourlyTraffic: [
+      { hour: '06:00', ridesCount: 8, searchesCount: 2 },
+      { hour: '07:00', ridesCount: 28, searchesCount: 7 },
+      { hour: '08:00', ridesCount: 45, searchesCount: 11 },
+      { hour: '09:00', ridesCount: 38, searchesCount: 9 },
+      { hour: '10:00', ridesCount: 22, searchesCount: 5 },
+      { hour: '11:00', ridesCount: 19, searchesCount: 4 },
+      { hour: '12:00', ridesCount: 25, searchesCount: 6 },
+      { hour: '13:00', ridesCount: 39, searchesCount: 10 },
+      { hour: '14:00', ridesCount: 42, searchesCount: 12 },
+      { hour: '15:00', ridesCount: 36, searchesCount: 8 },
+      { hour: '16:00', ridesCount: 24, searchesCount: 5 },
+      { hour: '17:00', ridesCount: 31, searchesCount: 7 },
+      { hour: '18:00', ridesCount: 44, searchesCount: 11 },
+      { hour: '19:00', ridesCount: 53, searchesCount: 14 },
+      { hour: '20:00', ridesCount: 68, searchesCount: 16 },
+      { hour: '21:00', ridesCount: 74, searchesCount: 18 },
+      { hour: '22:00', ridesCount: 62, searchesCount: 15 },
+      { hour: '23:00', ridesCount: 35, searchesCount: 8 },
+      { hour: '00:00', ridesCount: 18, searchesCount: 4 },
+      { hour: '01:00', ridesCount: 9, searchesCount: 2 },
+    ],
+    driverActivity: [
+      {
+        phone: '0556706325',
+        name: 'ישראל מ.',
+        totalSearches: 46,
+        activeMinutes: 184,
+        currentSearch: 'בית שמש פנימי',
+        lastActive: 'לפני 3 דקות',
+        status: 'active',
+      },
+      {
+        phone: '0507787427',
+        name: 'אברהם כ.',
+        totalSearches: 32,
+        activeMinutes: 140,
+        currentSearch: 'ירושלים ⬅️ בית שמש',
+        lastActive: 'לפני 7 דקות',
+        status: 'active',
+      },
+      {
+        phone: '0528991234',
+        name: 'דוד ל.',
+        totalSearches: 28,
+        activeMinutes: 95,
+        currentSearch: 'תפוס',
+        lastActive: 'לפני 25 דקות',
+        status: 'idle',
+      },
+      {
+        phone: '0544123890',
+        name: 'יוסי ש.',
+        totalSearches: 21,
+        activeMinutes: 78,
+        currentSearch: 'שמש צמצם',
+        lastActive: 'לפני 12 דקות',
+        status: 'active',
+      },
+    ],
+  };
 }
