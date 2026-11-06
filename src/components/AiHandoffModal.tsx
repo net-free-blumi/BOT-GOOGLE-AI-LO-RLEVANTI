@@ -25,12 +25,12 @@ export const AiHandoffModal: React.FC<AiHandoffModalProps> = ({
 
   const handoffMarkdown = `# סיכום עדכון מערכת ואתר ניהול (להעברה לקלוד / Gemini)
 תאריך: 2026-10-20
-שרת: 82.70.210.206 (פורט 3000)
+שרת: שרת ה-VPS שלך (פורט 3000)
 
 ## 1. מה בוצע באתר הניהול (Frontend & Netlify):
 - **מעבר לפרויקט React + Vite + Tailwind RTL מודרני:** האתר נבנה מחדש מאפס עבור Netlify.
 - **פתרון בעיית סנכרון השרת ו-Mixed Content בנטליפיי:**
-  - הוגדר קובץ \`_redirects\` וקובץ \`netlify.toml\` שמבצעים Reverse Proxy מ-\`/api/*\` אל \`http://82.70.210.206:3000/api/:splat\` עם קוד 200!.
+  - הוגדר קובץ \`_redirects\` וקובץ \`netlify.toml\` שמבצעים Reverse Proxy מ-\`/api/*\` אל שרת ה-VPS בפורט 3000 עם קוד 200!.
   - זה מאפשר לאתר ב-Netlify לתקשר בצורה חלקה ומאובטחת ללא חסימת דפדפן (CORS/Mixed Content).
 - **תמיכה מלאה בכל קיצורי ההקלדה של הנהג:**
   - \`שמש צמצם\` / \`ים צמצם\` – חיפוש צמצום (הן נסיעות פנימיות והן נסיעות יוצאות).
@@ -69,7 +69,7 @@ await sock.sendMessage(driverJid, { text: cleanedAlert }, { quoted: m });
 ## 3. קבצי הגדרה ב-Netlify:
 קובץ \`public/_redirects\`:
 \`\`\`
-/api/*  http://82.70.210.206:3000/api/:splat  200!
+/api/*  http://<YOUR_VPS_IP>:3000/api/:splat  200!
 /*      /index.html                           200
 \`\`\`
 `;

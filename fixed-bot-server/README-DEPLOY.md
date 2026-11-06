@@ -38,16 +38,16 @@
 
 ---
 
-## 🚀 פקודות לעדכון השרת ב-VPS (82.70.210.206):
+## 🚀 פקודות לעדכון השרת ב-VPS:
 
 ### אפשרות 1: העלאת הקבצים ששונו בלבד (דרך PowerShell / CMD במחשב):
 ```powershell
-scp -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" geo-helper.js dashboard-api.js index.js matcher.js cities.json ubuntu@82.70.210.206:/home/ubuntu/wa-rides-bot/
+scp -i "path\to\your-ssh-key.key" geo-helper.js dashboard-api.js index.js matcher.js cities.json ubuntu@<YOUR_SERVER_IP>:/home/ubuntu/wa-rides-bot/
 ```
 
 ### אפשרות 2: הורדת חבילת העדכון המוכנה ישירות בתוך השרת (ב-SSH):
 ```bash
-ssh -i "C:\Users\natan\Downloads\ssh-key-2026-10-18.key" ubuntu@82.70.210.206
+ssh -i "path/to/your-ssh-key.key" ubuntu@<YOUR_SERVER_IP>
 cd /home/ubuntu/wa-rides-bot
 curl -sL https://ais-pre-ogepdml7yksj3njqbvf4no-597988249598.europe-west1.run.app/fixed-bot-server-v3.0.tar.gz | tar -xz
 pm2 restart wa-bot --update-env

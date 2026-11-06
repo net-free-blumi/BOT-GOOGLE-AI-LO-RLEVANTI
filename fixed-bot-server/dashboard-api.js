@@ -73,9 +73,85 @@ function safeEqual(a, b) {
 }
 
 function newToken() {
-  const token = crypto.randomBytes(24).toString("hex");
+  const token = crypto.randomBytes(32).toString("hex");
   sessions.set(token, Date.now() + TOKEN_TTL_MS);
   return token;
+}
+
+// Anti-Brute-Force & Rate Limiting state
+const failedLogins = new Map(); // ip -> { count: number, lockedUntil: number }
+const apiRateLimits = new Map(); // ip -> { count: number, resetAt: number }
+let lastWebhookDeployAt = 0;
+
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    return String(forwarded).split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || req.ip || "unknown";
+}
+
+function checkRateLimit(req, maxRequests = 250, windowMs = 60000) {
+  const ip = getClientIp(req);
+  const now = Date.now();
+  let record = apiRateLimits.get(ip);
+  if (!record || now > record.resetAt) {
+    record = { count: 1, resetAt: now + windowMs };
+    apiRateLimits.set(ip, record);
+    return { ok: true };
+  }
+  record.count += 1;
+  if (record.count > maxRequests) {
+    return { ok: false, retryAfter: Math.ceil((record.resetAt - now) / 1000) };
+  }
+  return { ok: true };
+}
+
+function maskPhone(phone) {
+  if (!phone) return "";
+  const s = String(phone).replace(/[^0-9]/g, "");
+  if (s.length <= 4) return "****";
+  return s.slice(0, 3) + "*".repeat(Math.max(2, s.length - 6)) + s.slice(-3);
+}
+
+function isValidToken(token) {
+  if (!token || typeof token !== "string") return false;
+  const trimmed = token.trim();
+  const masterPass = loadPassword();
+  if (safeEqual(trimmed, masterPass)) return true;
+
+  const expiresAt = sessions.get(trimmed);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    sessions.delete(trimmed);
+    return false;
+  }
+  return true;
+}
+
+function extractToken(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  if (req.headers["x-auth-token"]) {
+    return String(req.headers["x-auth-token"]).trim();
+  }
+  if (req.query?.token) {
+    return String(req.query.token).trim();
+  }
+  return null;
+}
+
+function requireAuth(req, res, next) {
+  const token = extractToken(req);
+  if (!token || !isValidToken(token)) {
+    return res.status(401).json({ 
+      ok: false, 
+      error: "נדרשת התחברות (Unauthorized) - נא להתחבר מחדש עם סיסמת הניהול" 
+    });
+  }
+  next();
 }
 
 const ERROR_LOG_MAX = 150;
@@ -163,7 +239,7 @@ function metrics() {
   };
 }
 
-function getUnifiedStatus(requestedPhone) {
+function getUnifiedStatus(requestedPhone, isAuthenticated = false) {
   resetStatsIfNewDay();
   const m = metrics();
   const users = loadUsersData();
@@ -182,10 +258,69 @@ function getUnifiedStatus(requestedPhone) {
   const driverSearch = ctx?.getUserSearch ? ctx.getUserSearch(targetDriverPhone) : { active: false, displayText: "אין חיפוש" };
   const driverSess = sessionsSummary?.drivers?.find((d) => cleanPhone(d.phone) === targetDriverPhone);
 
+  if (!isAuthenticated) {
+    // סטטוס ציבורי מוקשח ומאובטח - ללא חשיפת מספרי טלפון, סשנים או פרטים רגישים
+    return {
+      status: "online",
+      ok: true,
+      apiVersion: 3,
+      authenticated: false,
+      uptime: m.uptime,
+      ramUsageMB: m.ramUsageMB,
+      totalRamMB: m.ramTotalMB,
+      ramPercentage: m.ramPercentage,
+      cpuLoad: m.cpuLoad,
+      whatsappConnected: botInfo.connected,
+      waStatus: botInfo.connected ? "connected" : "disconnected",
+      activeSearch: driverSearch.active ? "חיפוש פעיל" : null,
+      selectedDriver: {
+        phone: maskPhone(targetDriverPhone),
+        connected: driverSess?.status === "connected",
+        status: driverSess?.status || "disconnected",
+        search: { active: Boolean(driverSearch.active), displayText: driverSearch.active ? "חיפוש פעיל" : "אין חיפוש" },
+      },
+      wa: {
+        connected: botInfo.connected,
+        registered: botInfo.registered,
+        pairingCode: null,
+        lastDisconnectReason: "",
+        botPhone: maskPhone(botInfo.phone),
+        adminPhone: maskPhone(users.adminPhone),
+        connectedDriversCount: sessionsSummary?.totalConnectedDrivers || 0,
+      },
+      sessions: null,
+      search: {
+        active: Boolean(driverSearch.active),
+        displayText: driverSearch.active ? "חיפוש פעיל" : "אין חיפוש פעיל",
+        describe: driverSearch.active ? "חיפוש מוגדר ומאובטח" : "אין חיפוש פעיל",
+      },
+      server: {
+        cpuLoad: m.cpuLoad,
+        ramUsageMB: m.ramUsageMB,
+        uptime: m.uptime,
+        node: process.version,
+      },
+      stats: {
+        scanned: stats.scanned,
+        sent: stats.sent,
+        rejected: stats.rejected,
+        duplicates: stats.duplicates,
+        commands: stats.commands,
+        approvedUsersCount: users.approvedUsers?.length || 1,
+        pendingUsersCount: 0,
+      },
+      settings: {
+        defaultCity: "בית שמש",
+      },
+    };
+  }
+
+  // סטטוס מלא למשתמש מורשה (Authenticated)
   return {
     status: "online",
     ok: true,
     apiVersion: 3,
+    authenticated: true,
     uptime: m.uptime,
     ramUsageMB: m.ramUsageMB,
     totalRamMB: m.ramTotalMB,
@@ -260,42 +395,99 @@ export function startDashboard(runtime) {
   const password = loadPassword();
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "64kb" }));
 
-  // CORS מלא
+  // כותרות אבטחה מחמירות (OWASP Security Headers)
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    next();
+  });
+
+  // CORS מוקשח ומאובטח
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Auth-Token");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
 
-  // אימות התחברות
+  // מנגנון הגנה מפני הצפות ובקשות זדוניות (Anti-DDoS / Rate Limiting)
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api/")) return next();
+    // לא מגבילים את בדיקת הסטטוס הקלה, כן מגבילים פניות חוזרות
+    const limit = checkRateLimit(req, 300, 60000);
+    if (!limit.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: `יותר מדי פניות (Rate Limit). נא להמתין ${limit.retryAfter} שניות.`,
+      });
+    }
+    next();
+  });
+
+  // אימות התחברות עם הגנת Brute-Force מלאה וחסימת IP אוטומטית
   const handleAuth = (req, res) => {
+    const ip = getClientIp(req);
+    const now = Date.now();
+    const failed = failedLogins.get(ip);
+
+    if (failed && now < failed.lockedUntil) {
+      const waitSec = Math.ceil((failed.lockedUntil - now) / 1000);
+      return res.status(429).json({
+        ok: false,
+        error: `יותר מדי ניסיונות כושלים. הגישה לכתובת שלך נחסמה זמנית ל-${waitSec} שניות למען אבטחת השרת.`,
+      });
+    }
+
     const sentPass = req.body?.password || req.body?.secret;
     if (safeEqual(sentPass, password)) {
+      failedLogins.delete(ip);
+      recordEvent("system", `התחברות מוצלחת ללוח הבקרה (IP: ${ip})`);
       return res.json({ ok: true, success: true, token: newToken() });
     }
-    return res.status(401).json({ ok: false, success: false, error: "סיסמה שגויה" });
+
+    const currentAttempts = (failed && now < failed.lockedUntil + 15 * 60 * 1000 ? failed.count : 0) + 1;
+    if (currentAttempts >= 5) {
+      failedLogins.set(ip, { count: currentAttempts, lockedUntil: now + 15 * 60 * 1000 });
+      recordEvent("system", `⚠️ כתובת ${ip} נחסמה ל-15 דקות עקב 5 ניסיונות התחברות שגויים`);
+      return res.status(429).json({
+        ok: false,
+        error: "יותר מדי ניסיונות שגויים! הגישה נחסמה ל-15 דקות להגנה מפני פריצה.",
+      });
+    } else {
+      failedLogins.set(ip, { count: currentAttempts, lockedUntil: 0 });
+    }
+
+    return res.status(401).json({ 
+      ok: false, 
+      success: false, 
+      error: `סיסמה שגויה (${5 - currentAttempts} ניסיונות נותרו לפני חסימה זמנית)` 
+    });
   };
 
   app.post("/api/login", handleAuth);
   app.post("/api/auth", handleAuth);
 
-  // סטטוס מלא (תומך בפרמטר ?phone= לסינון לפי נהג)
+  // סטטוס מלא (ממסך פרטים רגישים אם המשתמש אינו מחובר)
   app.get("/api/status", (req, res) => {
-    res.json(getUnifiedStatus(req.query.phone));
+    const isAuthed = isValidToken(extractToken(req));
+    res.json(getUnifiedStatus(req.query.phone, isAuthed));
   });
 
-  // סשנים פעילים (ריבוי וואטסאפ: בוט + נהגים)
-  app.get("/api/sessions", (_req, res) => {
+  // סשנים פעילים (ריבוי וואטסאפ: בוט + נהגים) - מוגן באבטחה מלאה
+  app.get("/api/sessions", requireAuth, (_req, res) => {
     const summary = ctx?.getAllSessions ? ctx.getAllSessions() : { bot: {}, drivers: [] };
     res.json({ ok: true, ...summary });
   });
 
-  // הפקת קוד צימוד לפי דרישה (לבוט או לנהג ספציפי)
-  app.post("/api/pairing/request", async (req, res) => {
+  // הפקת קוד צימוד לפי דרישה (לבוט או לנהג ספציפי) - מוגן באבטחה מלאה
+  app.post("/api/pairing/request", requireAuth, async (req, res) => {
     const phone = req.body?.phone;
     const isBot = Boolean(req.body?.isBot);
     const forceReset = Boolean(req.body?.forceReset);
@@ -370,11 +562,11 @@ export function startDashboard(runtime) {
     }
   };
 
-  app.get("/api/driver/qr/:phone", handleDriverQrRequest);
-  app.get("/api/pairing/qr", handleDriverQrRequest);
+  app.get("/api/driver/qr/:phone", requireAuth, handleDriverQrRequest);
+  app.get("/api/pairing/qr", requireAuth, handleDriverQrRequest);
 
   // איפוס מלא של כל סשני הנהגים, מחיקת כל הקוקיז ואיפוס כל מיפויי ה-LID מהשרת (ללא פגיעה בבוט הראשי)
-  app.post("/api/sessions/clear-all", (_req, res) => {
+  app.post("/api/sessions/clear-all", requireAuth, (_req, res) => {
     try {
       if (ctx?.purgeAllDriverSessions) {
         const result = ctx.purgeAllDriverSessions();
@@ -393,7 +585,7 @@ export function startDashboard(runtime) {
   });
 
   // איפוס מלא של סשן נהג, מחיקת קוקיז/תיקיות אימות והסרת חסימות צינון
-  app.post("/api/sessions/reset-auth", (req, res) => {
+  app.post("/api/sessions/reset-auth", requireAuth, (req, res) => {
     const phone = req.body?.phone || req.body?.identifier;
     if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון או מזהה נהג" });
     try {
@@ -409,7 +601,7 @@ export function startDashboard(runtime) {
   });
 
   // ניתוק סשן נהג ספציפי
-  app.post("/api/sessions/disconnect", (req, res) => {
+  app.post("/api/sessions/disconnect", requireAuth, (req, res) => {
     const phone = req.body?.phone;
     if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
     if (ctx?.disconnectDriver) {
@@ -420,8 +612,8 @@ export function startDashboard(runtime) {
     res.json({ ok: true, message: "הסשן נותק" });
   });
 
-  // לוגים בזמן אמת (כולל סינון לפי נהג ספציפי)
-  app.get("/api/logs", (req, res) => {
+  // לוגים בזמן אמת (כולל סינון לפי נהג ספציפי) - מוגן באבטחה מלאה
+  app.get("/api/logs", requireAuth, (req, res) => {
     const type = String(req.query.type || "all");
     const driverPhone = req.query.phone ? cleanPhone(req.query.phone) : null;
     const limit = Math.min(Number(req.query.limit) || 80, LOG_MAX);
@@ -437,8 +629,8 @@ export function startDashboard(runtime) {
     res.json({ ok: true, logs: rows.slice(0, limit) });
   });
 
-  // רדאר נסיעות חי (Live Rides Feed)
-  app.get("/api/rides/live", (req, res) => {
+  // רדאר נסיעות חי (Live Rides Feed) - מוגן באבטחה מלאה
+  app.get("/api/rides/live", requireAuth, (req, res) => {
     try {
       const phone = req.query.phone ? cleanPhone(req.query.phone) : null;
       let rides = [];
@@ -451,8 +643,8 @@ export function startDashboard(runtime) {
     }
   });
 
-  // תפיסת נסיעה מהירה מהאתר ("תן")
-  app.post("/api/rides/claim", async (req, res) => {
+  // תפיסת נסיעה מהירה מהאתר ("תן") - מוגן באבטחה מלאה
+  app.post("/api/rides/claim", requireAuth, async (req, res) => {
     try {
       const { rideId, driverPhone, claimText } = req.body || {};
       if (!rideId) return res.status(400).json({ ok: false, error: "נדרש מזהה נסיעה" });
@@ -470,8 +662,8 @@ export function startDashboard(runtime) {
     }
   });
 
-  // סימולציית נסיעה לבדיקה חיה מהאתר
-  app.post("/api/rides/simulate", (req, res) => {
+  // סימולציית נסיעה לבדיקה חיה מהאתר - מוגן באבטחה מלאה
+  app.post("/api/rides/simulate", requireAuth, (req, res) => {
     try {
       const simulated = req.body || {};
       if (ctx?.simulateLiveRide) {
@@ -484,14 +676,14 @@ export function startDashboard(runtime) {
     }
   });
 
-  // חיפוש כללי או לפי נהג ספציפי
-  app.get("/api/search", (req, res) => {
+  // חיפוש כללי או לפי נהג ספציפי - מוגן באבטחה מלאה
+  app.get("/api/search", requireAuth, (req, res) => {
     const phone = req.query.phone || loadUsersData().adminPhone;
     const state = ctx?.getUserSearch ? ctx.getUserSearch(phone) : {};
     res.json({ ok: true, activeSearch: state.active ? state.displayText : null, search: state, phone: cleanPhone(phone) });
   });
 
-  app.post("/api/search", (req, res) => {
+  app.post("/api/search", requireAuth, (req, res) => {
     const phone = req.body?.phone || loadUsersData().adminPhone;
     const cleanP = cleanPhone(phone);
     const cmd = String(req.body?.command || req.body?.text || "").trim();
@@ -520,7 +712,7 @@ export function startDashboard(runtime) {
     res.json({ ok: true, success: true, message: `חיפוש הופעל: ${nextState.displayText}`, search: nextState });
   });
 
-  app.post("/api/search/stop", (req, res) => {
+  app.post("/api/search/stop", requireAuth, (req, res) => {
     const phone = req.body?.phone || loadUsersData().adminPhone;
     const cleanP = cleanPhone(phone);
     const empty = ctx?.stopUserSearch ? ctx.stopUserSearch(cleanP) : {};
@@ -529,9 +721,9 @@ export function startDashboard(runtime) {
   });
 
   // ==========================================
-  // ניהול משתמשים, עריכת פרטים ושליחת הדרכה מיידית
+  // ניהול משתמשים, עריכת פרטים ושליחת הדרכה מיידית (מוגן באבטחה מלאה)
   // ==========================================
-  app.get("/api/users", (_req, res) => {
+  app.get("/api/users", requireAuth, (_req, res) => {
     const users = loadUsersData();
     const sessionsSummary = ctx?.getAllSessions ? ctx.getAllSessions() : { drivers: [] };
     const allSearches = ctx?.getAllUserSearches ? ctx.getAllUserSearches() : {};
@@ -558,7 +750,7 @@ export function startDashboard(runtime) {
   });
 
   // אישור משתמש (תומך במצב שקט ללא שליחת הודעה או במצב רגיל עם שליחת מדריך)
-  app.post("/api/users/approve", async (req, res) => {
+  app.post("/api/users/approve", requireAuth, async (req, res) => {
     const phone = req.body?.phone;
     const name = req.body?.name || "נהג";
     const silent = Boolean(req.body?.silent || req.body?.notify === false);
@@ -578,7 +770,7 @@ export function startDashboard(runtime) {
   });
 
   // שליחה חוזרת של מדריך חיבור ואישור לוואטסאפ של המשתמש
-  app.post("/api/users/send-onboarding", async (req, res) => {
+  app.post("/api/users/send-onboarding", requireAuth, async (req, res) => {
     const phone = req.body?.phone;
     const name = req.body?.name || "נהג";
     if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
@@ -596,7 +788,7 @@ export function startDashboard(runtime) {
   });
 
   // עריכת פרטי משתמש (שם, טלפון לתצוגה ותפקיד)
-  app.post("/api/users/edit", (req, res) => {
+  app.post("/api/users/edit", requireAuth, (req, res) => {
     const oldPhone = req.body?.oldPhone || req.body?.phone;
     const name = req.body?.name;
     const newPhone = req.body?.newPhone;
@@ -611,7 +803,7 @@ export function startDashboard(runtime) {
     res.json({ ok: true, ...result });
   });
 
-  app.post("/api/users/reject", (req, res) => {
+  app.post("/api/users/reject", requireAuth, (req, res) => {
     const identifier = req.body?.identifier || req.body?.phone || req.body?.id || req.body?.lid;
     if (!identifier) return res.status(400).json({ ok: false, error: "נדרש מזהה משתמש או טלפון" });
     const result = rejectUser(identifier);
@@ -622,7 +814,7 @@ export function startDashboard(runtime) {
     res.json({ ok: true, ...result });
   });
 
-  app.post("/api/users/add", async (req, res) => {
+  app.post("/api/users/add", requireAuth, async (req, res) => {
     const phone = req.body?.phone;
     const name = req.body?.name || "";
     const silent = Boolean(req.body?.silent || req.body?.notify === false);
@@ -639,7 +831,7 @@ export function startDashboard(runtime) {
     res.json({ ok: true, silent, ...result });
   });
 
-  app.post("/api/users/delete", (req, res) => {
+  app.post("/api/users/delete", requireAuth, (req, res) => {
     const identifier = req.body?.identifier || req.body?.phone || req.body?.id || req.body?.lid;
     if (!identifier) return res.status(400).json({ ok: false, error: "נדרש מזהה משתמש או טלפון" });
     const result = deleteApprovedUser(identifier);
@@ -652,7 +844,7 @@ export function startDashboard(runtime) {
   });
 
   // עדכון מספר טלפון ממשתמש LID למספר סלולרי אמיתי
-  app.post("/api/users/update-phone", (req, res) => {
+  app.post("/api/users/update-phone", requireAuth, (req, res) => {
     const identifier = req.body?.identifier || req.body?.oldPhone;
     const newPhone = req.body?.newPhone;
     if (!identifier || !newPhone) {
@@ -663,7 +855,7 @@ export function startDashboard(runtime) {
     res.json({ ok: true, ...result });
   });
 
-  app.post("/api/users/config", (req, res) => {
+  app.post("/api/users/config", requireAuth, (req, res) => {
     const data = loadUsersData();
     if (req.body?.adminPhone) data.adminPhone = cleanPhone(req.body.adminPhone);
     if (req.body?.botPhone) data.botPhone = cleanPhone(req.body.botPhone);
@@ -672,8 +864,8 @@ export function startDashboard(runtime) {
     res.json({ ok: true, data });
   });
 
-  // שידור הודעת תפוצה לכל הנהגים בלחיצה אחת מהאתר
-  app.post("/api/broadcast", async (req, res) => {
+  // שידור הודעת תפוצה לכל הנהגים בלחיצה אחת מהאתר - מוגן באבטחה מלאה
+  app.post("/api/broadcast", requireAuth, async (req, res) => {
     try {
       const { message, targetType } = req.body || {};
       if (!message || !message.trim()) {
@@ -692,8 +884,8 @@ export function startDashboard(runtime) {
     }
   });
 
-  // שליטה ב-PM2
-  app.post("/api/bot/restart", async (_req, res) => {
+  // שליטה ב-PM2 - מוגן באבטחה מלאה
+  app.post("/api/bot/restart", requireAuth, async (_req, res) => {
     recordEvent("system", "בקשת הפעלה מחדש מהאתר");
     const result = await pm2("restart");
     if (!result.ok) {
@@ -703,18 +895,54 @@ export function startDashboard(runtime) {
     res.json(result);
   });
 
-  app.post("/api/bot/stop", async (_req, res) => {
+  app.post("/api/bot/stop", requireAuth, async (_req, res) => {
     recordEvent("system", "בקשת עצירה מהאתר");
     const result = await pm2("stop");
     res.json(result);
   });
 
   // ==========================================
-  // GitHub Webhook & 1-Click Auto Sync Endpoint
+  // GitHub Webhook & 1-Click Auto Sync Endpoint (Secured)
   // ==========================================
-  app.all("/api/deploy/webhook", (_req, res) => {
-    recordEvent("system", "📥 התקבלה בקשת סנכרון אוטומטי מ-GitHub Webhook...");
-    res.json({ ok: true, message: "הסנכרון החל ברקע מ-GitHub" });
+  app.all("/api/deploy/webhook", (req, res) => {
+    const ip = getClientIp(req);
+    const now = Date.now();
+
+    // 1. הגנה מפני הצפות ובקשות כפולות: מינימום 30 שניות בין סנכרונים
+    if (now - lastWebhookDeployAt < 30000) {
+      const waitSec = Math.ceil((30000 - (now - lastWebhookDeployAt)) / 1000);
+      return res.status(429).json({
+        ok: false,
+        error: `סנכרון כבר רץ לאחרונה. נא להמתין ${waitSec} שניות לפני ניסיון נוסף.`,
+      });
+    }
+
+    // 2. אימות סוד Webhook אם הוגדר בשרת (GITHUB_WEBHOOK_SECRET / WEBHOOK_SECRET)
+    const configuredSecret = process.env.GITHUB_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET;
+    if (configuredSecret) {
+      const querySecret = req.query?.secret || req.body?.secret;
+      const signature = req.headers["x-hub-signature-256"];
+      let valid = false;
+
+      if (querySecret && safeEqual(querySecret, configuredSecret)) {
+        valid = true;
+      } else if (signature && signature.startsWith("sha256=")) {
+        const bodyBuf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {}));
+        const expectedSig = "sha256=" + crypto.createHmac("sha256", configuredSecret).update(bodyBuf).digest("hex");
+        if (safeEqual(signature, expectedSig)) {
+          valid = true;
+        }
+      }
+
+      if (!valid) {
+        recordEvent("system", `⚠️ ניסיון גישה בלתי מורשה ל-Webhook מ-IP: ${ip}`);
+        return res.status(403).json({ ok: false, error: "אימות Webhook נכשל (Secret שגוי או חסר)" });
+      }
+    }
+
+    lastWebhookDeployAt = now;
+    recordEvent("system", `📥 התקבלה בקשת סנכרון מאושרת מ-GitHub Webhook (IP: ${ip})`);
+    res.json({ ok: true, message: "הסנכרון החל ברקע מ-GitHub בצורה מאובטחת" });
 
     const syncCmd = `(
       if [ -f "./auto-sync.sh" ]; then
@@ -734,7 +962,7 @@ export function startDashboard(runtime) {
       fi
     )`;
 
-    exec(syncCmd, { cwd: process.cwd() }, (err, stdout, stderr) => {
+    exec(syncCmd, { cwd: process.cwd() }, (err, stdout) => {
       if (err) {
         recordError("github_sync_error", err);
         console.error("❌ שגיאה בסנכרון מ-GitHub:", err.message);
@@ -745,15 +973,21 @@ export function startDashboard(runtime) {
     });
   });
 
-  // יומן שגיאות ובאגים ייעודי (Live Error Tracker API)
-  app.get("/api/errors", (_req, res) => {
+  // יומן שגיאות ובאגים ייעודי (Live Error Tracker API) - מוגן באבטחה מלאה
+  app.get("/api/errors", requireAuth, (_req, res) => {
     res.json({ ok: true, errors: errorReports });
   });
 
-  app.post("/api/errors/clear", (_req, res) => {
+  app.post("/api/errors/clear", requireAuth, (_req, res) => {
     errorReports.length = 0;
     recordEvent("system", "יומן השגיאות נוקה מהאתר");
     res.json({ ok: true, message: "יומן השגיאות נוקה בהצלחה" });
+  });
+
+  // טיפול שגיאות גלובלי מאובטח ללא חשיפת נתיבי שרת או Stack Traces למשתמשים
+  app.use((err, _req, res, _next) => {
+    recordError("express_api_error", err);
+    res.status(500).json({ ok: false, error: "שגיאת שרת פנימית (השגיאה תועדה ביומן המאובטח)" });
   });
 
   // ניטור חריגות גלובלי למניעת קריסות פתאומיות

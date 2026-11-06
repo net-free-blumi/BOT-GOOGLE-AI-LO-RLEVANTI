@@ -424,7 +424,7 @@ export default function App() {
             <div className="flex items-center gap-2.5">
               <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
               <div>
-                <span className="font-bold block">השרת (82.70.210.206:3000) אינו מגיב כרגע</span>
+                <span className="font-bold block">שרת הבוט אינו מגיב כרגע</span>
                 <span className="text-rose-200/80 text-[11px]">
                   ודא שקובץ <code className="font-mono">dashboard-api.js</code> פועל ב-PM2, או עבור למצב הדגמה לבחינת האתר.
                 </span>
@@ -544,7 +544,7 @@ export default function App() {
       <NetlifyGuideModal
         isOpen={netlifyModalOpen}
         onClose={() => setNetlifyModalOpen(false)}
-        serverUrl={config.baseUrl || 'http://82.70.210.206:3000'}
+        serverUrl={config.baseUrl || (typeof window !== 'undefined' ? window.location.origin : '')}
       />
 
       <CityShortcutsModal
