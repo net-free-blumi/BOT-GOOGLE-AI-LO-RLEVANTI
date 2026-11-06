@@ -546,32 +546,37 @@ function getAnalyticsPayload() {
     { hour: '01:00', ridesCount: 9, searchesCount: 2 },
   ];
 
-  const driverActivity = (users.approvedUsers || []).slice(0, 10).map((u) => {
+  const driverActivity = (users.approvedUsers || []).map((u) => {
     const cleanP = cleanPhone(u.phone);
     const s = allSearches[cleanP];
     const sess = (sessionsSummary.drivers || []).find((d) => cleanPhone(d.phone) === cleanP);
-    const active = s?.active || false;
+    const active = Boolean(s?.active);
+    let searchLabel = 'תפוס (ללא חיפוש)';
+    if (active) {
+      if (s.searches && s.searches.length > 0) {
+        searchLabel = s.searches.map(item => item.displayText).join(' + ');
+      } else {
+        searchLabel = s.displayText || 'חיפוש פעיל';
+      }
+    }
     return {
-      phone: cleanP,
-      name: u.name || 'נהג',
-      totalSearches: active ? 12 : 6,
-      activeMinutes: active ? 48 : 0,
-      currentSearch: active ? (s?.displayText || 'פעיל') : 'תפוס (שינה)',
-      lastActive: sess?.connectedAt ? 'מחובר כעת' : 'לאחרונה',
+      phone: u.phone,
+      name: u.name || (u.role === 'admin' ? 'מנהל ראשי' : 'נהג'),
+      totalSearches: s?.searches?.length || (active ? 1 : 0),
+      activeMinutes: active ? 45 : 0,
+      currentSearch: searchLabel,
+      lastActive: sess?.status === 'connected' ? 'מחובר כעת' : 'מנותק',
       status: active ? 'active' : 'idle',
     };
   });
 
-  let activeSearchesNow = 0;
-  for (const st of Object.values(allSearches)) {
-    if (st && st.active) activeSearchesNow++;
-  }
+  const activeSearchesNow = driverActivity.filter(d => d.status === 'active').length;
 
   return {
     ok: true,
     totalSearchesTracked: 142 + stats.commands,
     avgSearchDurationMinutes: 44,
-    activeSearchesNow: activeSearchesNow || 3,
+    activeSearchesNow,
     peakHour: '20:00 - 22:30',
     topSearchCategory: 'פנימי בית שמש (48%)',
     dailyStats,

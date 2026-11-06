@@ -1,4 +1,4 @@
-import { StatusPayload, LogItem, ConnectionConfig, ErrorReport, AnalyticsSummary } from '../types.ts';
+import { StatusPayload, LogItem, ConnectionConfig, ErrorReport, AnalyticsSummary, ApprovedUser } from '../types.ts';
 import { getMockStatus, getMockLogs, applyMockCommand, getMockAnalytics } from './mockData.ts';
 
 const TOKEN_KEY = 'rides_dash_token';
@@ -794,17 +794,29 @@ export async function simulateRideApi(customRide?: any): Promise<{ ok: boolean; 
   }
 }
 
-export async function fetchAnalyticsApi(): Promise<AnalyticsSummary> {
+export async function fetchAnalyticsApi(approvedUsers?: ApprovedUser[]): Promise<AnalyticsSummary> {
   const cfg = loadConfig();
   if (cfg.useDemoMode) {
-    return getMockAnalytics();
+    return getMockAnalytics(approvedUsers);
   }
   try {
     const res = await request<AnalyticsSummary>('/api/analytics');
-    if (res && res.ok) return res;
-    return getMockAnalytics();
+    if (res && res.ok) {
+      // If server returned driverActivity, ensure names are filled from approvedUsers if missing
+      if (res.driverActivity && approvedUsers && approvedUsers.length > 0) {
+        res.driverActivity = res.driverActivity.map(da => {
+          const matched = approvedUsers.find(u => u.phone.replace(/[^0-9]/g, '').endsWith(da.phone.replace(/[^0-9]/g, '')) || da.phone.replace(/[^0-9]/g, '').endsWith(u.phone.replace(/[^0-9]/g, '')));
+          if (matched && matched.name) {
+            return { ...da, name: matched.name };
+          }
+          return da;
+        });
+      }
+      return res;
+    }
+    return getMockAnalytics(approvedUsers);
   } catch {
-    return getMockAnalytics();
+    return getMockAnalytics(approvedUsers);
   }
 }
 

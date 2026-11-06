@@ -1,4 +1,4 @@
-import { StatusPayload, LogItem, DriverState, AnalyticsSummary } from '../types.ts';
+import { StatusPayload, LogItem, DriverState, AnalyticsSummary, ApprovedUser, DriverActivityItem } from '../types.ts';
 
 let mockSearch: DriverState = {
   active: true,
@@ -173,7 +173,7 @@ export function applyMockCommand(cmd: string) {
   return { ok: true, message: `חיפוש הופעל: ${mockSearch.displayText}`, search: { ...mockSearch } };
 }
 
-export function getMockAnalytics(): AnalyticsSummary {
+export function getMockAnalytics(approvedUsers?: ApprovedUser[]): AnalyticsSummary {
   const dayNames = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
   const today = new Date();
   
@@ -193,14 +193,7 @@ export function getMockAnalytics(): AnalyticsSummary {
     };
   });
 
-  return {
-    ok: true,
-    totalSearchesTracked: 142,
-    avgSearchDurationMinutes: 44,
-    activeSearchesNow: 6,
-    peakHour: '20:00 - 22:30',
-    topSearchCategory: 'פנימי בית שמש (48%)',
-    dailyStats,
+  const baseStructure = {
     searchCategories: [
       {
         category: 'internal',
@@ -301,43 +294,59 @@ export function getMockAnalytics(): AnalyticsSummary {
       { hour: '00:00', ridesCount: 18, searchesCount: 4 },
       { hour: '01:00', ridesCount: 9, searchesCount: 2 },
     ],
-    driverActivity: [
-      {
-        phone: '0556706325',
-        name: 'ישראל מ.',
-        totalSearches: 46,
-        activeMinutes: 184,
-        currentSearch: 'בית שמש פנימי',
-        lastActive: 'לפני 3 דקות',
-        status: 'active',
-      },
-      {
-        phone: '0507787427',
-        name: 'אברהם כ.',
-        totalSearches: 32,
-        activeMinutes: 140,
-        currentSearch: 'ירושלים ⬅️ בית שמש',
-        lastActive: 'לפני 7 דקות',
-        status: 'active',
-      },
-      {
-        phone: '0528991234',
-        name: 'דוד ל.',
-        totalSearches: 28,
-        activeMinutes: 95,
-        currentSearch: 'תפוס',
-        lastActive: 'לפני 25 דקות',
-        status: 'idle',
-      },
-      {
-        phone: '0544123890',
-        name: 'יוסי ש.',
-        totalSearches: 21,
-        activeMinutes: 78,
-        currentSearch: 'שמש צמצם',
-        lastActive: 'לפני 12 דקות',
-        status: 'active',
-      },
-    ],
+  };
+
+  // Build real driver activity based on approved users or real system defaults
+  const drivers: DriverActivityItem[] = (approvedUsers && approvedUsers.length > 0)
+    ? approvedUsers.map((u) => {
+        const isActive = Boolean(u.searchState?.active);
+        const searchDesc = isActive 
+          ? (u.searchState?.displayText || 'פנימי בית שמש') 
+          : 'תפוס (ללא חיפוש)';
+        return {
+          phone: u.phone,
+          name: u.name || (u.role === 'admin' ? 'מנהל ראשי' : 'נהג'),
+          totalSearches: isActive ? 12 : 0,
+          activeMinutes: isActive ? 45 : 0,
+          currentSearch: searchDesc,
+          lastActive: u.connectionStatus === 'connected' ? 'מחובר כעת' : 'מנותק',
+          status: isActive ? 'active' : 'idle',
+        };
+      })
+    : [
+        {
+          phone: '0515157166',
+          name: 'מנהל ראשי',
+          totalSearches: 18,
+          activeMinutes: 65,
+          currentSearch: 'בית שמש פנימי',
+          lastActive: 'מחובר כעת',
+          status: 'active',
+        },
+        {
+          phone: '0556706325',
+          name: 'מנהל / נהג',
+          totalSearches: 8,
+          activeMinutes: 30,
+          currentSearch: 'תפוס (ללא חיפוש)',
+          lastActive: 'לאחרונה',
+          status: 'idle',
+        },
+      ];
+
+  const activeSearchesNow = drivers.filter(d => d.status === 'active').length;
+
+  return {
+    ok: true,
+    totalSearchesTracked: 142,
+    avgSearchDurationMinutes: 44,
+    activeSearchesNow,
+    peakHour: '20:00 - 22:30',
+    topSearchCategory: 'פנימי בית שמש (48%)',
+    dailyStats,
+    searchCategories: baseStructure.searchCategories,
+    topRoutes: baseStructure.topRoutes,
+    hourlyTraffic: baseStructure.hourlyTraffic,
+    driverActivity: drivers,
   };
 }

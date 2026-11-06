@@ -17,15 +17,16 @@ import {
   Layers,
   ChevronRight
 } from 'lucide-react';
-import { AnalyticsSummary } from '../types.ts';
+import { AnalyticsSummary, ApprovedUser } from '../types.ts';
 import { fetchAnalyticsApi } from '../services/api.ts';
 
 interface AnalyticsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  approvedUsers?: ApprovedUser[];
 }
 
-export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({ isOpen, onClose }) => {
+export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({ isOpen, onClose, approvedUsers }) => {
   const [data, setData] = useState<AnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'trends' | 'categories' | 'routes' | 'drivers'>('trends');
@@ -35,7 +36,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({ isOpen, onClose 
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await fetchAnalyticsApi();
+      const res = await fetchAnalyticsApi(approvedUsers);
       setData(res);
     } catch {
       // fallback handled in fetchAnalyticsApi

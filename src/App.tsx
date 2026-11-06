@@ -43,6 +43,7 @@ import { UsersManagementModal } from './components/UsersManagementModal.tsx';
 import { BugTrackerModal } from './components/BugTrackerModal.tsx';
 import { BroadcastModal } from './components/BroadcastModal.tsx';
 import { AnalyticsModal } from './components/AnalyticsModal.tsx';
+import { MainScreenAnalytics } from './components/MainScreenAnalytics.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { AccessibilityWidget } from './components/AccessibilityWidget.tsx';
 import { DriverRadarModal } from './components/DriverRadarModal.tsx';
@@ -514,7 +515,20 @@ export default function App() {
           </div>
         </div>
 
-        {/* 3. Live Logs Stream with spam filtering */}
+        {/* 3. Live Driver Searches Monitor & Interactive Analytics (On Main Screen) */}
+        <MainScreenAnalytics
+          approvedUsers={approvedUsersList}
+          selectedDriverPhone={selectedDriverPhone}
+          onSelectDriverPhone={(phone) => {
+            setSelectedDriverPhone(phone);
+            localStorage.setItem('rides_selected_driver', phone);
+            refreshData(true);
+          }}
+          onRefreshAll={() => refreshData(true)}
+          showToast={showToast}
+        />
+
+        {/* 4. Live Logs Stream with spam filtering */}
         <LiveLogsCard
           logs={logs}
           selectedType={selectedLogType}
@@ -604,6 +618,7 @@ export default function App() {
       <AnalyticsModal
         isOpen={analyticsModalOpen}
         onClose={() => setAnalyticsModalOpen(false)}
+        approvedUsers={approvedUsersList}
       />
 
       {/* Driver Live Rides Radar Full-Screen Modal */}
