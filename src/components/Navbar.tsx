@@ -107,31 +107,26 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Status Badges */}
         <div className="flex flex-wrap items-center gap-2">
           {/* API Status */}
-          <button
-            onClick={onOpenConnectionModal}
-            title="לחץ לעריכת כתובת השרת ובדיקת חיבור"
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
-              config.useDemoMode
-                ? 'bg-purple-950/40 border-purple-500/40 text-purple-300 hover:bg-purple-900/40'
-                : isApiConnected
-                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:border-emerald-500/50'
-                : 'bg-rose-950/40 border-rose-500/30 text-rose-300 hover:border-rose-500/50 animate-pulse'
+          {/* API Status Badge (Static indicator - no IP config modal needed) */}
+          <div
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+              isApiConnected
+                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300'
+                : 'bg-rose-950/40 border-rose-500/30 text-rose-300 animate-pulse'
             }`}
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                config.useDemoMode
-                  ? 'bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,0.8)]'
-                  : isApiConnected
+                isApiConnected
                   ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
                   : 'bg-rose-400'
               }`}
             />
             <span className="flex items-center gap-1">
               <Server className="w-3 h-3 opacity-70" />
-              {config.useDemoMode ? 'מצב הדגמה' : isApiConnected ? 'שרת מחובר' : 'שרת מנותק'}
+              {isApiConnected ? 'שרת מחובר' : 'שרת מנותק'}
             </span>
-          </button>
+          </div>
 
           {/* WhatsApp Status */}
           <div
@@ -292,15 +287,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden xl:inline">אודות ומשפט</span>
           </button>
 
-          {/* Server Settings */}
-          <button
-            onClick={onOpenConnectionModal}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#141d29] hover:bg-[#1a2535] border border-[#233348] text-slate-300 hover:text-white transition-colors cursor-pointer"
-            title="הגדרת חיבור שרת (IP / פורט / פרוקסי)"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">שרת</span>
-          </button>
 
           {/* Manual refresh */}
           <button

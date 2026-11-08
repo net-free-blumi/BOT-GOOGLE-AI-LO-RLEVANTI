@@ -422,7 +422,7 @@ export default function App() {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-        {/* Offline Banner (if not in demo mode and disconnected) */}
+        {/* Offline Banner */}
         {!isApiConnected && !config.useDemoMode && (
           <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-200 text-xs flex flex-wrap items-center justify-between gap-3 animate-pulse">
             <div className="flex items-center gap-2.5">
@@ -430,22 +430,16 @@ export default function App() {
               <div>
                 <span className="font-bold block">שרת הבוט אינו מגיב כרגע</span>
                 <span className="text-rose-200/80 text-[11px]">
-                  ודא שקובץ <code className="font-mono">dashboard-api.js</code> פועל ב-PM2, או עבור למצב הדגמה לבחינת האתר.
+                  ודא שקובץ <code className="font-mono">dashboard-api.js</code> פועל ב-PM2.
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleEnterDemoMode}
-                className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 font-semibold cursor-pointer"
+                onClick={() => refreshData(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 font-semibold cursor-pointer transition-colors"
               >
-                הפעל מצב הדגמה
-              </button>
-              <button
-                onClick={() => setConnectionModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-semibold cursor-pointer"
-              >
-                הגדרות חיבור
+                נסה להתחבר שוב
               </button>
             </div>
           </div>

@@ -174,8 +174,15 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
   }).format(new Date());
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-fade-in" dir="rtl">
-      <div className="bg-[#0e1622] border border-[#23354d] w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm animate-fade-in" 
+      dir="rtl"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-[#0e1622] border border-[#23354d] w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-[#1c2a3d] flex items-center justify-between bg-[#121c2b]">

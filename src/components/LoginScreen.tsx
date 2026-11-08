@@ -47,23 +47,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       <div className="absolute top-1/4 -right-20 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/3 -left-20 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Top subtle bar with discrete technical settings toggle */}
+      {/* Top subtle bar */}
       <header className="w-full max-w-7xl mx-auto px-4 py-3 flex items-center justify-between z-10">
         <Logo size="sm" showText={true} />
-
-        <div className="flex items-center gap-2">
-          {/* Subtle Settings Gear */}
-          <button
-            type="button"
-            onClick={onOpenConnectionModal}
-            title="הגדרות מתקדמות"
-            className="p-2 rounded-xl bg-[#101725]/60 hover:bg-[#152033] border border-[#223348]/60 text-slate-400 hover:text-amber-400 transition-colors cursor-pointer text-xs flex items-center gap-1.5"
-            aria-label="הגדרות מתקדמות"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline text-[11px]">הגדרות</span>
-          </button>
-        </div>
       </header>
 
       {/* Center Login Box */}
@@ -141,17 +127,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             </button>
           </form>
 
-          {/* Demo Mode Button */}
-          <div className="pt-2 border-t border-[#1a2536] text-center">
-            <button
-              type="button"
-              onClick={onEnterDemoMode}
-              className="w-full py-2.5 rounded-xl bg-purple-950/30 hover:bg-purple-950/50 border border-purple-500/30 text-purple-300 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer focus:ring-2 focus:ring-purple-400"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              צפה בתצוגת דמו (סימולטור פעיל לבדיקת האתר)
-            </button>
-          </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed text-center">
             גישה מורשית בלבד לנהגים וסדרנים מורשים

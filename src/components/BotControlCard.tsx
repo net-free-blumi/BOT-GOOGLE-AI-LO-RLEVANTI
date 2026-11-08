@@ -242,8 +242,14 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
 
       {/* Restart Confirm Modal */}
       {restartConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-[#0e141e] border border-[#233348] rounded-2xl p-5 space-y-4 text-center">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          onClick={() => setRestartConfirm(false)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#0e141e] border border-[#233348] rounded-2xl p-5 space-y-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="w-12 h-12 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20 mx-auto flex items-center justify-center">
               <RotateCcw className="w-6 h-6" />
             </div>
@@ -273,8 +279,14 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
 
       {/* Stop Confirm Modal */}
       {stopConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-[#0e141e] border border-rose-500/30 rounded-2xl p-5 space-y-4 text-center">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          onClick={() => setStopConfirm(false)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#0e141e] border border-rose-500/30 rounded-2xl p-5 space-y-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 mx-auto flex items-center justify-center">
               <PowerOff className="w-6 h-6" />
             </div>

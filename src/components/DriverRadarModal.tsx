@@ -625,189 +625,192 @@ export function DriverRadarModal({
     <div className={`fixed inset-0 z-50 bg-[#06090e] text-slate-100 flex flex-col overflow-hidden font-sans select-none animate-in fade-in duration-200 ${
       isCockpitMode ? 'p-0' : ''
     }`}>
-      {/* לחצן סגירה קבוע ובולט שתמיד נראה ופעיל בכל מצב (מסך מלא, גלילה, קוקפיט) */}
-      <button
-        onClick={onClose}
-        className="fixed top-2.5 left-2.5 z-[100] w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-[0_0_20px_rgba(225,29,72,0.6)] border-2 border-white/50 cursor-pointer transition-transform active:scale-90"
-        title="סגור חלון וחזור לאתר"
-      >
-        <X className="w-5 h-5 stroke-[2.5]" />
-      </button>
+      {/* לחצן סגירה קבוע במצב רגיל בלבד */}
+      {!isCockpitMode && (
+        <button
+          onClick={onClose}
+          className="fixed top-2.5 left-2.5 z-[100] w-10 h-10 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-[0_0_20px_rgba(225,29,72,0.6)] border-2 border-white/50 cursor-pointer transition-transform active:scale-90"
+          title="סגור חלון וחזור לאתר"
+        >
+          <X className="w-5 h-5 stroke-[2.5]" />
+        </button>
+      )}
 
       {/* ========================================================= */}
       {/* 1. TOP HEADER & TELEMETRY BAR */}
       {/* ========================================================= */}
-      <header className={`border-b flex items-center justify-between gap-3 shrink-0 transition-all ${
-        isCockpitMode
-          ? 'px-4 py-2 bg-[#080d14] border-[#182333] pl-16'
-          : 'px-3 sm:px-6 py-2.5 bg-[#0b1018] border-[#1b2636] pl-16'
-      }`}>
-        <div className="flex items-center gap-3">
-          {/* Radar Beacon Logo */}
-          <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-teal-500/15 border border-teal-500/40 text-teal-400">
-            <Radio className="w-5 h-5 animate-pulse" />
-            <span className="w-2 h-2 rounded-full bg-emerald-400 absolute top-1.5 right-1.5 shadow-[0_0_8px_#34d399]" />
-          </div>
-
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1.5">
-                {isCockpitMode ? 'קוקפיט נהג (מסך מלא)' : 'רדאר נסיעות חי (Live Radar)'}
-                <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black">
-                  בזמן אמת ⚡
-                </span>
-              </h1>
-            </div>
-            {!isCockpitMode && (
-              <p className="text-[11px] text-slate-400">
-                זיהוי מדויק של מוצא (איסוף) ויעד, חישוב מרחק מיידי ותפיסה בלחיצה אחת
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Live Clock & Quick Controls */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Quick Search Shortcut Controls (Internal / All / Stop) */}
-          <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-[#1e2a3c]">
-            <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">חיפוש:</span>
+      {isCockpitMode ? (
+        /* COCKPIT COMPACT HEADER - EXACTLY AND ONLY THE 6 REQUESTED CONTROLS */
+        <header className="px-3 py-1.5 bg-[#060a10] border-b border-[#141f2e] flex items-center justify-between gap-2 shrink-0 select-none">
+          {/* Right side: 1. כפתור יציאה מהקוקפיט + 2. כפתור תפוס */}
+          <div className="flex items-center gap-2">
+            {/* 1. כפתור יציאה מהקוקפיט */}
             <button
-              onClick={() => handleQuickSearch('פנוי שמש פנימי')}
-              disabled={searchCommandLoading}
-              className="px-2.5 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/60 text-emerald-300 font-black text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-[0_0_10px_rgba(16,185,129,0.25)]"
-              title="הפעל חיפוש פנימי בית שמש בלבד"
+              onClick={toggleCockpitFullscreen}
+              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+              title="יציאה ממצב קוקפיט"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]" />
-              <span>🚕 פנימי שמש</span>
+              <Minimize2 className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>יציאה מהקוקפיט</span>
             </button>
-            <button
-              onClick={() => handleQuickSearch('פנוי שמש')}
-              disabled={searchCommandLoading}
-              className="px-2 py-1 rounded-lg bg-[#101722] hover:bg-[#182333] border border-[#223044] hover:border-amber-400/50 text-amber-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-              title="הפעל חיפוש בית שמש (בתוך ומחוץ לעיר)"
-            >
-              <span>⚡ שמש הכל</span>
-            </button>
+
+            {/* 2. כפתור תפוס */}
             <button
               onClick={() => handleQuickSearch('תפוס')}
               disabled={searchCommandLoading}
-              className="px-2 py-1 rounded-lg bg-[#140e14] hover:bg-[#20131b] border border-rose-500/30 text-rose-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+              className="px-3 py-1.5 rounded-xl bg-rose-600/30 hover:bg-rose-600/45 border border-rose-500/50 text-rose-300 hover:text-white font-black text-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-sm"
               title="עצור חיפוש / מצב תפוס"
             >
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
               <span>🛑 תפוס</span>
             </button>
           </div>
 
-          {/* Button: True Fullscreen Cockpit Mode */}
-          <button
-            onClick={toggleCockpitFullscreen}
-            className={`px-3 py-1.5 rounded-xl border font-black text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-md active:scale-95 ${
-              isCockpitMode
-                ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400'
-                : 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border-emerald-500/50 text-emerald-300 hover:text-white'
-            }`}
-            title={isCockpitMode ? 'צא ממצב קוקפיט' : 'הפעל מצב קוקפיט (מסך מלא מלא ללא הפרעות)'}
-          >
-            {isCockpitMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            <span>{isCockpitMode ? 'יציאה מקוקפיט' : 'מצב קוקפיט (מסך מלא)'}</span>
-          </button>
+          {/* Left side: 6. שעה + 5. כפתור סנכרון + 4. צליל השתקה + 3. איקס */}
+          <div className="flex items-center gap-2">
+            {/* 6. שעה */}
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-[#090e17] border border-[#1b2738] font-mono text-xs sm:text-sm text-teal-300 font-black">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>{currentTimeStr || '00:00:00'}</span>
+            </div>
 
-          {/* Audio Chime Volume Slider & Test */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#080d14] border border-[#1e2b3c]">
+            {/* 5. כפתור סנכרון */}
+            <button
+              onClick={() => loadRides(true)}
+              disabled={loading}
+              className="px-2.5 py-1.5 rounded-xl bg-[#0e1624] hover:bg-[#162234] border border-[#223044] text-slate-200 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              title="סנכרון נסיעות כעת"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-teal-400' : ''}`} />
+              <span className="hidden sm:inline">סנכרון</span>
+            </button>
+
+            {/* 4. צליל השתקה */}
             <button
               onClick={() => {
                 const next = !soundEnabled;
                 setSoundEnabled(next);
                 if (next) playLoudChime(alertVolume);
               }}
-              className="text-slate-400 hover:text-white cursor-pointer"
+              className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center cursor-pointer transition-colors ${
+                soundEnabled
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+                  : 'bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30'
+              }`}
               title={soundEnabled ? 'השתק צליל התראה' : 'הפעל צליל התראה'}
             >
-              {soundEnabled && alertVolume > 0 ? (
-                <Volume2 className="w-4 h-4 text-emerald-400" />
-              ) : (
-                <VolumeX className="w-4 h-4 text-slate-500" />
-              )}
+              {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-rose-400" />}
             </button>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={soundEnabled ? Math.round(alertVolume * 100) : 0}
-              onChange={(e) => {
-                const val = parseInt(e.target.value, 10) / 100;
-                setAlertVolume(val);
-                localStorage.setItem('rides_radar_volume', String(val));
-                if (!soundEnabled && val > 0) setSoundEnabled(true);
-              }}
-              onMouseUp={() => playLoudChime()}
-              onTouchEnd={() => playLoudChime()}
-              className="w-14 sm:w-20 accent-emerald-400 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
-              title={`עוצמת צלצול: ${Math.round(alertVolume * 100)}%`}
-            />
-            <span className="text-[10px] font-mono text-emerald-300 font-bold w-7 text-left">
-              {soundEnabled ? `${Math.round(alertVolume * 100)}%` : '0%'}
-            </span>
+
+            {/* 3. איקס */}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white flex items-center justify-center shadow-md cursor-pointer transition-transform active:scale-90"
+              title="סגור חלון"
+            >
+              <X className="w-4 h-4 stroke-[2.5]" />
+            </button>
           </div>
-
-          <button
-            onClick={() => {
-              playLoudChime();
-              if (!soundEnabled) setSoundEnabled(true);
-            }}
-            className="px-2.5 py-1.5 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/40 text-teal-300 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-            title="בדוק צלצול חזק כעת"
-          >
-            <BellRing className="w-3.5 h-3.5 text-teal-300 animate-bounce" />
-            <span className="hidden sm:inline">בדיקת צליל</span>
-          </button>
-
-          {/* Test Ride Simulation Button & Clear Button (only in regular view) */}
-          {!isCockpitMode && (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={handleSimulateTestRide}
-                disabled={simulating}
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500/20 to-blue-500/20 hover:from-teal-500/30 hover:to-blue-500/30 border border-teal-500/40 text-teal-200 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all active:scale-95"
-                title="שלח נסיעת בדיקה ברגע זה לבדיקת המערכת והרדאר"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-teal-300" />
-                <span>נסיעת הדגמה</span>
-              </button>
-
-              {rides.some((r) => r.id.startsWith('sim-')) && (
-                <button
-                  onClick={() => {
-                    setRides((prev) => prev.filter((r) => !r.id.startsWith('sim-')));
-                    showToast('🧹 נסיעות ההדגמה הוסרו. מוצגות רק נסיעות אמת מהקבוצות!');
-                  }}
-                  className="px-2 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
-                  title="נקה נסיעות הדגמה והשאר רק נסיעות אמת מהקבוצות"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                  <span className="hidden sm:inline">נקה הדגמה</span>
-                </button>
-              )}
+        </header>
+      ) : (
+        <header className="px-3 sm:px-6 py-2.5 bg-[#0b1018] border-b border-[#1b2636] flex items-center justify-between gap-3 shrink-0 pl-16">
+          <div className="flex items-center gap-3">
+            <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-teal-500/15 border border-teal-500/40 text-teal-400">
+              <Radio className="w-5 h-5 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400 absolute top-1.5 right-1.5 shadow-[0_0_8px_#34d399]" />
             </div>
-          )}
 
-          {/* Live Clock */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#080d14] border border-[#1e2b3c] font-mono text-xs text-teal-400 font-bold">
-            <Clock className="w-3.5 h-3.5 text-slate-400" />
-            <span>{currentTimeStr || '00:00:00'}</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm sm:text-base font-black tracking-tight text-white flex items-center gap-1.5">
+                  רדאר נסיעות חי (Live Radar)
+                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black">
+                    בזמן אמת ⚡
+                  </span>
+                </h1>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                זיהוי מדויק של מוצא (איסוף) ויעד, חישוב מרחק מיידי ותפיסה בלחיצה אחת
+              </p>
+            </div>
           </div>
 
-          {/* Refresh Button */}
-          <button
-            onClick={() => loadRides(true)}
-            disabled={loading}
-            className="p-2 rounded-xl bg-[#121924] hover:bg-[#182333] border border-[#223044] text-slate-300 hover:text-white cursor-pointer transition-colors"
-            title="רענן נסיעות עכשיו"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-teal-400' : ''}`} />
-          </button>
-        </div>
-      </header>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Quick Search Controls */}
+            <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-[#1e2a3c]">
+              <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">חיפוש:</span>
+              <button
+                onClick={() => handleQuickSearch('פנוי שמש פנימי')}
+                disabled={searchCommandLoading}
+                className="px-2.5 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/60 text-emerald-300 font-black text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-[0_0_10px_rgba(16,185,129,0.25)]"
+                title="הפעל חיפוש פנימי בית שמש בלבד"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]" />
+                <span>🚕 פנימי שמש</span>
+              </button>
+              <button
+                onClick={() => handleQuickSearch('פנוי שמש')}
+                disabled={searchCommandLoading}
+                className="px-2 py-1 rounded-lg bg-[#101722] hover:bg-[#182333] border border-[#223044] hover:border-amber-400/50 text-amber-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                title="הפעל חיפוש בית שמש (בתוך ומחוץ לעיר)"
+              >
+                <span>⚡ שמש הכל</span>
+              </button>
+              <button
+                onClick={() => handleQuickSearch('תפוס')}
+                disabled={searchCommandLoading}
+                className="px-2 py-1 rounded-lg bg-[#140e14] hover:bg-[#20131b] border border-rose-500/30 text-rose-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                title="עצור חיפוש / מצב תפוס"
+              >
+                <span>🛑 תפוס</span>
+              </button>
+            </div>
+
+            {/* Button: Activate Cockpit */}
+            <button
+              onClick={toggleCockpitFullscreen}
+              className="px-3 py-1.5 rounded-xl border font-black text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-md active:scale-95 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border-emerald-500/50 text-emerald-300 hover:text-white"
+              title="הפעל מצב קוקפיט (מסך מלא מלא ללא הפרעות)"
+            >
+              <Maximize2 className="w-4 h-4" />
+              <span>מצב קוקפיט (מסך מלא)</span>
+            </button>
+
+            {/* Sound toggle */}
+            <button
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) playLoudChime(alertVolume);
+              }}
+              className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center cursor-pointer transition-colors ${
+                soundEnabled
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+                  : 'bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30'
+              }`}
+              title={soundEnabled ? 'השתק צליל התראה' : 'הפעל צליל התראה'}
+            >
+              {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-rose-400" />}
+            </button>
+
+            {/* Live Clock */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#080d14] border border-[#1e2b3c] font-mono text-xs text-teal-400 font-bold">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <span>{currentTimeStr || '00:00:00'}</span>
+            </div>
+
+            {/* Refresh Button */}
+            <button
+              onClick={() => loadRides(true)}
+              disabled={loading}
+              className="p-2 rounded-xl bg-[#121924] hover:bg-[#182333] border border-[#223044] text-slate-300 hover:text-white cursor-pointer transition-colors"
+              title="רענן נסיעות עכשיו"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-teal-400' : ''}`} />
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* ========================================================= */}
       {/* 2. DRIVER LOCATION & DISTANCE FILTER (HIDDEN IN COCKPIT FOR MAX VISIBILITY) */}
@@ -975,11 +978,11 @@ export function DriverRadarModal({
                         </span>
                       </div>
 
-                      {/* Compact Smaller Price - מחיר קטן יותר כפי שביקשת */}
+                      {/* Exterior Price - גדול ובולט לנהג */}
                       {ride.price ? (
-                        <div className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 font-bold text-xs sm:text-sm shrink-0 flex items-center gap-1 shadow-sm">
-                          <span className="text-slate-400 text-[10px]">מחיר:</span>
-                          <span className="text-sm sm:text-base font-black text-emerald-300">₪{ride.price}</span>
+                        <div className="px-3 py-1 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold shrink-0 flex items-center gap-1 shadow-sm">
+                          <span className="text-slate-400 text-xs">מחיר:</span>
+                          <span className="text-base sm:text-lg md:text-xl font-black text-emerald-300">₪{ride.price}</span>
                         </div>
                       ) : null}
                     </div>
@@ -1024,44 +1027,44 @@ export function DriverRadarModal({
                   </div>
 
                   {/* ========================================= */}
-                  {/* CARD BODY: COMPACT ROUTE + DISTANCE + ENLARGED MESSAGE */}
+                  {/* CARD BODY: BIGGER EXTERIOR FONTS + COMPACT MESSAGE BOX */}
                   {/* ========================================= */}
                   <div className="p-3 space-y-2.5">
-                    {/* Visual Route Box: מוקטן מעט כדי לחסוך מקום במסך */}
-                    <div className="rounded-xl bg-[#06090e] border border-[#182333] p-2.5 space-y-1.5 shadow-inner">
-                      {/* ORIGIN (איסוף) */}
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-emerald-500/30 shrink-0 mt-0.5" />
+                    {/* Visual Route Box - מוגדל וברור מאוד לנהג באמצע נהיגה */}
+                    <div className="rounded-xl bg-[#06090e] border border-[#182333] p-3 space-y-2 shadow-inner">
+                      {/* ORIGIN (איסוף) - גופן מוגדל, בולט מאוד */}
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-3.5 h-3.5 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 shrink-0 mt-1" />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[11px] text-emerald-400 font-bold">איסוף מ:</span>
-                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm text-emerald-400 font-black">איסוף מ:</span>
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-black">
                               {ride.originNeighborhood}
                             </span>
                           </div>
-                          <div className="text-sm sm:text-base font-bold text-white leading-tight truncate mt-0.5">
+                          <div className="text-base sm:text-lg md:text-xl font-black text-white leading-tight truncate mt-0.5 tracking-tight">
                             {ride.originText || ride.originNeighborhood}
                           </div>
                         </div>
                       </div>
 
                       {/* Short connector */}
-                      <div className="flex items-center gap-1 mr-1 text-[10px] text-slate-400 font-medium">
-                        <ArrowDownRight className="w-3 h-3 text-slate-400" />
+                      <div className="flex items-center gap-1.5 mr-1 text-xs text-slate-400 font-bold">
+                        <ArrowDownRight className="w-3.5 h-3.5 text-slate-400" />
                         <span>אל יעד:</span>
                       </div>
 
-                      {/* DESTINATION (יעד) */}
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 rounded-full bg-rose-400 ring-2 ring-rose-500/30 shrink-0 mt-0.5" />
+                      {/* DESTINATION (יעד) - גופן מוגדל וברור */}
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-3.5 h-3.5 rounded-full bg-rose-400 ring-4 ring-rose-500/20 shrink-0 mt-1" />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[11px] text-slate-400 font-medium">יעד:</span>
-                            <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 text-[10px]">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm text-rose-400 font-black">יעד:</span>
+                            <span className="px-2 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold">
                               {ride.destNeighborhood}
                             </span>
                           </div>
-                          <div className="text-xs sm:text-sm font-semibold text-slate-200 leading-tight truncate mt-0.5">
+                          <div className="text-sm sm:text-base md:text-lg font-black text-slate-100 leading-tight truncate mt-0.5">
                             {ride.destinationText || ride.destNeighborhood || 'יעד בעיר'}
                           </div>
                         </div>
@@ -1071,40 +1074,40 @@ export function DriverRadarModal({
                     {/* LIVE DISTANCE TO PICKUP (מרחק מהנהג לאיסוף הלקוח) */}
                     {ride.distanceKm !== null && prox ? (
                       <div
-                        className={`p-2 rounded-xl border flex items-center justify-between gap-2 shadow-sm ${prox.badgeBg}`}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 shadow-sm ${prox.badgeBg}`}
                       >
                         <div className="flex items-center gap-2">
                           <Navigation className={`w-4 h-4 shrink-0 ${prox.colorClass}`} />
-                          <span className="text-xs font-bold">
+                          <span className="text-xs sm:text-sm font-black">
                             כ-{ride.distanceKm} ק"מ (כ-{ride.driveTimeMinutes} דק' נסיעה לאיסוף)
                           </span>
                         </div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/40 ${prox.colorClass}`}>
+                        <span className={`text-xs font-black px-2.5 py-0.5 rounded-full bg-black/40 ${prox.colorClass}`}>
                           {prox.label}
                         </span>
                       </div>
                     ) : (
-                      <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 flex items-center gap-1.5">
-                        <Compass className="w-3.5 h-3.5 text-slate-400" />
+                      <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 flex items-center gap-1.5 font-bold">
+                        <Compass className="w-4 h-4 text-slate-400" />
                         <span>איסוף משוער ב-{ride.originNeighborhood}</span>
                       </div>
                     )}
 
-                    {/* ORIGINAL RAW MESSAGE BOX (מוגדל בהרבה, פונט מודגש וקריא + לחץ להגדלה נוספת) */}
+                    {/* ORIGINAL RAW MESSAGE BOX (פונט נעים, קומפקטי ולא תופס את כל המסך) */}
                     <div
                       onClick={() => setSelectedRideForDetails(ride)}
-                      className="p-3 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border-2 border-[#1c293a] hover:border-teal-500/60 cursor-pointer transition-all group shadow-sm"
-                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ בגופן ענק עם קישורים לחיצים"
+                      className="p-2 sm:p-2.5 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border border-[#1a2638] hover:border-teal-500/50 cursor-pointer transition-all group shadow-inner"
+                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ עם קישורים לחיצים"
                     >
-                      <div className="flex items-center justify-between text-xs text-slate-400 mb-1 pb-1 border-b border-[#141e2b]">
-                        <span className="font-sans font-black text-teal-400 group-hover:text-teal-300 flex items-center gap-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 pb-1 border-b border-[#141e2b]">
+                        <span className="font-sans font-bold text-teal-400 group-hover:text-teal-300 flex items-center gap-1.5">
                           📄 תוכן הודעה מקורית • {ride.groupName}
                         </span>
-                        <span className="text-xs text-teal-400 font-sans group-hover:underline flex items-center gap-1 font-bold">
-                          פתח בגדול <ExternalLink className="w-3 h-3" />
+                        <span className="text-[10px] text-teal-400 font-sans group-hover:underline flex items-center gap-1 font-bold">
+                          הצג פרטים <ExternalLink className="w-2.5 h-2.5" />
                         </span>
                       </div>
-                      <div className="text-xs sm:text-sm md:text-base font-bold font-mono text-slate-50 select-text leading-relaxed line-clamp-3">
+                      <div className="text-[11px] sm:text-xs font-sans text-slate-300 select-text leading-snug line-clamp-2 max-h-12 overflow-hidden">
                         {ride.cleanedText || ride.rawText}
                       </div>
                     </div>

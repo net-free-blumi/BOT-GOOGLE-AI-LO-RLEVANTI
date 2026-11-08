@@ -120,8 +120,15 @@ await sock.sendMessage(driverJid, { text: cleanedAlert }, { quoted: m });`;
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" dir="rtl">
-      <div className="w-full max-w-3xl bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" 
+      dir="rtl"
+      onClick={onClose}
+    >
+      <div 
+        className="w-full max-w-3xl bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-[#1c293a] bg-[#121926]">
           <div className="flex items-center gap-3">

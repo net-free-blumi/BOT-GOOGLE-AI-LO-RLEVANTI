@@ -127,8 +127,15 @@ export const BugTrackerModal: React.FC<BugTrackerModalProps> = ({
         onConfirm={executeClear}
         onCancel={() => setShowClearConfirm(false)}
       />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-3xl bg-[#0c121a] border border-[#233348] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+        dir="rtl"
+        onClick={onClose}
+      >
+      <div 
+        className="w-full max-w-3xl bg-[#0c121a] border border-[#233348] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-5 py-4 border-b border-[#1b2636] bg-[#0e1522] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">

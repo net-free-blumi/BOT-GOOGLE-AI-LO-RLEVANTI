@@ -250,8 +250,14 @@ export const LiveLogsCard: React.FC<LiveLogsCardProps> = ({
 
       {/* Log Details Modal */}
       {activeLogModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-lg bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setActiveLogModal(null)}
+        >
+          <div 
+            className="w-full max-w-lg bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between pb-3 border-b border-[#1c293a]">
               <div className="flex items-center gap-2">
                 <span

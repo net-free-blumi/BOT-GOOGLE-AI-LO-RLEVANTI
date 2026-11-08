@@ -527,8 +527,15 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" dir="rtl">
-      <div className="w-full max-w-4xl bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl flex flex-col max-h-[94vh] overflow-hidden">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" 
+      dir="rtl"
+      onClick={onClose}
+    >
+      <div 
+        className="w-full max-w-4xl bg-[#0e141e] border border-[#233348] rounded-2xl shadow-2xl flex flex-col max-h-[94vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-[#1c293a] bg-[#121926]">
           <div className="flex items-center gap-2.5">
@@ -1348,8 +1355,15 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
       {/* EDIT USER POPUP MODAL */}
       {/* ========================================================= */}
       {editingUser && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" dir="rtl">
-          <div className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4">
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" 
+          dir="rtl"
+          onClick={() => setEditingUser(null)}
+        >
+          <div 
+            className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between pb-3 border-b border-[#1c293a]">
               <div className="flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-amber-400" />
@@ -1429,8 +1443,15 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
       {/* SET CUSTOM SEARCH FOR DRIVER POPUP MODAL */}
       {/* ========================================================= */}
       {commandingUser && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" dir="rtl">
-          <div className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4">
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" 
+          dir="rtl"
+          onClick={() => setCommandingUser(null)}
+        >
+          <div 
+            className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between pb-3 border-b border-[#1c293a]">
               <div className="flex items-center gap-2">
                 <Search className="w-4 h-4 text-teal-400" />
@@ -1496,8 +1517,15 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
       {/* MANUAL PHONE INPUT MODAL FOR PENDING USER */}
       {/* ========================================================= */}
       {pendingPhoneEdit && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" dir="rtl">
-          <div className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4">
+        <div 
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in" 
+          dir="rtl"
+          onClick={() => setPendingPhoneEdit(null)}
+        >
+          <div 
+            className="w-full max-w-md bg-[#101724] border border-[#233348] rounded-2xl p-5 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between pb-3 border-b border-[#1c293a]">
               <div className="flex items-center gap-2">
                 <Phone className="w-4 h-4 text-emerald-400" />
