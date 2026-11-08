@@ -241,6 +241,16 @@ export interface HourlyTrafficPoint {
   searchesCount: number;
 }
 
+export interface DriverSearchHistoryItem {
+  id: string;
+  query: string;
+  mode: string;
+  startedAt: string;
+  durationMinutes: number;
+  status: 'active' | 'completed' | 'cancelled';
+  matchesCount: number;
+}
+
 export interface DriverActivityItem {
   phone: string;
   name?: string;
@@ -249,6 +259,9 @@ export interface DriverActivityItem {
   currentSearch?: string;
   lastActive: string;
   status: string;
+  recentSearches?: DriverSearchHistoryItem[];
+  hourlyActivity?: HourlyTrafficPoint[];
+  searchCategories?: SearchCategoryStat[];
 }
 
 export interface AnalyticsSummary {

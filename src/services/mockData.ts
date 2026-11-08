@@ -296,6 +296,71 @@ export function getMockAnalytics(approvedUsers?: ApprovedUser[]): AnalyticsSumma
     ],
   };
 
+  function getDriverRecentSearches(p: string, curr: string, active: boolean) {
+    return [
+      {
+        id: `s-${p}-1`,
+        query: active ? curr : (curr.includes('תפוס') ? 'בית שמש פנימי' : curr),
+        mode: curr.includes('פנימי') ? 'internal' : curr.includes('צמצם') ? 'reduce' : 'route',
+        startedAt: active ? 'פעיל עכשיו (לפני 25 דק׳)' : 'לפני 45 דק׳',
+        durationMinutes: 25,
+        status: (active ? 'active' : 'completed') as any,
+        matchesCount: active ? 6 : 3,
+      },
+      {
+        id: `s-${p}-2`,
+        query: 'ירושלים ⬅️ בית שמש',
+        mode: 'route',
+        startedAt: 'לפני שעתיים',
+        durationMinutes: 48,
+        status: 'completed' as any,
+        matchesCount: 8,
+      },
+      {
+        id: `s-${p}-3`,
+        query: 'שמש צמצם',
+        mode: 'reduce',
+        startedAt: 'לפני 4 שעות',
+        durationMinutes: 35,
+        status: 'completed' as any,
+        matchesCount: 5,
+      },
+      {
+        id: `s-${p}-4`,
+        query: '🛑 תפוס',
+        mode: 'stop',
+        startedAt: 'הבוקר 09:30',
+        durationMinutes: 50,
+        status: 'completed' as any,
+        matchesCount: 0,
+      },
+    ];
+  }
+
+  function getDriverHourly() {
+    return [
+      { hour: '07:00', ridesCount: 3, searchesCount: 1 },
+      { hour: '08:00', ridesCount: 7, searchesCount: 2 },
+      { hour: '09:00', ridesCount: 4, searchesCount: 1 },
+      { hour: '12:00', ridesCount: 5, searchesCount: 2 },
+      { hour: '13:00', ridesCount: 8, searchesCount: 3 },
+      { hour: '17:00', ridesCount: 6, searchesCount: 2 },
+      { hour: '19:00', ridesCount: 11, searchesCount: 3 },
+      { hour: '20:00', ridesCount: 16, searchesCount: 5 },
+      { hour: '21:00', ridesCount: 14, searchesCount: 4 },
+      { hour: '22:00', ridesCount: 9, searchesCount: 2 },
+    ];
+  }
+
+  function getDriverCategories() {
+    return [
+      { category: 'internal', name: 'פנימי בית שמש', count: 28, percentage: 55, avgDurationMinutes: 48, color: '#10b981' },
+      { category: 'route', name: 'בינעירוני (י-ם / ב״ב)', count: 14, percentage: 28, avgDurationMinutes: 35, color: '#3b82f6' },
+      { category: 'reduce', name: 'צמצם ורדיוס', count: 6, percentage: 12, avgDurationMinutes: 40, color: '#f59e0b' },
+      { category: 'from', name: 'יציאות לכל יעד', count: 3, percentage: 5, avgDurationMinutes: 28, color: '#a855f7' },
+    ];
+  }
+
   // Build real driver activity based on approved users or real system defaults
   const drivers: DriverActivityItem[] = (approvedUsers && approvedUsers.length > 0)
     ? approvedUsers.map((u) => {
@@ -303,17 +368,70 @@ export function getMockAnalytics(approvedUsers?: ApprovedUser[]): AnalyticsSumma
         const searchDesc = isActive 
           ? (u.searchState?.displayText || 'פנימי בית שמש') 
           : 'תפוס (ללא חיפוש)';
+        const totalSearches = isActive ? 18 : 6;
+        const activeMinutes = isActive ? 140 : 25;
         return {
           phone: u.phone,
           name: u.name || (u.role === 'admin' ? 'מנהל ראשי' : 'נהג'),
-          totalSearches: isActive ? 12 : 0,
-          activeMinutes: isActive ? 45 : 0,
+          totalSearches,
+          activeMinutes,
           currentSearch: searchDesc,
           lastActive: u.connectionStatus === 'connected' ? 'מחובר כעת' : 'מנותק',
           status: isActive ? 'active' : 'idle',
+          recentSearches: getDriverRecentSearches(u.phone, searchDesc, isActive),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
         };
       })
     : [
+        {
+          phone: '0556706325',
+          name: 'ישראל מ.',
+          totalSearches: 46,
+          activeMinutes: 184,
+          currentSearch: 'בית שמש פנימי',
+          lastActive: 'מחובר כעת',
+          status: 'active',
+          recentSearches: getDriverRecentSearches('0556706325', 'בית שמש פנימי', true),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
+        },
+        {
+          phone: '0507787427',
+          name: 'אברהם כ.',
+          totalSearches: 32,
+          activeMinutes: 140,
+          currentSearch: 'ירושלים ⬅️ בית שמש',
+          lastActive: 'מחובר כעת',
+          status: 'active',
+          recentSearches: getDriverRecentSearches('0507787427', 'ירושלים ⬅️ בית שמש', true),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
+        },
+        {
+          phone: '0528991234',
+          name: 'דוד ל.',
+          totalSearches: 28,
+          activeMinutes: 95,
+          currentSearch: 'תפוס (ללא חיפוש)',
+          lastActive: 'לאחרונה',
+          status: 'idle',
+          recentSearches: getDriverRecentSearches('0528991234', 'תפוס', false),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
+        },
+        {
+          phone: '0544123890',
+          name: 'יוסי ש.',
+          totalSearches: 21,
+          activeMinutes: 78,
+          currentSearch: 'שמש צמצם',
+          lastActive: 'מחובר כעת',
+          status: 'active',
+          recentSearches: getDriverRecentSearches('0544123890', 'שמש צמצם', true),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
+        },
         {
           phone: '0515157166',
           name: 'מנהל ראשי',
@@ -322,15 +440,9 @@ export function getMockAnalytics(approvedUsers?: ApprovedUser[]): AnalyticsSumma
           currentSearch: 'בית שמש פנימי',
           lastActive: 'מחובר כעת',
           status: 'active',
-        },
-        {
-          phone: '0556706325',
-          name: 'מנהל / נהג',
-          totalSearches: 8,
-          activeMinutes: 30,
-          currentSearch: 'תפוס (ללא חיפוש)',
-          lastActive: 'לאחרונה',
-          status: 'idle',
+          recentSearches: getDriverRecentSearches('0515157166', 'בית שמש פנימי', true),
+          hourlyActivity: getDriverHourly(),
+          searchCategories: getDriverCategories(),
         },
       ];
 

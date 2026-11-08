@@ -613,6 +613,7 @@ export default function App() {
         isOpen={analyticsModalOpen}
         onClose={() => setAnalyticsModalOpen(false)}
         approvedUsers={approvedUsersList}
+        initialSelectedDriverPhone={selectedDriverPhone}
       />
 
       {/* Driver Live Rides Radar Full-Screen Modal */}

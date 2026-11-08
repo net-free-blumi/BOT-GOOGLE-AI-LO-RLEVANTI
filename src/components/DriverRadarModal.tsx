@@ -776,21 +776,65 @@ export function DriverRadarModal({
               <span>מצב קוקפיט (מסך מלא)</span>
             </button>
 
-            {/* Sound toggle */}
+            {/* Sound & Volume Controls in Regular Mode */}
+            <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-[#1e2a3c]">
+              <button
+                onClick={() => {
+                  const next = !soundEnabled;
+                  setSoundEnabled(next);
+                  if (next) playLoudChime(alertVolume);
+                }}
+                className={`p-1.5 rounded-lg border text-xs font-bold flex items-center justify-center cursor-pointer transition-colors ${
+                  soundEnabled
+                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+                    : 'bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30'
+                }`}
+                title={soundEnabled ? 'השתק צליל התראה' : 'הפעל צליל התראה'}
+              >
+                {soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-400" /> : <VolumeX className="w-3.5 h-3.5 text-rose-400" />}
+              </button>
+
+              {/* Volume Slider */}
+              <div className="hidden md:flex items-center gap-1.5 px-1">
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={alertVolume}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setAlertVolume(val);
+                    localStorage.setItem('rides_radar_volume', val.toString());
+                  }}
+                  className="w-16 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-400"
+                  title={`עוצמת שמע: ${Math.round(alertVolume * 100)}%`}
+                />
+                <span className="text-[10px] font-mono text-emerald-300 font-bold w-7 text-center">
+                  {Math.round(alertVolume * 100)}%
+                </span>
+              </div>
+
+              {/* Test Sound button */}
+              <button
+                onClick={() => playLoudChime(alertVolume)}
+                className="px-2 py-1 rounded-lg bg-[#121a26] hover:bg-[#1a2536] border border-[#223348] text-slate-300 hover:text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                title="בדוק צליל התראה ברמקול"
+              >
+                <BellRing className="w-3 h-3 text-amber-400" />
+                <span className="hidden lg:inline">בדוק צליל</span>
+              </button>
+            </div>
+
+            {/* Test Simulation Button in Regular Mode */}
             <button
-              onClick={() => {
-                const next = !soundEnabled;
-                setSoundEnabled(next);
-                if (next) playLoudChime(alertVolume);
-              }}
-              className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center cursor-pointer transition-colors ${
-                soundEnabled
-                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
-                  : 'bg-rose-500/20 border-rose-500/40 text-rose-300 hover:bg-rose-500/30'
-              }`}
-              title={soundEnabled ? 'השתק צליל התראה' : 'הפעל צליל התראה'}
+              onClick={handleSimulateTestRide}
+              disabled={simulating}
+              className="px-2.5 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
+              title="שדר נסיעת דוגמה לבדיקת זיהוי מסלול וצלצול"
             >
-              {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-rose-400" />}
+              <Sparkles className={`w-3.5 h-3.5 text-purple-300 ${simulating ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{simulating ? 'משדר...' : 'נסיעת בדיקה'}</span>
             </button>
 
             {/* Live Clock */}
@@ -1194,8 +1238,14 @@ export function DriverRadarModal({
       {/* 4. MODAL POP-UP FOR FULL RAW WHATSAPP MESSAGE WITH ACTIVE LINKS */}
       {/* ========================================================= */}
       {selectedRideForDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-lg rounded-2xl bg-[#0b1018] border border-[#233348] shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+        <div 
+          onClick={() => setSelectedRideForDetails(null)}
+          className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl bg-[#0b1018] border border-[#233348] shadow-2xl overflow-hidden flex flex-col max-h-[88vh] cursor-default"
+          >
             {/* Header */}
             <div className="p-4 border-b border-[#1b2636] flex items-center justify-between bg-[#0e141f]">
               <div className="flex items-center gap-2.5">

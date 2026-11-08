@@ -92,6 +92,9 @@ export const Footer: React.FC<FooterProps> = ({
           <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
             מערכת מאובטחת
           </span>
+          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono font-bold">
+            v3.2.0
+          </span>
         </div>
       </div>
     </footer>
