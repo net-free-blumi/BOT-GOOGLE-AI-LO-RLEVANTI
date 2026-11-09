@@ -54,6 +54,7 @@ let mainBotDisconnectedAt = Date.now(); // ברירת מחדל עד לחיבור
 let mainBot30MinAlertSent = false;
 let mainBotLastAlertTime = 0;
 let watchdogInterval = null;
+let mainBotLoggedOutCount = 0;
 
 let mainBotStatus = {
   phone: "972555081810",
@@ -175,24 +176,6 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   mainBotSock = sock;
   mainBotStatus.registered = Boolean(sock.authState.creds.registered);
 
-  // הפקת קוד צימוד אוטומטי לבוט אם עדיין לא מחובר
-  if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
-      try {
-        console.log(`🔑 מבקש קוד חיבור עבור הבוט הראשי (${botPhone})...`);
-        const code = await sock.requestPairingCode(botPhone);
-        mainBotStatus.pairingCode = code;
-        onStatusChange?.(mainBotStatus);
-        onEvent?.("system", `קוד צימוד לבוט הראשי (${botPhone}): ${code}`);
-        console.log("=========================================");
-        console.log(`🤖 קוד צימוד לבוט הראשי (${botPhone}): ${code}`);
-        console.log("=========================================");
-      } catch (err) {
-        console.log("ממתין להפקת קוד חיבור מהאתר עבור הבוט הראשי:", err.message);
-      }
-    }, 3500);
-  }
-
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
@@ -214,6 +197,7 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
       mainBotDisconnectedAt = null;
       mainBot30MinAlertSent = false;
       mainBotStatus.disconnectedSince = null;
+      mainBotLoggedOutCount = 0;
       onStatusChange?.(mainBotStatus);
       onEvent?.("system", `הבוט הראשי (${botPhone}) מחובר בהצלחה`);
     }
@@ -228,15 +212,29 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
       mainBotStatus.disconnectedSince = mainBotDisconnectedAt;
       onStatusChange?.(mainBotStatus);
 
-      if (code === DisconnectReason.loggedOut) {
-        console.log("⚠️ הבוט הראשי נותק (401 Logged Out). מאפס תיקיית auth ומפעיל מחדש...");
-        try {
-          fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
-        } catch (e) {}
-        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 4000);
+      // קוד 515 (restartRequired) הוא חלק אינטגרלי מהשלמת לחיצת היד בוואטסאפ בעת סריקת QR
+      if (code === DisconnectReason.restartRequired || code === 515) {
+        console.log(`🔄 [הבוט הראשי] קוד 515 restartRequired התקבל (השלמת צימוד WhatsApp Web) - מתחבר מחדש מיידית...`);
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 1000);
+        return;
+      }
+
+      if (code === DisconnectReason.loggedOut || code === 401) {
+        mainBotLoggedOutCount += 1;
+        console.log(`⚠️ הבוט הראשי קיבל 401 Logged Out (ניסיון ${mainBotLoggedOutCount})...`);
+        
+        // אם זה ניסיון ראשון, ננסה להתחבר שוב עם הקבצים הקיימים ולא נמחק אותם מיד
+        if (mainBotLoggedOutCount >= 2) {
+          console.log("⚠️ 401 חוזר (הטלפון באמת ביצע התנתקות) - מאפס תיקיית auth של הבוט ומפעיל מחדש...");
+          try {
+            fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
+          } catch (e) {}
+          mainBotLoggedOutCount = 0;
+        }
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 3000);
       } else {
-        console.log(`🔄 חיבור הבוט הראשי נותק זמנית (קוד ${code}). מתחבר מחדש תוך 4 שניות...`);
-        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 4000);
+        console.log(`🔄 חיבור הבוט הראשי נותק זמנית (קוד ${code}). מתחבר מחדש תוך 3 שניות...`);
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 3000);
       }
     }
   });
@@ -271,6 +269,32 @@ export async function requestMainBotPairingCode(customPhone) {
   const code = await mainBotSock.requestPairingCode(phone);
   mainBotStatus.pairingCode = code;
   return code;
+}
+
+export async function resetMainBotAuth(callbacks = {}) {
+  console.log("🧹 מאפס ידנית את אותנטיקציית הבוט הראשי לבקשת המשתמש...");
+  try {
+    if (mainBotSock) {
+      try { mainBotSock.end(); } catch (e) {}
+      mainBotSock = null;
+    }
+    if (fs.existsSync(BOT_AUTH_DIR)) {
+      fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
+      fs.mkdirSync(BOT_AUTH_DIR, { recursive: true });
+    }
+    mainBotStatus.connected = false;
+    mainBotStatus.registered = false;
+    mainBotStatus.pairingCode = null;
+    mainBotStatus.qr = null;
+    mainBotStatus.qrTimestamp = null;
+    mainBotStatus.lastDisconnectReason = "איפוס סשן נקי";
+    mainBotLoggedOutCount = 0;
+    mainBotDisconnectedAt = Date.now();
+    return await startMainBot(callbacks);
+  } catch (err) {
+    console.error("שגיאה באיפוס אותנטיקציית הבוט הראשי:", err.message);
+    throw err;
+  }
 }
 
 // ==========================================

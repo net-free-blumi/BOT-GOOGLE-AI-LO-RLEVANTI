@@ -49,6 +49,7 @@ import {
   getMainBotSock,
   getMainBotStatus,
   requestMainBotPairingCode,
+  resetMainBotAuth,
   connectDriverSession,
   requestDriverPairingCode,
   disconnectDriverSession,
@@ -1798,6 +1799,14 @@ startDashboard({
   resetDriverAuth: (phone) => {
     resetUserCooldown(phone);
     return resetDriverAuth(phone);
+  },
+  resetMainBotAuth: async () => {
+    return await resetMainBotAuth({
+      onMessage: handleIncomingMessage,
+      onReaction: handleReaction,
+      onStatusChange: handleMainBotStatusChange,
+      onEvent: recordEvent,
+    });
   },
   purgeAllDriverSessions: () => {
     return purgeAllDriverSessions();

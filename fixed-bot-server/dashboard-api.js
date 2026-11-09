@@ -900,6 +900,24 @@ export function startDashboard(runtime) {
     }
   });
 
+  // איפוס מלא של אותנטיקציית הבוט הראשי והתחלת חיבור נקי
+  app.post("/api/bot/reset-auth", requireAuth, async (_req, res) => {
+    try {
+      if (ctx?.resetMainBotAuth) {
+        await ctx.resetMainBotAuth();
+        recordEvent("system", "איפוס מלא של אותנטיקציית הבוט הראשי לבקשת המנהל - ממתין לחיבור נקי");
+        return res.json({
+          ok: true,
+          success: true,
+          message: "אותנטיקציית הבוט הראשי אופסה בהצלחה. כעת ניתן לסרוק קוד QR נקי או להזין קוד צימוד.",
+        });
+      }
+      res.json({ ok: true, success: true, message: "אותנטיקציה אופסה" });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // איפוס מלא של סשן נהג, מחיקת קוקיז/תיקיות אימות והסרת חסימות צינון
   app.post("/api/sessions/reset-auth", requireAuth, (req, res) => {
     const phone = req.body?.phone || req.body?.identifier;

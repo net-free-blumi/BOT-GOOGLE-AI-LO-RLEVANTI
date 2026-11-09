@@ -605,6 +605,20 @@ export async function clearAllSessionsAndLidMapApi(): Promise<{
   });
 }
 
+// איפוס מלא של אותנטיקציית הבוט הראשי והתחלת חיבור נקי
+export async function resetMainBotAuthApi(): Promise<{
+  ok: boolean;
+  success?: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) return { ok: true, success: true, message: 'אותנטיקציית הבוט הראשי אופסה' };
+  return await request<any>('/api/bot/reset-auth', {
+    method: 'POST',
+  });
+}
+
 // שידור הודעה בוואטסאפ לכל הנהגים
 export async function sendBroadcast(message: string, targetType: 'all' | 'connected'): Promise<{
   ok: boolean;

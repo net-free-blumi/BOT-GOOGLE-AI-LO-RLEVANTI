@@ -14,10 +14,11 @@ import {
   GitBranch,
   Download,
   BellRing,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { WhatsAppState } from '../types.ts';
-import { syncFromGitHubApi, requestPairingCodeApi } from '../services/api.ts';
+import { syncFromGitHubApi, requestPairingCodeApi, resetMainBotAuthApi } from '../services/api.ts';
 import { DriverQrPanel } from './DriverQrPanel.tsx';
 
 interface BotControlCardProps {
@@ -41,8 +42,22 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   const [localPairingCode, setLocalPairingCode] = useState<string | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingMethod, setPairingMethod] = useState<'qr' | 'code'>('qr');
+  const [resettingAuth, setResettingAuth] = useState(false);
 
   const activePairingCode = localPairingCode || wa.pairingCode;
+
+  const handleResetBotAuth = async () => {
+    setResettingAuth(true);
+    setPairingError(null);
+    try {
+      await resetMainBotAuthApi();
+      await onRestartBot();
+    } catch (err: any) {
+      setPairingError(err.message || 'שגיאה באיפוס חיבור הבוט');
+    } finally {
+      setResettingAuth(false);
+    }
+  };
 
   const handleCopyPairing = () => {
     if (!activePairingCode) return;
@@ -179,6 +194,28 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
               </span>
             </div>
           )}
+
+          {/* Stale Phone Session Guidance */}
+          <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/40 text-indigo-200 text-xs space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 font-bold text-indigo-300">
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>בטלפון רשום שמחובר אך האתר מנותק (שגיאה 401)?</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetBotAuth}
+                disabled={resettingAuth}
+                className="px-2.5 py-1 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-slate-950 font-black text-[11px] cursor-pointer disabled:opacity-50 shrink-0 shadow transition-colors flex items-center gap-1"
+              >
+                {resettingAuth ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {resettingAuth ? 'מאפס...' : 'איפוס חיבור נקי'}
+              </button>
+            </div>
+            <p className="text-[11px] text-indigo-200/90 leading-relaxed">
+              <strong>פתרון קל ומהיר:</strong> בוואטסאפ בטלפון כנס ל-<strong>מכשירים מקושרים</strong>, לחץ על המכשיר ובחר <strong>התנתק (Log Out)</strong>. לאחר מכן לחץ כאן "איפוס חיבור נקי" וסרוק את ה-QR – והוא יתחבר מיד ויסתנכרן ב-100%!
+            </p>
+          </div>
         </div>
       )}
 
