@@ -45,6 +45,21 @@ try {
   }
 } catch (e) {}
 
+// שליפת גרסת וואטסאפ ווב העדכנית (עם ניסיונות חוזרים).
+// אם השליפה נכשלת מחזירים undefined כדי ש-Baileys ישתמש בגרסה המובנית שלו -
+// גרסה ישנה/קשיחה גורמת לוואטסאפ לדחות את החיבור וה-QR לא נסרק.
+async function getWaVersion() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      const v = await fetchLatestBaileysVersion();
+      if (v?.version && Array.isArray(v.version)) return v.version;
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  console.warn("⚠️ לא ניתן לשלוף גרסת וואטסאפ עדכנית - משתמש בגרסת ברירת המחדל של Baileys");
+  return undefined;
+}
+
 // מפת חשבונות הנהגים הפעילים: phone -> session object
 const driverSessions = new Map();
 
@@ -172,16 +187,10 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   startDisconnectionWatchdog(onEvent);
 
   const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
-  let version;
-  try {
-    const v = await fetchLatestBaileysVersion();
-    version = v.version;
-  } catch {
-    version = [2, 3000, 1017531287];
-  }
+  const version = await getWaVersion();
 
   const sock = makeWASocket({
-    version,
+    ...(version ? { version } : {}),
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
@@ -254,6 +263,13 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
           mainBotReconnectTimeout = null;
           startMainBot({ onMessage, onReaction, onStatusChange, onEvent });
         }, 800);
+        return;
+      }
+
+      if (mainBotSock !== sock) return; // סוקט ישן - מתעלמים
+
+      if (code === DisconnectReason.connectionReplaced || code === 440) {
+        console.log("⚠️ [הבוט הראשי] הסשן הוחלף (440) - חיבור אחר פעיל. לא מתחבר מחדש כדי למנוע לולאה.");
         return;
       }
 
@@ -373,19 +389,18 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(driverAuthDir);
-  let version;
-  try {
-    const v = await fetchLatestBaileysVersion();
-    version = v.version;
-  } catch {
-    version = [2, 3000, 1017531287];
-  }
+  const version = await getWaVersion();
 
   const sock = makeWASocket({
-    version,
+    ...(version ? { version } : {}),
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
+    keepAliveIntervalMs: 25000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 2000,
+    browser: ["Ubuntu", "Chrome", "20.0.04"],
   });
 
   const sessionObj = {
@@ -438,6 +453,14 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
       sessionObj.status = "disconnected";
       sessionObj.lastDisconnectReason = String(code || lastDisconnect?.error?.message || "closed");
       onStatusChange?.(driverPhone, sessionObj);
+
+      // סוקט ישן שהוחלף בסשן חדש - לא מתחברים מחדש בשמו (מונע לולאות וסוקטים כפולים)
+      if (driverSessions.get(driverPhone)?.sock !== sock) return;
+
+      if (code === DisconnectReason.connectionReplaced || code === 440) {
+        console.log(`⚠️ [נהג ${driverPhone}] הסשן הוחלף (440) - לא מתחבר מחדש כדי למנוע לולאה.`);
+        return;
+      }
 
       if (code === DisconnectReason.loggedOut) {
         console.log(`⚠️ [נהג ${driverPhone}] התנתק (401 Logged Out). מאפס תיקיית אימות של הנהג בלבד!`);
