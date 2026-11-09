@@ -622,6 +622,11 @@ export default function App() {
         onClose={() => setRadarModalOpen(false)}
         selectedDriverPhone={selectedDriverPhone}
         driverName={approvedUsersList.find(u => u.phone === selectedDriverPhone)?.name || 'נהג'}
+        approvedUsers={approvedUsersList}
+        onSelectDriverPhone={(phone) => {
+          setSelectedDriverPhone(phone);
+          localStorage.setItem('rides_selected_driver', phone);
+        }}
       />
 
       {/* Legal & Accessibility Modals */}

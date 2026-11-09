@@ -83,6 +83,9 @@ export interface WhatsAppState {
   botPhone?: string;
   adminPhone?: string;
   connectedDriversCount?: number;
+  disconnectedSince?: number | null;
+  disconnectedMinutes?: number;
+  alertSent30Min?: boolean;
 }
 
 export interface DriverSessionItem {

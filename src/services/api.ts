@@ -633,96 +633,149 @@ export async function sendBroadcast(message: string, targetType: 'all' | 'connec
 // ===== רדאר נסיעות חי: קבלת נסיעות אחרונות בזמן אמת, תפיסה מהירה והדמיה =====
 const DEFAULT_DEMO_LIVE_RIDES = [
   {
-    id: 'DEMO-101',
+    id: 'DEMO-JLM-101',
+    rawText: '*ים פנימי 50* *בתוך בית וגן* *50* *זמן* *ווצאפ* wa.me/972552732722?text=ת+767715218',
+    cleanedText: 'ים פנימי 50 בתוך בית וגן 50 זמן',
+    originText: 'בית וגן',
+    destinationText: 'פנימי (בתוך בית וגן)',
+    originNeighborhood: 'בית וגן (ירושלים)',
+    destNeighborhood: 'פנימי ירושלים',
+    city: 'ירושלים',
+    price: 50,
+    groupName: 'דרייבוט 3 (B)',
+    senderName: 'ק.ד 6',
+    senderPhone: '0552732722',
+    timestamp: Date.now() - 30 * 1000,
+    timeFormatted: 'לפני דקה',
+    isInternal: true,
+    coords: { lat: 31.7702, lng: 35.1834 },
+    driverPhone: '0507787427',
+  },
+  {
+    id: 'DEMO-JLM-102',
+    rawText: '*ים פנימי 70* *הר נוף&הגן הבוטני* *זמן* *ווצאפ* wa.me/972552732722?text=ת+502435957',
+    cleanedText: 'ים פנימי 70 הר נוף&הגן הבוטני זמן',
+    originText: 'הר נוף',
+    destinationText: 'הגן הבוטני',
+    originNeighborhood: 'הר נוף (ירושלים)',
+    destNeighborhood: 'הגן הבוטני (ירושלים)',
+    city: 'ירושלים',
+    price: 70,
+    groupName: 'דרייבוט 3 (B)',
+    senderName: 'ק.ד 6',
+    senderPhone: '0552732722',
+    timestamp: Date.now() - 90 * 1000,
+    timeFormatted: 'לפני 2 דק׳',
+    isInternal: true,
+    coords: { lat: 31.7891, lng: 35.1764 },
+    driverPhone: '0507787427',
+  },
+  {
+    id: 'DEMO-BS-103',
     rawText: 'פנימי שמש 50\nזכריה הנביא לד\nזמנים',
     cleanedText: 'פנימי שמש 50\nזכריה הנביא לד\nזמנים',
     originText: 'זכריה הנביא',
-    destinationText: "רמה ד'",
-    originNeighborhood: 'רמה ג',
-    destNeighborhood: 'רמה ד',
+    destinationText: "רמת בית שמש ד'",
+    originNeighborhood: 'רמה ג (בית שמש)',
+    destNeighborhood: "רמה ד (בית שמש)",
     city: 'בית שמש',
     price: 50,
     groupName: '⚜️ סוס ורוכבו ⚜️',
     senderName: 'סדרן אהרון',
     senderPhone: '0548362633',
-    timestamp: Date.now() - 45 * 1000,
-    timeFormatted: 'לפני דקה',
+    timestamp: Date.now() - 150 * 1000,
+    timeFormatted: 'לפני 3 דק׳',
     isInternal: true,
     coords: { lat: 31.7185, lng: 34.9982 },
+    driverPhone: '0556706325',
   },
   {
-    id: 'DEMO-102',
+    id: 'DEMO-BS-104',
     rawText: 'שמש 55ש\nנחל משמר לביג\nמיידי לבקש פה',
     cleanedText: 'שמש 55ש\nנחל משמר לביג\nמיידי לבקש פה',
     originText: 'נחל משמר',
     destinationText: 'מרכז ביג',
-    originNeighborhood: 'רמה א',
-    destNeighborhood: 'מרכז ביג',
+    originNeighborhood: 'רמה א (בית שמש)',
+    destNeighborhood: 'מרכז ביג (בית שמש)',
     city: 'בית שמש',
     price: 55,
     groupName: 'דרייבוט 4',
     senderName: 'סדרן ק.ד 6',
     senderPhone: '0503426194',
-    timestamp: Date.now() - 110 * 1000,
-    timeFormatted: 'לפני 2 דק׳',
-    isInternal: true,
-    coords: { lat: 31.7331, lng: 34.9926 },
-  },
-  {
-    id: 'DEMO-103',
-    rawText: 'פנימי שמש 45\nרבי עקיבא לקריה\nזמן',
-    cleanedText: 'פנימי שמש 45\nרבי עקיבא לקריה\nזמן',
-    originText: 'רבי עקיבא',
-    destinationText: 'הקריה החרדית',
-    originNeighborhood: 'רמה ב',
-    destNeighborhood: 'הקריה החרדית',
-    city: 'בית שמש',
-    price: 45,
-    groupName: 'ובזמנו פנימי בית שמש',
-    senderName: 'משה סדרן',
-    senderPhone: '0527684321',
-    timestamp: Date.now() - 240 * 1000,
+    timestamp: Date.now() - 210 * 1000,
     timeFormatted: 'לפני 4 דק׳',
     isInternal: true,
-    coords: { lat: 31.7258, lng: 34.9854 },
+    coords: { lat: 31.7331, lng: 34.9926 },
+    driverPhone: '0556706325',
   },
   {
-    id: 'DEMO-104',
-    rawText: 'שמש ים 150\nרמה ד לגבעת שאול\nמיידי',
-    cleanedText: 'שמש ים 150\nרמה ד לגבעת שאול\nמיידי',
-    originText: "רמה ד'",
-    destinationText: 'ירושלים (גבעת שאול)',
-    originNeighborhood: 'רמה ד',
-    destNeighborhood: 'ירושלים',
-    city: 'בית שמש',
+    id: 'DEMO-INTER-105',
+    rawText: '18:15 ים שמש 150 עין כרם כסא תינוק סלקל בלי אל תבקש',
+    cleanedText: '18:15 ים שמש 150 עין כרם כסא תינוק סלקל',
+    originText: 'עין כרם',
+    destinationText: 'בית שמש',
+    originNeighborhood: 'עין כרם (ירושלים)',
+    destNeighborhood: 'בית שמש',
+    city: 'ירושלים',
     price: 150,
-    groupName: 'הנהגים הקדושים',
-    senderName: 'זרוע 2',
-    senderPhone: '0548556165',
-    timestamp: Date.now() - 320 * 1000,
+    groupName: 'אשדוד vip 👑',
+    senderName: 'מוקד סדרנים',
+    senderPhone: '0528101833',
+    timestamp: Date.now() - 300 * 1000,
     timeFormatted: 'לפני 5 דק׳',
     isInternal: false,
-    coords: { lat: 31.7052, lng: 34.9904 },
+    coords: { lat: 31.7651, lng: 35.1582 },
+    driverPhone: '0507787427',
+  },
+  {
+    id: 'DEMO-BB-106',
+    rawText: 'בב 70\nרבי עקיבא לסופרים\nמידי',
+    cleanedText: 'בב 70\nרבי עקיבא לסופרים\nמידי',
+    originText: 'רבי עקיבא',
+    destinationText: 'סופרים',
+    originNeighborhood: 'רבי עקיבא (בני ברק)',
+    destNeighborhood: 'סופרים (בני ברק)',
+    city: 'בני ברק',
+    price: 70,
+    groupName: 'דרייברים בני ברק',
+    senderName: 'סדרן ראשי',
+    senderPhone: '0527189191',
+    timestamp: Date.now() - 380 * 1000,
+    timeFormatted: 'לפני 6 דק׳',
+    isInternal: true,
+    coords: { lat: 32.0864, lng: 34.8341 },
+    driverPhone: '0544123890',
   },
 ];
 
 // ===== רדאר נסיעות חי: קבלת נסיעות אחרונות בזמן אמת, תפיסה מהירה והדמיה =====
 export async function fetchLiveRidesApi(phone?: string): Promise<{ ok: boolean; rides: any[] }> {
   const cfg = loadConfig();
+  const filterByPhone = (list: any[]) => {
+    if (!phone) return list;
+    const clean = phone.replace(/[^0-9]/g, '');
+    const filtered = list.filter((r) => {
+      if (!r.driverPhone) return true;
+      const rPhone = r.driverPhone.replace(/[^0-9]/g, '');
+      return clean.endsWith(rPhone) || rPhone.endsWith(clean);
+    });
+    return filtered.length > 0 ? filtered : list;
+  };
+
   if (cfg.useDemoMode) {
-    return { ok: true, rides: DEFAULT_DEMO_LIVE_RIDES };
+    return { ok: true, rides: filterByPhone(DEFAULT_DEMO_LIVE_RIDES) };
   }
 
   try {
     const url = phone ? `/api/rides/live?phone=${encodeURIComponent(phone)}` : '/api/rides/live';
     const data = await request<any>(url);
     if (data && Array.isArray(data.rides)) {
-      return { ok: true, rides: data.rides };
+      return { ok: true, rides: filterByPhone(data.rides) };
     }
-    return { ok: true, rides: data?.rides || [] };
+    return { ok: true, rides: filterByPhone(data?.rides || []) };
   } catch (err: any) {
-    // Graceful fallback: If remote server returns 404 (endpoint pending deployment on VPS) or network error, return demo/cached rides
-    return { ok: true, rides: DEFAULT_DEMO_LIVE_RIDES };
+    // Graceful fallback
+    return { ok: true, rides: filterByPhone(DEFAULT_DEMO_LIVE_RIDES) };
   }
 }
 

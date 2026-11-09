@@ -26,12 +26,20 @@ import {
   Copy,
   ExternalLink,
   Trash2,
+  User,
+  Users,
 } from 'lucide-react';
-import { LiveRideItem, DriverGeoLocation } from '../types.ts';
+import { LiveRideItem, DriverGeoLocation, ApprovedUser } from '../types.ts';
 import { fetchLiveRidesApi, claimRideApi, simulateRideApi, sendSearchCommand, stopSearch } from '../services/api.ts';
 import {
   BEIT_SHEMESH_ZONES,
-  detectNeighborhood,
+  JERUSALEM_ZONES,
+  BNEI_BRAK_ZONES,
+  MODIIN_ILLIT_ZONES,
+  BEITAR_ILLIT_ZONES,
+  ASHDOD_ZONES,
+  TEL_AVIV_ZONES,
+  ALL_ZONES_COMBINED,
   calculateDistanceKm,
   generateWazeUrl,
   getProximityBadge,
@@ -76,6 +84,8 @@ interface DriverRadarModalProps {
   onClose: () => void;
   selectedDriverPhone?: string;
   driverName?: string;
+  approvedUsers?: ApprovedUser[];
+  onSelectDriverPhone?: (phone: string) => void;
 }
 
 export function DriverRadarModal({
@@ -83,6 +93,8 @@ export function DriverRadarModal({
   onClose,
   selectedDriverPhone,
   driverName = 'נהג',
+  approvedUsers = [],
+  onSelectDriverPhone,
 }: DriverRadarModalProps) {
   // Current driver location (defaults to Rama D in Beit Shemesh)
   const [driverLocation, setDriverLocation] = useState<DriverGeoLocation>(() => {
@@ -127,6 +139,20 @@ export function DriverRadarModal({
   
   // Cockpit Mode (True Fullscreen, distraction-free, 2-3 big cards)
   const [isCockpitMode, setIsCockpitMode] = useState<boolean>(false);
+
+  // Active City for quick neighborhood selector (Beit Shemesh, Jerusalem, Bnei Brak, etc.)
+  const [selectedCity, setSelectedCity] = useState<string>('בית שמש');
+
+  // Multi-city neighborhood registry for quick location setting
+  const CITY_ZONES: Record<string, string[]> = {
+    'בית שמש': ['רמה ד', 'רמה ג', 'רמה א', 'רמה ב', 'רמה ה', 'הקריה החרדית', 'מרכז ביג', 'העיר הוותיקה', 'הר טוב'],
+    'ירושלים': ['בית וגן', 'הר נוף', 'גאולה', 'רוממה', 'רמות', 'סנהדריה', 'עין כרם', 'הגן הבוטני', 'מלחה', 'תלפיות'],
+    'בני ברק': ['רבי עקיבא', 'חזון איש', 'סוקולוב', 'השומר', 'עזרא', 'דסלר', 'סופרים', 'שיכון ה', 'פרדס כץ'],
+    'מודיעין עילית': ['קרית ספר', 'ברכפלד', 'נאות הפסגה', 'גרין פארק'],
+    'ביתר עילית': ['גבעה A', 'גבעה B', 'גבעה C'],
+    'אשדוד': ['רובע ז', 'רובע ג', 'הסיטי', 'רובע ט', 'סטאר סנטר'],
+    'תל אביב': ['מרכז תל אביב', 'עזריאלי', 'רכבת מרכז', 'יפו'],
+  };
 
   // למניעת החמצת צלצול כשיש 20 נסיעות - מעקב מזהים ייחודי
   const seenRideIdsRef = useRef<Set<string>>(new Set());
@@ -427,21 +453,21 @@ export function DriverRadarModal({
     );
   };
 
-  // Select predefined neighborhood
+  // Select predefined neighborhood across all cities
   const handleSelectZone = (zoneKey: string) => {
-    const zone = BEIT_SHEMESH_ZONES[zoneKey];
+    const zone = ALL_ZONES_COMBINED[zoneKey] || BEIT_SHEMESH_ZONES[zoneKey];
     if (!zone) return;
     const newLoc: DriverGeoLocation = {
       lat: zone.lat,
       lng: zone.lng,
-      label: zone.name,
+      label: `${zone.name} (${zone.city})`,
       neighborhood: zoneKey,
       source: 'manual',
       updatedAt: Date.now(),
     };
     setDriverLocation(newLoc);
     localStorage.setItem('rides_driver_gps', JSON.stringify(newLoc));
-    showToast(`📍 מיקומך הוגדר כעת ב-${zone.name}`);
+    showToast(`📍 מיקומך הוגדר כעת ב-${zone.name} (${zone.city})`);
   };
 
   // Trigger test simulation ride (including user exact bug scenarios)
@@ -567,8 +593,9 @@ export function DriverRadarModal({
         driveTimeMinutes = dist.driveTimeMin;
       }
 
-      // קישור ניווט Waze ייקח את הנהג ישירות לנקודת האיסוף של הלקוח
-      const wazeUrl = generateWazeUrl(originText || originNeighborhood, 'בית שמש', originCoords);
+      // קישור ניווט Waze ייקח את הנהג ישירות לנקודת האיסוף של הלקוח בעיר הנכונה
+      const destinationCity = parsed.city || ride.city || 'ישראל';
+      const wazeUrl = generateWazeUrl(originText || originNeighborhood, destinationCity, originCoords);
 
       // חילוץ סדרן מדויק (אם היה 0 או לא צוין, מנקים ומחלצים מההודעה)
       let cleanDispatcher = parsed.dispatcherPhone || ride.senderPhone;
@@ -613,11 +640,24 @@ export function DriverRadarModal({
     });
   }, [rides, driverLocation]);
 
-  // Filter rides by distance slider
+  // Filter rides by selected driver & distance slider
   const filteredRides = useMemo(() => {
-    if (maxDistanceFilter <= 0) return enrichedRides;
-    return enrichedRides.filter((r) => r.distanceKm === null || r.distanceKm <= maxDistanceFilter);
-  }, [enrichedRides, maxDistanceFilter]);
+    let list = enrichedRides;
+    if (selectedDriverPhone) {
+      const cleanTarget = selectedDriverPhone.replace(/[^0-9]/g, '');
+      const driverSpecific = list.filter((r: any) => {
+        const phone = r.driverPhone || r.recipientPhone || r.targetDriverPhone;
+        if (!phone) return true;
+        const cleanR = String(phone).replace(/[^0-9]/g, '');
+        return cleanTarget.endsWith(cleanR) || cleanR.endsWith(cleanTarget);
+      });
+      if (driverSpecific.length > 0) {
+        list = driverSpecific;
+      }
+    }
+    if (maxDistanceFilter <= 0) return list;
+    return list.filter((r) => r.distanceKm === null || r.distanceKm <= maxDistanceFilter);
+  }, [enrichedRides, maxDistanceFilter, selectedDriverPhone]);
 
   if (!isOpen) return null;
 
@@ -736,6 +776,27 @@ export function DriverRadarModal({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Quick Driver Profile Selector */}
+            {approvedUsers.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-amber-500/40">
+                <Users className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[10px] text-slate-400 font-bold hidden md:inline">נהג:</span>
+                <select
+                  value={selectedDriverPhone || ''}
+                  onChange={(e) => onSelectDriverPhone?.(e.target.value)}
+                  className="bg-transparent text-amber-300 font-black focus:outline-none cursor-pointer text-xs"
+                  title="בחר נהג לצפייה רק בנסיעות שלו"
+                >
+                  <option value="" className="bg-[#0b1018] text-slate-300">👥 כל הנהגים (מבט כולל)</option>
+                  {approvedUsers.map((u) => (
+                    <option key={u.phone} value={u.phone} className="bg-[#0b1018] text-white">
+                      {u.name || 'נהג'} ({u.phone})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Quick Search Controls */}
             <div className="flex items-center gap-1.5 bg-[#070c14] px-2 py-1 rounded-xl border border-[#1e2a3c]">
               <span className="text-[10px] text-slate-400 font-bold hidden sm:inline">חיפוש:</span>
@@ -885,10 +946,31 @@ export function DriverRadarModal({
               <span>{isGettingGps ? 'מאתר GPS...' : 'דקור GPS'}</span>
             </button>
 
-            {/* Quick neighborhood pill selector */}
+            {/* City Selector */}
+            <div className="flex items-center gap-1 bg-[#080d14] px-2 py-1 rounded-xl border border-[#1d293a]">
+              <span className="text-slate-400 text-[11px] font-bold">עיר:</span>
+              <select
+                value={selectedCity}
+                onChange={(e) => {
+                  const city = e.target.value;
+                  setSelectedCity(city);
+                  const firstZone = (CITY_ZONES[city] || [])[0];
+                  if (firstZone) handleSelectZone(firstZone);
+                }}
+                className="bg-transparent text-emerald-300 font-black focus:outline-none cursor-pointer text-xs"
+              >
+                {Object.keys(CITY_ZONES).map((c) => (
+                  <option key={c} value={c} className="bg-[#0c121a] text-white">
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Quick neighborhood pill selector for the chosen city */}
             <div className="flex items-center gap-1 overflow-x-auto max-w-full pb-0.5 sm:pb-0">
-              <span className="text-slate-400 text-[11px] shrink-0 mr-1 hidden sm:inline">או בחר אזור:</span>
-              {['רמה ד', 'רמה ג', 'רמה א', 'רמה ב', 'מרכז ביג', 'העיר הוותיקה', 'הר טוב'].map((k) => {
+              <span className="text-slate-400 text-[11px] shrink-0 mr-1 hidden sm:inline">שכונה/מוקד:</span>
+              {(CITY_ZONES[selectedCity] || []).map((k) => {
                 const isSelected = driverLocation.neighborhood === k;
                 return (
                   <button

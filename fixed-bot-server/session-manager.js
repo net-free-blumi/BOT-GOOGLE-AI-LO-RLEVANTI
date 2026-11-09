@@ -11,7 +11,7 @@ import pino from "pino";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings, approveUser, isUserApproved } from "./users-manager.js";
+import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings, approveUser, isUserApproved, getDestinationJid } from "./users-manager.js";
 import { recordError } from "./dashboard-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -48,8 +48,13 @@ try {
 // מפת חשבונות הנהגים הפעילים: phone -> session object
 const driverSessions = new Map();
 
-// מצב הבוט הראשי
+// מצב הבוט הראשי ומעקב ניתוקים להתראת מנהל
 let mainBotSock = null;
+let mainBotDisconnectedAt = Date.now(); // ברירת מחדל עד לחיבור מוצלח
+let mainBot30MinAlertSent = false;
+let mainBotLastAlertTime = 0;
+let watchdogInterval = null;
+
 let mainBotStatus = {
   phone: "972555081810",
   connected: false,
@@ -58,7 +63,82 @@ let mainBotStatus = {
   qr: null,
   qrTimestamp: null,
   lastDisconnectReason: "",
+  disconnectedSince: Date.now(),
 };
+
+// שעון מעקב (Watchdog) לניתוק ממושך מעל 30 דקות ושליחת התראה אוטומטית למנהל
+function startDisconnectionWatchdog(onEvent) {
+  if (watchdogInterval) clearInterval(watchdogInterval);
+  watchdogInterval = setInterval(async () => {
+    if (mainBotStatus.connected) {
+      mainBotDisconnectedAt = null;
+      mainBot30MinAlertSent = false;
+      mainBotStatus.disconnectedSince = null;
+      return;
+    }
+
+    if (!mainBotDisconnectedAt) {
+      mainBotDisconnectedAt = Date.now();
+    }
+    mainBotStatus.disconnectedSince = mainBotDisconnectedAt;
+
+    const elapsedMs = Date.now() - mainBotDisconnectedAt;
+    const elapsedMinutes = Math.floor(elapsedMs / (60 * 1000));
+
+    // האם עברו 30 דקות וטרם נשלחה התראה, או שעברו 60 דקות נוספות מההתראה הקודמת
+    const shouldAlert = (elapsedMinutes >= 30 && !mainBot30MinAlertSent) || 
+                        (elapsedMinutes >= 60 && Date.now() - mainBotLastAlertTime >= 60 * 60 * 1000);
+
+    if (shouldAlert) {
+      mainBot30MinAlertSent = true;
+      mainBotLastAlertTime = Date.now();
+
+      const usersData = loadUsersData();
+      const adminPhone = cleanPhone(usersData.adminPhone || "972515157166");
+      const currentCode = mainBotStatus.pairingCode || "טרם הופק - היכנס לאתר";
+
+      const alertText = 
+`🚨 *התראת מנהל דחופה - הבוט מנותק כבר ${elapsedMinutes} דקות!* 🚨
+
+בוט הוואטסאפ הראשי (${mainBotStatus.phone || '0555081810'}) מנותק כבר למעלה מ-30 דקות ברציפות!
+
+🔑 *קוד צימוד עדכני לחיבור מיידי:*
+*${currentCode}*
+
+📱 *כיצד לחבר ב-30 שניות:*
+1. פתח וואטסאפ בטלפון של הבוט (${mainBotStatus.phone || '0555081810'})
+2. לחץ על: הגדרות (3 נקודות) ⬅️ מכשירים מקושרים ⬅️ קשר מכשיר
+3. בחר "קשר באמצעות מספר טלפון" והקלד את הקוד: *${currentCode}*
+
+ההודעה נשלחה אוטומטית בהתאם להגדרת אבטחת ניתוק של 30 דקות.`;
+
+      console.log(`🚨 [WATCHDOG] הבוט מנותק ${elapsedMinutes} דק'! שולח התראת וואטסאפ למנהל (${adminPhone})...`);
+      onEvent?.("system", `🚨 התראת מנהל: בוט ראשי מנותק מעל 30 דקות (${elapsedMinutes} דק'). קוד: ${currentCode}`);
+      recordError("הבוט הראשי מנותק מעל 30 דקות", `משך ניתוק: ${elapsedMinutes} דק', קוד צימוד: ${currentCode}`);
+
+      // שליחת ההודעה דרך כל סשן נהג שמחובר כעת במערכת Multi-Session
+      let sentSuccess = false;
+      for (const [dPhone, dSession] of driverSessions.entries()) {
+        if (dSession && dSession.sock && dSession.status === "connected") {
+          try {
+            const destJid = getDestinationJid(adminPhone);
+            await dSession.sock.sendMessage(destJid, { text: alertText });
+            sentSuccess = true;
+            console.log(`✅ התראת ניתוק מנהל נשלחה בהצלחה לוואטסאפ של המנהל (${adminPhone}) דרך נהג ${dPhone}`);
+            onEvent?.("system", `✅ התראת ניתוק נשלחה לוואטסאפ של המנהל דרך נהג ${dPhone}`);
+            break;
+          } catch (e) {
+            console.error(`שגיאה בשליחת התראת ניתוק דרך נהג ${dPhone}:`, e.message);
+          }
+        }
+      }
+
+      if (!sentSuccess) {
+        console.log(`⚠️ אין סשן נהג מקביל מחובר לשליחת הודעת וואטסאפ ישירה. ההתראה תועדה בלוח הבקרה.`);
+      }
+    }
+  }, 30000);
+}
 
 // ==========================================
 // 1. הפעלת הבוט הראשי (Main Bot - 0555081810)
@@ -67,6 +147,9 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   const usersData = loadUsersData();
   const botPhone = cleanPhone(process.env.BOT_PHONE || usersData.botPhone || "972555081810");
   mainBotStatus.phone = botPhone;
+
+  // הפעלת שעון מעקב ניתוק 30 דקות למנהל
+  startDisconnectionWatchdog(onEvent);
 
   const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
   let version;
@@ -82,6 +165,11 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
+    keepAliveIntervalMs: 25000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    retryRequestDelayMs: 2000,
+    browser: ["Ubuntu", "Chrome", "20.0.04"],
   });
 
   mainBotSock = sock;
@@ -123,6 +211,9 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
       mainBotStatus.qr = null;
       mainBotStatus.qrTimestamp = null;
       mainBotStatus.lastDisconnectReason = "";
+      mainBotDisconnectedAt = null;
+      mainBot30MinAlertSent = false;
+      mainBotStatus.disconnectedSince = null;
       onStatusChange?.(mainBotStatus);
       onEvent?.("system", `הבוט הראשי (${botPhone}) מחובר בהצלחה`);
     }
@@ -131,16 +222,21 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
       const code = lastDisconnect?.error?.output?.statusCode;
       mainBotStatus.connected = false;
       mainBotStatus.lastDisconnectReason = String(code || lastDisconnect?.error?.message || "closed");
+      if (!mainBotDisconnectedAt) {
+        mainBotDisconnectedAt = Date.now();
+      }
+      mainBotStatus.disconnectedSince = mainBotDisconnectedAt;
       onStatusChange?.(mainBotStatus);
 
       if (code === DisconnectReason.loggedOut) {
-        console.log("⚠️ הבוט הראשי נותק (401 Logged Out). מאפס רק את auth/bot ומפעיל מחדש...");
+        console.log("⚠️ הבוט הראשי נותק (401 Logged Out). מאפס תיקיית auth ומפעיל מחדש...");
         try {
           fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
         } catch (e) {}
         setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 4000);
       } else {
-        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 3000);
+        console.log(`🔄 חיבור הבוט הראשי נותק זמנית (קוד ${code}). מתחבר מחדש תוך 4 שניות...`);
+        setTimeout(() => startMainBot({ onMessage, onReaction, onStatusChange, onEvent }), 4000);
       }
     }
   });
@@ -533,6 +629,9 @@ export function getAllSessionsSummary() {
       qr: mainBotStatus.qr || null,
       qrTimestamp: mainBotStatus.qrTimestamp || null,
       lastDisconnectReason: mainBotStatus.lastDisconnectReason,
+      disconnectedSince: mainBotDisconnectedAt,
+      disconnectedMinutes: mainBotDisconnectedAt ? Math.floor((Date.now() - mainBotDisconnectedAt) / 60000) : 0,
+      alertSent30Min: mainBot30MinAlertSent,
     },
     drivers,
     totalConnectedDrivers: drivers.filter((d) => d.status === "connected").length,
