@@ -25,6 +25,7 @@ interface BotControlCardProps {
   wa: WhatsAppState;
   onRestartBot: () => Promise<void>;
   onStopBot: () => Promise<void>;
+  onRefreshData?: () => void;
   loading: boolean;
 }
 
@@ -32,6 +33,7 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   wa,
   onRestartBot,
   onStopBot,
+  onRefreshData,
   loading,
 }) => {
   const [copiedCode, setCopiedCode] = useState(false);
@@ -43,15 +45,24 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingMethod, setPairingMethod] = useState<'qr' | 'code'>('qr');
   const [resettingAuth, setResettingAuth] = useState(false);
+  const [justConnectedCelebration, setJustConnectedCelebration] = useState(false);
 
   const activePairingCode = localPairingCode || wa.pairingCode;
+
+  const handleConnected = () => {
+    setJustConnectedCelebration(true);
+    onRefreshData?.();
+    setTimeout(() => {
+      onRefreshData?.();
+    }, 1500);
+  };
 
   const handleResetBotAuth = async () => {
     setResettingAuth(true);
     setPairingError(null);
     try {
       await resetMainBotAuthApi();
-      await onRestartBot();
+      onRefreshData?.();
     } catch (err: any) {
       setPairingError(err.message || 'שגיאה באיפוס חיבור הבוט');
     } finally {
@@ -220,14 +231,18 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
       )}
 
       {/* Connected State vs Dual-Mode Disconnected Pairing */}
-      {wa.connected ? (
-        <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs space-y-2">
+      {wa.connected || justConnectedCelebration ? (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/60 via-[#10241e] to-emerald-950/50 border border-emerald-500/50 text-emerald-200 text-xs space-y-2 shadow-xl animate-in fade-in">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-              <span className="font-bold">הבוט הראשי ({wa.botPhone || '0555081810'}) מחובר ופעיל</span>
+              <span className="w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.9)] animate-pulse" />
+              <span className="font-black text-sm text-white">הבוט הראשי ({wa.botPhone || '0555081810'}) מחובר ופעיל</span>
             </div>
-            <span className="text-[11px] text-emerald-400/80 font-mono">200 OK</span>
+            <span className="text-[11px] text-emerald-400 font-mono font-bold bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/40">200 OK</span>
+          </div>
+
+          <div className="text-xs text-emerald-300 font-bold flex items-center gap-1.5 pt-1">
+            <span>🎉 החיבור הושלם בהצלחה! האתר, הבוט וקבוצות הוואטסאפ מסונכרנים ב-100%.</span>
           </div>
 
           <div className="flex items-center justify-between pt-1 border-t border-emerald-500/20 text-[11px] text-emerald-200/90">
@@ -277,7 +292,7 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
                 </span>
                 <span className="text-[11px] text-slate-400">סרוק ישירות בוואטסאפ</span>
               </div>
-              <DriverQrPanel phone="bot" onConnected={onRestartBot} />
+              <DriverQrPanel phone="bot" onConnected={handleConnected} />
             </div>
           ) : (
             /* Pairing Code Method */

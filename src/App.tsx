@@ -500,6 +500,7 @@ export default function App() {
               wa={waState}
               onRestartBot={handleRestartBot}
               onStopBot={handleStopBot}
+              onRefreshData={refreshData}
               loading={actionLoading}
             />
             <SettingsCard
