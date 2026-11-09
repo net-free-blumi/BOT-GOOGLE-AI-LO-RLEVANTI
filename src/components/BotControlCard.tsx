@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { WhatsAppState } from '../types.ts';
 import { syncFromGitHubApi, requestPairingCodeApi } from '../services/api.ts';
+import { DriverQrPanel } from './DriverQrPanel.tsx';
 
 interface BotControlCardProps {
   wa: WhatsAppState;
@@ -39,6 +40,7 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   const [requestingPairing, setRequestingPairing] = useState(false);
   const [localPairingCode, setLocalPairingCode] = useState<string | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
+  const [pairingMethod, setPairingMethod] = useState<'qr' | 'code'>('qr');
 
   const activePairingCode = localPairingCode || wa.pairingCode;
 
@@ -56,6 +58,7 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
       const res = await requestPairingCodeApi(wa.botPhone || '0555081810', true, true);
       if (res.ok && res.code) {
         setLocalPairingCode(res.code);
+        setPairingMethod('code');
       } else {
         setPairingError(res.error || 'לא התקבל קוד צימוד');
       }
@@ -179,67 +182,8 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
         </div>
       )}
 
-      {/* Pairing Code Alert Banner (if generated or requested) */}
-      {activePairingCode ? (
-        <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/60 via-[#192334] to-amber-950/50 border border-amber-500/60 shadow-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-black text-amber-300">
-              <KeyRound className="w-4 h-4 text-amber-400" />
-              קוד צימוד פעיל לוואטסאפ (Pairing Code)
-            </div>
-            <button
-              onClick={handleCopyPairing}
-              className="px-3 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
-            >
-              {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedCode ? 'הועתק ללוח!' : 'העתק קוד'}
-            </button>
-          </div>
-
-          <div className="font-mono text-3xl font-black text-amber-300 tracking-widest text-center py-2.5 bg-[#080d16] rounded-xl border border-amber-500/40 shadow-inner select-all">
-            {activePairingCode}
-          </div>
-
-          <div className="text-[11px] text-amber-100/90 leading-relaxed space-y-1 bg-amber-950/30 p-2.5 rounded-lg border border-amber-500/20">
-            <div className="font-bold text-amber-300">כיצד לחבר את הבוט ב-30 שניות:</div>
-            <div>1. פתח וואטסאפ בטלפון של הבוט ({wa.botPhone || '0555081810'})</div>
-            <div>2. לחץ על 3 הנקודות למעלה &gt; <strong>מכשירים מקושרים</strong> &gt; <strong>קשר מכשיר</strong></div>
-            <div>3. בחר למטה <strong>"קשר באמצעות מספר טלפון במקום"</strong> והזן את 8 התווים הנ"ל</div>
-          </div>
-
-          <button
-            onClick={handleRequestPairing}
-            disabled={requestingPairing}
-            className="w-full py-1.5 text-xs text-amber-300 hover:text-amber-200 underline cursor-pointer disabled:opacity-50 text-center"
-          >
-            {requestingPairing ? 'מפיק קוד חדש...' : 'הקוד פג תוקף? לחץ כאן להפקת קוד צימוד חדש'}
-          </button>
-        </div>
-      ) : !wa.connected ? (
-        <div className="p-3 bg-[#131b26] border border-[#233348] rounded-xl flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="text-xs text-slate-300">
-            <span className="font-bold text-amber-300">הבוט מחכה לצימוד: </span>
-            ניתן לקשר אותו מיד באמצעות קוד בן 8 תווים ללא צורך בסריקת מצלמה.
-          </div>
-          <button
-            onClick={handleRequestPairing}
-            disabled={requestingPairing}
-            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-500/20 shrink-0 disabled:opacity-50"
-          >
-            {requestingPairing ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                מפיק קוד...
-              </>
-            ) : (
-              <>
-                <KeyRound className="w-3.5 h-3.5" />
-                הפק קוד צימוד (8 תווים)
-              </>
-            )}
-          </button>
-        </div>
-      ) : (
+      {/* Connected State vs Dual-Mode Disconnected Pairing */}
+      {wa.connected ? (
         <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -255,6 +199,114 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
               {wa.connectedDriversCount ? `${wa.connectedDriversCount} נהגים מחוברים ומסננים` : 'אין נהגים נוספים מחוברים כעת'}
             </span>
           </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Method Selector Tabs: QR Scan vs Pairing Code */}
+          <div className="flex items-center gap-1.5 p-1 bg-[#0b1017] rounded-xl border border-[#1e2a3b]">
+            <button
+              type="button"
+              onClick={() => setPairingMethod('qr')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                pairingMethod === 'qr'
+                  ? 'bg-teal-500 text-slate-950 shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <QrCode className="w-4 h-4" />
+              <span>סריקת קוד QR (ללא הקלדה)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPairingMethod('code')}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                pairingMethod === 'code'
+                  ? 'bg-amber-500 text-slate-950 shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>קוד צימוד (8 תווים)</span>
+            </button>
+          </div>
+
+          {/* QR Method */}
+          {pairingMethod === 'qr' ? (
+            <div className="p-3.5 rounded-xl bg-[#0d131d] border border-teal-500/30 space-y-3">
+              <div className="flex items-center justify-between text-xs text-teal-300 font-bold">
+                <span className="flex items-center gap-1.5">
+                  <QrCode className="w-4 h-4 text-teal-400" />
+                  קוד QR חי לוואטסאפ של הבוט ({wa.botPhone || '0555081810'})
+                </span>
+                <span className="text-[11px] text-slate-400">סרוק ישירות בוואטסאפ</span>
+              </div>
+              <DriverQrPanel phone="bot" onConnected={onRestartBot} />
+            </div>
+          ) : (
+            /* Pairing Code Method */
+            <div className="space-y-3">
+              {activePairingCode ? (
+                <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/60 via-[#192334] to-amber-950/50 border border-amber-500/60 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-black text-amber-300">
+                      <KeyRound className="w-4 h-4 text-amber-400" />
+                      קוד צימוד פעיל לוואטסאפ (Pairing Code)
+                    </div>
+                    <button
+                      onClick={handleCopyPairing}
+                      className="px-3 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+                    >
+                      {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedCode ? 'הועתק ללוח!' : 'העתק קוד'}
+                    </button>
+                  </div>
+
+                  <div className="font-mono text-3xl font-black text-amber-300 tracking-widest text-center py-2.5 bg-[#080d16] rounded-xl border border-amber-500/40 shadow-inner select-all">
+                    {activePairingCode}
+                  </div>
+
+                  <div className="text-[11px] text-amber-100/90 leading-relaxed space-y-1 bg-amber-950/30 p-2.5 rounded-lg border border-amber-500/20">
+                    <div className="font-bold text-amber-300">כיצד לחבר את הבוט ב-30 שניות:</div>
+                    <div>1. פתח וואטסאפ בטלפון של הבוט ({wa.botPhone || '0555081810'})</div>
+                    <div>2. לחץ על 3 הנקודות למעלה &gt; <strong>מכשירים מקושרים</strong> &gt; <strong>קשר מכשיר</strong></div>
+                    <div>3. בחר למטה <strong>"קשר באמצעות מספר טלפון במקום"</strong> והזן את 8 התווים הנ"ל</div>
+                  </div>
+
+                  <button
+                    onClick={handleRequestPairing}
+                    disabled={requestingPairing}
+                    className="w-full py-1.5 text-xs text-amber-300 hover:text-amber-200 underline cursor-pointer disabled:opacity-50 text-center"
+                  >
+                    {requestingPairing ? 'מפיק קוד חדש...' : 'הקוד פג תוקף? לחץ כאן להפקת קוד צימוד חדש'}
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3 bg-[#131b26] border border-[#233348] rounded-xl flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-xs text-slate-300">
+                    <span className="font-bold text-amber-300">הבוט מחכה לצימוד: </span>
+                    ניתן לקשר אותו מיד באמצעות קוד בן 8 תווים ללא צורך בסריקת מצלמה.
+                  </div>
+                  <button
+                    onClick={handleRequestPairing}
+                    disabled={requestingPairing}
+                    className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-lg shadow-amber-500/20 shrink-0 disabled:opacity-50"
+                  >
+                    {requestingPairing ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        מפיק קוד...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="w-3.5 h-3.5" />
+                        הפק קוד צימוד (8 תווים)
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

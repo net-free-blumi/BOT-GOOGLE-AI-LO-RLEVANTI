@@ -585,7 +585,9 @@ export async function fetchDriverQr(phone: string): Promise<DriverQrState> {
       qrUpdatedAt: Date.now(),
     };
   }
-  return await request<DriverQrState>(`/api/driver/qr/${encodeURIComponent(phone)}`);
+  const isBot = phone === 'bot' || phone === 'main' || phone === 'mainBot';
+  const path = isBot ? '/api/pairing/qr?isBot=true' : `/api/driver/qr/${encodeURIComponent(phone)}`;
+  return await request<DriverQrState>(path);
 }
 
 // איפוס מוחלט של כל סשני הנהגים, הקוקיז ומיפויי ה-LID מהשרת

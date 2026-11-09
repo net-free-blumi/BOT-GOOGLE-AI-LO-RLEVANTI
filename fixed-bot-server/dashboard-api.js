@@ -5,6 +5,7 @@ import { exec } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import QRCode from "qrcode";
 import { 
   loadUsersData, 
   saveUsersData, 
@@ -796,38 +797,54 @@ export function startDashboard(runtime) {
 
   // קבלת קוד QR חי לוואטסאפ ווב (תומך ב-/api/driver/qr/:phone וכן ב-/api/pairing/qr)
   const handleDriverQrRequest = async (req, res) => {
-    const isBot = req.query.isBot === "true" || req.query.target === "bot";
-    const phone = req.params?.phone || req.query.phone;
+    const rawPhone = req.params?.phone || req.query.phone;
+    const isBot = req.query.isBot === "true" || req.query.target === "bot" || rawPhone === "bot" || rawPhone === "main";
 
     try {
       if (isBot) {
         const summary = ctx?.getAllSessions ? ctx.getAllSessions() : {};
         const isConn = Boolean(summary.bot?.connected);
         const qr = summary.bot?.qr || null;
+        let qrImage = null;
+        if (qr) {
+          try {
+            const toDataURL = QRCode.toDataURL || QRCode.default?.toDataURL;
+            qrImage = await toDataURL(qr, { margin: 1, width: 320 });
+          } catch (e) {}
+        }
         return res.json({
           ok: true,
           isBot: true,
           phone: summary.bot?.phone || "bot",
           qr,
+          qrImage,
           status: isConn ? "connected" : (qr ? "qr_ready" : "connecting"),
           connected: isConn,
           qrUpdatedAt: summary.bot?.qrTimestamp || Date.now(),
         });
       }
 
-      if (!phone) {
+      if (!rawPhone) {
         return res.status(400).json({ ok: false, error: "נדרש מספר טלפון להפקת קוד QR לנהג" });
       }
 
-      const cleanP = cleanPhone(phone);
+      const cleanP = cleanPhone(rawPhone);
       if (ctx?.ensureDriverSessionForQr) {
         const sessionInfo = await ctx.ensureDriverSessionForQr(cleanP);
         const isConn = sessionInfo.status === "connected" || Boolean(sessionInfo.registered);
+        let qrImage = null;
+        if (sessionInfo.qr) {
+          try {
+            const toDataURL = QRCode.toDataURL || QRCode.default?.toDataURL;
+            qrImage = await toDataURL(sessionInfo.qr, { margin: 1, width: 320 });
+          } catch (e) {}
+        }
         return res.json({
           ok: true,
           isBot: false,
           phone: cleanP,
           qr: sessionInfo.qr,
+          qrImage,
           status: sessionInfo.status || (isConn ? "connected" : (sessionInfo.qr ? "qr_ready" : "connecting")),
           registered: sessionInfo.registered,
           connected: isConn,
@@ -838,11 +855,19 @@ export function startDashboard(runtime) {
       const summary = ctx?.getAllSessions ? ctx.getAllSessions() : { drivers: [] };
       const drv = (summary.drivers || []).find((d) => cleanPhone(d.phone) === cleanP);
       const isConn = drv?.status === "connected" || Boolean(drv?.registered);
+      let qrImage = null;
+      if (drv?.qr) {
+        try {
+          const toDataURL = QRCode.toDataURL || QRCode.default?.toDataURL;
+          qrImage = await toDataURL(drv.qr, { margin: 1, width: 320 });
+        } catch (e) {}
+      }
       res.json({
         ok: true,
         isBot: false,
         phone: cleanP,
         qr: drv?.qr || null,
+        qrImage,
         status: drv?.status || (isConn ? "connected" : (drv?.qr ? "qr_ready" : "connecting")),
         registered: Boolean(drv?.registered),
         connected: isConn,

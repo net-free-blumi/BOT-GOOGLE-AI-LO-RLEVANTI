@@ -9,6 +9,7 @@ import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STICKER_WEBP_PATH = path.join(__dirname, "assets", "sticker_confused.webp");
+const STICKER_PNG_PATH = path.join(__dirname, "assets", "sticker_confused.png");
 const STICKER_JPG_PATH = path.join(__dirname, "assets", "sticker_confused.jpg");
 const lastConfusedStickerSent = new Map();
 import {
@@ -1033,11 +1034,14 @@ export async function sendConfusedStickerAndMessage(sock, jid, quotedMsg, sender
   }
   lastConfusedStickerSent.set(senderPhone, now);
 
-  // 1. שליחת המדבקה המעוצבת (WebP / JPG)
+  // 1. שליחת המדבקה המעוצבת (WebP שקופה ועגולה ללא רקע)
   try {
     if (fs.existsSync(STICKER_WEBP_PATH)) {
       const stickerBuf = fs.readFileSync(STICKER_WEBP_PATH);
       await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: quotedMsg });
+    } else if (fs.existsSync(STICKER_PNG_PATH)) {
+      const imgBuf = fs.readFileSync(STICKER_PNG_PATH);
+      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" }, { quoted: quotedMsg });
     } else if (fs.existsSync(STICKER_JPG_PATH)) {
       const imgBuf = fs.readFileSync(STICKER_JPG_PATH);
       await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" }, { quoted: quotedMsg });
