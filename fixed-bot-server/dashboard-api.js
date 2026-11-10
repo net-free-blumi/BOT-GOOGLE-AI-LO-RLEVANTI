@@ -946,6 +946,91 @@ export function startDashboard(runtime) {
     res.json({ ok: true, message: "הסשן נותק" });
   });
 
+  // ==========================================
+  // ניהול טלגרם וסריקה מקבילה (Dual-Channel WhatsApp + Telegram)
+  // ==========================================
+  app.get("/api/telegram/status", requireAuth, (_req, res) => {
+    try {
+      if (ctx?.getTelegramStatus) {
+        return res.json(ctx.getTelegramStatus());
+      }
+      res.json({ ok: true, connected: true, drivers: [] });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/telegram/driver/connect", requireAuth, (req, res) => {
+    try {
+      const { phone, telegramPhone, username, groups, forwardToWa } = req.body || {};
+      if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
+      if (ctx?.updateDriverTelegram) {
+        const result = ctx.updateDriverTelegram(phone, { telegramPhone, username, groups, forwardToWa, connected: true });
+        return res.json({ ok: true, success: true, ...result });
+      }
+      res.json({ ok: true, success: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/telegram/driver/disconnect", requireAuth, (req, res) => {
+    try {
+      const { phone } = req.body || {};
+      if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
+      if (ctx?.disconnectDriverTelegram) {
+        const result = ctx.disconnectDriverTelegram(phone);
+        return res.json({ ok: true, ...result });
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/telegram/test-ride", requireAuth, async (req, res) => {
+    try {
+      const { groupTitle, senderName, text, directUrl } = req.body || {};
+      if (!text) return res.status(400).json({ ok: false, error: "נדרש תוכן נסיעה לבדיקה" });
+      if (ctx?.processIncomingTelegramRide) {
+        const result = await ctx.processIncomingTelegramRide({ groupTitle, senderName, text, directUrl });
+        return res.json({ ok: true, ...result });
+      }
+      res.json({ ok: true, matched: false });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Webhook מטלגרם בוט לקבלת הודעות בזמן אמת מקבוצות טלגרם
+  app.post("/api/telegram/webhook", async (req, res) => {
+    try {
+      const update = req.body;
+      const message = update?.message || update?.channel_post;
+      if (message && message.text) {
+        const groupTitle = message.chat?.title || "קבוצת טלגרם";
+        const senderName = message.from ? `${message.from.first_name || ""} ${message.from.last_name || ""}`.trim() : "סדרן בטלגרם";
+        const directUrl = message.chat?.username 
+          ? `https://t.me/${message.chat.username}/${message.message_id}`
+          : `https://t.me/c/${String(message.chat?.id || "").replace(/^-100/, "")}/${message.message_id}`;
+        
+        if (ctx?.processIncomingTelegramRide) {
+          await ctx.processIncomingTelegramRide({
+            groupTitle,
+            senderName,
+            text: message.text,
+            directUrl,
+            messageId: message.message_id,
+          });
+        }
+      }
+      res.status(200).send("OK");
+    } catch (e) {
+      console.error("שגיאה בעיבוד webhook טלגרם:", e.message);
+      res.status(200).send("OK");
+    }
+  });
+
   // לוגים בזמן אמת (כולל סינון לפי נהג ספציפי) - מוגן באבטחה מלאה
   app.get("/api/logs", requireAuth, (req, res) => {
     const type = String(req.query.type || "all");

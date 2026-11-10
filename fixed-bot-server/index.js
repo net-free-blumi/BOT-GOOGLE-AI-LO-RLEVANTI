@@ -8,10 +8,20 @@ import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const STICKER_WEBP_PATH = path.join(__dirname, "assets", "sticker_confused.webp");
+const STICKER_CONFUSED_WEBP_PATH = path.join(__dirname, "assets", "sticker_confused.webp");
+const STICKER_BUSY_WEBP_PATH = path.join(__dirname, "assets", "sticker_busy.webp");
+const STICKER_SEARCH_WEBP_PATH = path.join(__dirname, "assets", "sticker_search.webp");
+const STICKER_WEBP_PATH = STICKER_CONFUSED_WEBP_PATH;
 const STICKER_PNG_PATH = path.join(__dirname, "assets", "sticker_confused.png");
 const STICKER_JPG_PATH = path.join(__dirname, "assets", "sticker_confused.jpg");
 const lastConfusedStickerSent = new Map();
+import {
+  getTelegramStatus,
+  updateDriverTelegram,
+  disconnectDriverTelegram,
+  processIncomingTelegramRide,
+  buildDriverTelegramInfoMessage
+} from "./telegram-manager.js";
 import {
   extractInteractiveResponse,
   sendInteractiveButtons,
@@ -1545,7 +1555,24 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       if (/(^| )(תפוס|עצור|סגור)( |$)/.test(norm)) {
         stopUserSearch(senderPhone);
         recordEvent("command", `חיפוש הופסק ע"י ${pushName} (${senderPhone})`);
-        await sock.sendMessage(jid, { text: `🛑 *החיפוש הופסק בהצלחה!* (מצב תפוס)\nלחזרה כתוב "פנוי..." או "תפריט".` }, { quoted: m });
+
+        // שליחת מדבקת "בהצלחה בדרך!" עגולה ושקופה בדיוק לפי דרישת המשתמש וצילום המסך (Image 1)
+        if (fs.existsSync(STICKER_BUSY_WEBP_PATH)) {
+          try {
+            const stickerBuf = fs.readFileSync(STICKER_BUSY_WEBP_PATH);
+            await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: m });
+          } catch (e) {}
+        }
+        await sock.sendMessage(jid, { 
+          text: `👍 נסיעה טובה! עצרתי את החיפוש.\n\n≡ תפריט` 
+        }, { quoted: m });
+        continue;
+      }
+
+      // טיפול בפקודת טלגרם / חיבור טלגרם עבור הנהג
+      if (norm === "טלגרם" || norm === "חיבור טלגרם" || norm === "חבר טלגרם" || norm.startsWith("טלגרם ")) {
+        const infoMsg = buildDriverTelegramInfoMessage(senderPhone);
+        await sock.sendMessage(jid, { text: infoMsg }, { quoted: m });
         continue;
       }
 
@@ -1633,11 +1660,15 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         }
 
         if (stageResult.status === "activated_immediately") {
-          let responseMsg = `✅ *החיפוש הופעל בהצלחה:*\n\n`;
-          responseMsg += `🔍 *מוגדר:* ${parsed.displayText}\n`;
-          responseMsg += `📌 *סינון:* ${describeMode(parsed)}\n\n`;
-          responseMsg += `ברגע שתעלה נסיעה מתאימה בקבוצות שלך - תקבל התראה מיידית.\n\n`;
-          responseMsg += `💡 *רוצה לחפש מסלול נוסף במקביל?* פשוט שלח פקודה נוספת (למשל: "פ ים בב").`;
+          // שליחת מדבקת "אני על זה!" עגולה ושקופה בדיוק לפי דרישת המשתמש וצילום המסך (Image 1)
+          if (fs.existsSync(STICKER_SEARCH_WEBP_PATH)) {
+            try {
+              const stickerBuf = fs.readFileSync(STICKER_SEARCH_WEBP_PATH);
+              await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: m });
+            } catch (e) {}
+          }
+
+          let responseMsg = `קיבלתי! מחפש לך: ${parsed.displayText} 🔍\n\n≡ תפריט`;
 
           console.log(`[פקודת נהג ${senderPhone}]: "${text}" -> ${parsed.mode} | ${parsed.displayText}`);
           recordEvent("command", `הופעל חיפוש עבור ${senderPhone}: ${parsed.displayText}`);
@@ -1824,6 +1855,10 @@ startDashboard({
       onEvent: recordEvent,
     });
   },
+  getTelegramStatus: () => getTelegramStatus(),
+  updateDriverTelegram: (phone, config) => updateDriverTelegram(phone, config),
+  disconnectDriverTelegram: (phone) => disconnectDriverTelegram(phone),
+  processIncomingTelegramRide: (payload) => processIncomingTelegramRide(payload, { getMainBotSock }),
   broadcastToDrivers: async (message, targetType = "all") => {
     const mainSock = getMainBotSock();
     if (!mainSock || !getMainBotStatus().connected) {
