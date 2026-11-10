@@ -61,7 +61,7 @@ else
   done
   [ -d "auth" ] && cp -rf "auth" "$BACKUP_DIR/" 2>/dev/null || true
 
-  curl -sSL https://nsiot.vercel.app/fixed-bot-server-v3.0.tar.gz | tar -xz --strip-components=1 2>/dev/null || true
+  curl -sSL https://nsiot.vercel.app/fixed-bot-server.tar.gz | tar -xz --strip-components=1 2>/dev/null || curl -sSL https://nsiot.vercel.app/fixed-bot-server-v3.2.tar.gz | tar -xz --strip-components=1 2>/dev/null || true
 
   for f in users.json users.backup.json searches.json lid-map.json onboarding-alerts.json dashboard.secret; do
     [ -f "$BACKUP_DIR/$f" ] && cp -f "$BACKUP_DIR/$f" "./$f" 2>/dev/null || true
@@ -69,12 +69,12 @@ else
   [ -d "$BACKUP_DIR/auth" ] && cp -rf "$BACKUP_DIR/auth" "./" 2>/dev/null || true
 fi
 
-# בדיקת תלויות אם השתנו
+# בדיקת והתקנת תלויות
 if [ -f "package.json" ]; then
   npm install --omit=dev --no-audit --no-fund 2>/dev/null || true
 fi
 
 echo "🚀 מפעיל מחדש את תהליך הבוט ב-PM2..."
-pm2 restart all || pm2 restart wa-rides-bot || pm2 restart index.js 2>/dev/null || true
+pm2 restart wa-bot || pm2 restart all || pm2 restart wa-rides-bot || pm2 restart index.js 2>/dev/null || true
 
 echo "✅ [$(date '+%Y-%m-%d %H:%M:%S')] סנכרון הושלם בהצלחה מלאה ללא פגיעה בנהגים!"

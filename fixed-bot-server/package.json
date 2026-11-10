@@ -1,0 +1,20 @@
+{
+  "name": "wa-rides-bot",
+  "version": "3.3.0",
+  "description": "WhatsApp Rides Bot Server with Multi-Session Baileys",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test-all-user-bugs.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.12",
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
+  }
+}

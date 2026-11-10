@@ -1086,6 +1086,11 @@ export async function handleDriverStatusChange(driverPhone, sessionObj) {
   }
 }
 
+// טיפול בשינוי סטטוס סשן הבוט הראשי (מונע שגיאות ReferenceError באיפוס סשן)
+export function handleMainBotStatusChange(status) {
+  console.log(`[בוט ראשי] סטטוס חיבור: ${status?.connected ? "מחובר ✅" : "מנותק ❌"}`);
+}
+
 // ==========================================
 // טיפול בהודעות הנכנסות (בוט ראשי וסשנים של נהגים)
 // ==========================================
@@ -1891,9 +1896,7 @@ async function boot() {
   await startMainBot({
     onMessage: handleIncomingMessage,
     onReaction: handleReaction,
-    onStatusChange: (status) => {
-      console.log(`[בוט ראשי] סטטוס חיבור: ${status.connected ? "מחובר ✅" : "מנותק ❌"}`);
-    },
+    onStatusChange: handleMainBotStatusChange,
     onEvent: recordEvent,
   });
 

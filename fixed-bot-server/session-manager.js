@@ -20,6 +20,7 @@ const __dirname = path.dirname(__filename);
 const AUTH_BASE_DIR = path.join(__dirname, "auth");
 const BOT_AUTH_DIR = path.join(AUTH_BASE_DIR, "bot");
 const SESSIONS_DIR = path.join(AUTH_BASE_DIR, "sessions");
+const BOT_ALERT_MARKER_FILE = path.join(BOT_AUTH_DIR, "alert-sent.json");
 
 // יצירת תיקיות בסיס אם אינן קיימות
 if (!fs.existsSync(AUTH_BASE_DIR)) fs.mkdirSync(AUTH_BASE_DIR, { recursive: true });
@@ -71,6 +72,9 @@ let mainBotLastAlertTime = 0;
 let watchdogInterval = null;
 let mainBotLoggedOutCount = 0;
 let mainBotReconnectTimeout = null;
+let mainBotConnectedAlertSent = false;
+let mainBotLastSuccessAlertTime = 0;
+let isPendingNewPairingAlert = false;
 
 let mainBotStatus = {
   phone: "972555081810",
@@ -160,7 +164,7 @@ function startDisconnectionWatchdog(onEvent) {
 // ==========================================
 // 1. הפעלת הבוט הראשי (Main Bot - 0555081810)
 // ==========================================
-export async function startMainBot({ onMessage, onReaction, onStatusChange, onEvent }) {
+export async function startMainBot({ onMessage, onReaction, onStatusChange, onEvent, preservePendingAlert = false } = {}) {
   const usersData = loadUsersData();
   const botPhone = cleanPhone(process.env.BOT_PHONE || usersData.botPhone || "972555081810");
   mainBotStatus.phone = botPhone;
@@ -186,6 +190,38 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   // הפעלת שעון מעקב ניתוק 30 דקות למנהל
   startDisconnectionWatchdog(onEvent);
 
+  const credsPath = path.join(BOT_AUTH_DIR, "creds.json");
+  let wasAlreadyRegisteredOnDisk = false;
+  if (fs.existsSync(credsPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+      if (parsed && (parsed.registered || parsed.me?.id)) {
+        wasAlreadyRegisteredOnDisk = true;
+      }
+    } catch (e) {}
+  }
+
+  // שמירה קפדנית על משלוח התראה חד-פעמי למנהל:
+  // אם השרת עולה מחדש (PM2 או reboot) והסשן כבר היה קיים בדיסק - נוצר מרקר קבוע ולעולם לא נשלחת התראה!
+  if (preservePendingAlert) {
+    isPendingNewPairingAlert = true;
+  } else if (wasAlreadyRegisteredOnDisk) {
+    if (!fs.existsSync(BOT_ALERT_MARKER_FILE)) {
+      try {
+        fs.writeFileSync(BOT_ALERT_MARKER_FILE, JSON.stringify({
+          sentAt: new Date().toISOString(),
+          reason: "existing_session_on_boot",
+        }, null, 2), "utf8");
+      } catch (e) {}
+    }
+    mainBotConnectedAlertSent = true;
+    isPendingNewPairingAlert = false;
+  } else if (!fs.existsSync(BOT_ALERT_MARKER_FILE)) {
+    // אין סשן רשום בדיסק - ממתין לצימוד ווב חדש ראשוני
+    isPendingNewPairingAlert = true;
+    mainBotConnectedAlertSent = false;
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
   const version = await getWaVersion();
 
@@ -202,7 +238,7 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   });
 
   mainBotSock = sock;
-  mainBotStatus.registered = Boolean(sock.authState.creds.registered);
+  mainBotStatus.registered = wasAlreadyRegisteredOnDisk || Boolean(sock.authState?.creds?.registered);
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -229,23 +265,45 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
       onStatusChange?.(mainBotStatus);
       onEvent?.("system", `הבוט הראשי (${botPhone}) מחובר בהצלחה`);
 
-      // שליחת הודעת אישור מיידית למספר המנהל בוואטסאפ שהחיבור הושלם ב-100%!
-      const adminPhone = cleanPhone(usersData.adminPhone || "972515157166");
-      if (adminPhone) {
-        setTimeout(async () => {
-          try {
-            await sock.sendMessage(`${adminPhone}@s.whatsapp.net`, {
-              text: `✅ *התחברות וואטסאפ הושלמה בהצלחה!* 🚕\n\nהבוט הראשי (${botPhone}) מחובר ומסונכרן כעת ב-100% מול האתר והקבוצות.\nכל הפקודות והסינונים פעילים בזמן אמת.`,
-            });
-            console.log(`📲 נשלחה הודעת אישור חיבור מוצלחת למנהל (${adminPhone})`);
-          } catch (e) {
-            console.warn("לא ניתן היה לשלוח הודעת אישור למנהל:", e.message);
-          }
-        }, 1500);
+      // שליחת הודעת אישור למנהל אך ורק פעם אחת ויחידה בכל התחברות ווב ראשונית אמיתית!
+      // לעולם לא בריסטארט של PM2/שרת, לא בשחזור סשן קיים, לא בהתנתקויות זמניות/שיהוקי רשת, ולא בריסטארט לחיצת יד 515!
+      const hasAlertMarker = fs.existsSync(BOT_ALERT_MARKER_FILE);
+      const now = Date.now();
+      const timeSinceLastAlert = now - mainBotLastSuccessAlertTime;
+      const canSendAlert = (isPendingNewPairingAlert || !wasAlreadyRegisteredOnDisk) && !hasAlertMarker && !mainBotConnectedAlertSent && timeSinceLastAlert > 60000;
+
+      if (canSendAlert) {
+        // נעילה מיידית מסונכרנת בדיסק ובזיכרון לפני השליחה - מונעת כל אפשרות לכפילות
+        mainBotConnectedAlertSent = true;
+        isPendingNewPairingAlert = false;
+        mainBotLastSuccessAlertTime = now;
+        try {
+          fs.writeFileSync(BOT_ALERT_MARKER_FILE, JSON.stringify({
+            sentAt: new Date().toISOString(),
+            botPhone,
+            adminPhone: usersData.adminPhone || "972515157166",
+          }, null, 2), "utf8");
+        } catch (e) {}
+
+        const adminPhone = cleanPhone(usersData.adminPhone || "972515157166");
+        if (adminPhone) {
+          setTimeout(async () => {
+            try {
+              await sock.sendMessage(`${adminPhone}@s.whatsapp.net`, {
+                text: `✅ *התחברות וואטסאפ הושלמה בהצלחה!* 🚕\n\nהבוט הראשי (${botPhone}) מחובר ומסונכרן כעת ב-100% מול האתר והקבוצות.\nכל הפקודות והסינונים פעילים בזמן אמת.`,
+              });
+              console.log(`📲 נשלחה הודעת אישור חיבור חד-פעמית למנהל (${adminPhone})`);
+            } catch (e) {
+              console.warn("לא ניתן היה לשלוח הודעת אישור למנהל:", e.message);
+            }
+          }, 1500);
+        }
       }
     }
 
     if (connection === "close") {
+      if (mainBotSock && mainBotSock !== sock) return; // סוקט ישן - מתעלמים
+
       const code = lastDisconnect?.error?.output?.statusCode;
       mainBotStatus.connected = false;
       mainBotStatus.lastDisconnectReason = String(code || lastDisconnect?.error?.message || "closed");
@@ -261,12 +319,10 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
         if (mainBotReconnectTimeout) clearTimeout(mainBotReconnectTimeout);
         mainBotReconnectTimeout = setTimeout(() => {
           mainBotReconnectTimeout = null;
-          startMainBot({ onMessage, onReaction, onStatusChange, onEvent });
+          startMainBot({ onMessage, onReaction, onStatusChange, onEvent, preservePendingAlert: isPendingNewPairingAlert });
         }, 800);
         return;
       }
-
-      if (mainBotSock !== sock) return; // סוקט ישן - מתעלמים
 
       if (code === DisconnectReason.connectionReplaced || code === 440) {
         console.log("⚠️ [הבוט הראשי] הסשן הוחלף (440) - חיבור אחר פעיל. לא מתחבר מחדש כדי למנוע לולאה.");
@@ -283,18 +339,21 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
             fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
           } catch (e) {}
           mainBotLoggedOutCount = 0;
+          mainBotConnectedAlertSent = false;
+          mainBotLastSuccessAlertTime = 0;
+          isPendingNewPairingAlert = true;
         }
         if (mainBotReconnectTimeout) clearTimeout(mainBotReconnectTimeout);
         mainBotReconnectTimeout = setTimeout(() => {
           mainBotReconnectTimeout = null;
-          startMainBot({ onMessage, onReaction, onStatusChange, onEvent });
+          startMainBot({ onMessage, onReaction, onStatusChange, onEvent, preservePendingAlert: isPendingNewPairingAlert });
         }, 2500);
       } else {
         console.log(`🔄 חיבור הבוט הראשי נותק זמנית (קוד ${code}). מתחבר מחדש...`);
         if (mainBotReconnectTimeout) clearTimeout(mainBotReconnectTimeout);
         mainBotReconnectTimeout = setTimeout(() => {
           mainBotReconnectTimeout = null;
-          startMainBot({ onMessage, onReaction, onStatusChange, onEvent });
+          startMainBot({ onMessage, onReaction, onStatusChange, onEvent, preservePendingAlert: isPendingNewPairingAlert });
         }, 2500);
       }
     }
@@ -354,7 +413,14 @@ export async function resetMainBotAuth(callbacks = {}) {
     mainBotStatus.lastDisconnectReason = "איפוס סשן נקי";
     mainBotLoggedOutCount = 0;
     mainBotDisconnectedAt = Date.now();
-    return await startMainBot(callbacks);
+    mainBotConnectedAlertSent = false;
+    mainBotLastSuccessAlertTime = 0;
+    isPendingNewPairingAlert = true;
+    return await startMainBot({
+      onStatusChange: (status) => console.log(`[בוט ראשי] סטטוס חיבור: ${status?.connected ? "מחובר ✅" : "מנותק ❌"}`),
+      ...callbacks,
+      preservePendingAlert: true,
+    });
   } catch (err) {
     console.error("שגיאה באיפוס אותנטיקציית הבוט הראשי:", err.message);
     throw err;
