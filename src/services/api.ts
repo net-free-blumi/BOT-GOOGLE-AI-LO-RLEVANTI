@@ -928,7 +928,7 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
       ok: true,
       enabled: true,
       connected: true,
-      botUsername: '@NsiotRidesBot',
+      botUsername: 'סשן חשבון נהג (User Client)',
       botTokenConfigured: true,
       monitoredGroups: [
         'מאוחדים תגבור ריידר 👑',
@@ -953,7 +953,7 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
       ok: false,
       enabled: false,
       connected: false,
-      botUsername: '@NsiotRidesBot',
+      botUsername: 'סשן חשבון נהג (User Client)',
       botTokenConfigured: false,
       monitoredGroups: [],
       stats: { totalScanned: 0, totalMatched: 0, lastRideAt: null },

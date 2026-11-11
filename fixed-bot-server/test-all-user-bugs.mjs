@@ -1,7 +1,7 @@
 // test-all-user-bugs.mjs - בדיקה מלאה של כל התרחישים, כולל מניעת הודעות ספאם ואימות כל הפיצ'רים החדשים
 import { createMatcher, normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractPrice } from "./matcher.js";
 import { createDeduper, isUniqueRideLink } from "./dedupe.js";
-import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, stopUserSearch } from "./users-manager.js";
+import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, setUserSearch, stopUserSearch } from "./users-manager.js";
 import { extractInteractiveResponse, sendRideAlertWithButtons, sendPendingSearchConfirmationWithButtons, sendFullInteractiveMenu } from "./interactive.js";
 import { extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
 import { readFileSync } from "node:fs";
@@ -759,6 +759,32 @@ const vMeron = rideMatches(safedMeron, { mode: "city_all", origin: "מירון" 
 assert(!vMeron.ok, `צפת מירון נפסל מנהג במירון: "${vMeron.reason}"`);
 const vSafed = rideMatches(safedMeron, { mode: "city_all", origin: "צפת" });
 assert(vSafed.ok, `צפת מירון מתקבל לנהג בצפת: "${vSafed.reason}"`);
+
+// --- בדיקה 11: אימות סריקת קבוצות בבוט הראשי ומסירת נסיעות לנהגים פעילים ---
+console.log("\n--- בדיקה 11: סריקת קבוצות בבוט הראשי והתאמה לנהגים פעילים ---");
+// נהג עם חיפוש פנימי בבית שמש
+const mainBotTestDriverPhone = "0515157166";
+setUserSearch(mainBotTestDriverPhone, {
+  active: true,
+  searches: [{
+    id: "s_test_1",
+    mode: "internal",
+    origin: "בית שמש",
+    displayText: "פנימי בבית שמש"
+  }]
+});
+const activeDriverSearch = getUserSearch(mainBotTestDriverPhone);
+assert(activeDriverSearch.active, "לנהג יש חיפוש פעיל");
+
+// נסיעה שפורסמה בקבוצה בוואטסאפ:
+const groupRideBeitShemesh = "בית שמש רמה ד לרמה ג 45 שח";
+const matchResult = matchesAnySearch(groupRideBeitShemesh, activeDriverSearch, "קבוצת נסיעות בית שמש");
+assert(matchResult.ok, `הנסיעה מהקבוצה תואמת בהצלחה לחיפוש הנהג: "${matchResult.reason}"`);
+
+// נסיעה מקבוצה שלא תואמת:
+const groupRideHaifa = "חיפה קריות 70 שח";
+const rejectResult = matchesAnySearch(groupRideHaifa, activeDriverSearch, "קבוצת נסיעות צפון");
+assert(!rejectResult.ok, `נסיעה מעיר לא מתאימה נדחית: "${rejectResult.reason}"`);
 
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
 

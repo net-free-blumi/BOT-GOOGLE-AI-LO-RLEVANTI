@@ -5,7 +5,6 @@ import {
   Check, 
   RefreshCw, 
   ShieldCheck, 
-  ExternalLink, 
   Users, 
   Sparkles, 
   AlertCircle,
@@ -221,18 +220,12 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
         {/* Global Live Status Header */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 sm:p-4 bg-[#080d17] border-b border-[#1a2638] text-xs">
           <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
-            <span className="text-slate-400 text-[11px] block">בוט מאזין בטלגרם:</span>
+            <span className="text-slate-400 text-[11px] block">סריקת חשבונות טלגרם:</span>
             <div className="flex items-center gap-1.5 mt-1">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <a
-                href="https://t.me/NsiotRidesBot"
-                target="_blank"
-                rel="noreferrer"
-                className="font-bold text-cyan-300 hover:underline flex items-center gap-1"
-              >
-                <span>{status?.botUsername || '@NsiotRidesBot'}</span>
-                <ExternalLink className="w-2.5 h-2.5" />
-              </a>
+              <span className="font-bold text-cyan-300 text-xs">
+                סשן משתמש (User Client)
+              </span>
             </div>
           </div>
           <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
@@ -516,22 +509,16 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                   <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
                     <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
                       <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">3</span>
-                      <span>ישירות מול הבוט בטלגרם</span>
+                      <span>סריקה מתוך החשבון האישי</span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      היכנס לבוט בטלגרם:
+                      באותו עיקרון בדיוק כמו הוואטסאפ:
                     </p>
-                    <a
-                      href="https://t.me/NsiotRidesBot"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] text-cyan-300 font-bold hover:underline"
-                    >
-                      <span>https://t.me/NsiotRidesBot</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                    <p className="text-[10px] text-slate-400">
-                      לחץ על <strong>START</strong> (או שלח <code>/start</code>).
+                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] text-[11px] text-slate-300 space-y-1">
+                      <div>המערכת מתחברת לחשבון הטלגרם האישי של הנהג וסורקת מתוך כל הקבוצות והערוצים שאתה חבר בהם בטלגרם!</div>
+                    </div>
+                    <p className="text-[10px] text-emerald-400 font-bold">
+                      ✓ סריקה ישירה מבפנים ללא צורך בבוט חיצוני
                     </p>
                   </div>
 

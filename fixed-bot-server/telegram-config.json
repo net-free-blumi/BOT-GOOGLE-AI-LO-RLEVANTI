@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "connected": true,
-  "botUsername": "@NsiotRidesBot",
+  "botUsername": null,
   "botTokenConfigured": false,
   "monitoredGroups": [
     "מאוחדים תגבור ריידר 👑",
@@ -11,9 +11,9 @@
     "מוניות וספיישלים מרכז"
   ],
   "stats": {
-    "totalScanned": 13,
-    "totalMatched": 7,
-    "lastRideAt": "2026-11-11T14:03:20.443Z"
+    "totalScanned": 17,
+    "totalMatched": 9,
+    "lastRideAt": "2026-11-11T14:19:25.142Z"
   },
   "driverConfigs": {
     "972515157166": {
@@ -26,8 +26,8 @@
       "forwardToWa": true,
       "connected": false,
       "connectedAt": null,
-      "updatedAt": "2026-11-11T14:03:20.446Z",
-      "matchedCount": 7
+      "updatedAt": "2026-11-11T14:19:25.145Z",
+      "matchedCount": 9
     }
   }
 }

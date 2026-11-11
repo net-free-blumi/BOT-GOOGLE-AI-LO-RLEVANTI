@@ -577,7 +577,8 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
   let lastError = null;
   for (const a of attempts) {
     try {
-      const sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, originalMsg);
+      // שליחת התראת נסיעה עצמאית ונקייה בוואטסאפ ללא ציטוט בין-צ'אטים שעלול להידחות
+      const sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg });
       if (!sentMsg) continue;
 
       if (sentMsg.key?.id) {
@@ -1143,8 +1144,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
     // התעלמות מסטטוסים, רשימות תפוצה וערוצים
     if (isIgnorableJid(jid)) continue;
 
-    // התעלמות מהודעות היסטוריות ישנות בעת אתחול
-    if (upsert.type && upsert.type !== "notify") continue;
+    // התעלמות מהודעות היסטוריות ישנות (מעל 5 דקות) בעת אתחול או סנכרון
     if (isStaleMessage(m)) continue;
 
     const isGroup = jid.endsWith("@g.us");
@@ -1721,17 +1721,9 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
     }
 
     // ----------------------------------------------------
-    // חלק ב': סריקת קבוצות בזמן אמת אך ורק מחשבון הנהג המקושר!
+    // חלק ב': סריקת קבוצות בזמן אמת (בוט ראשי וחשבונות נהגים)
     // ----------------------------------------------------
-    if (isGroup && !sessionContext.isMainBot && sessionContext.driverPhone) {
-      const driverPhone = sessionContext.driverPhone;
-      const driverSearch = getUserSearch(driverPhone);
-
-      // סורקים אך ורק אם לנהג זה יש חיפוש פעיל!
-      if (!driverSearch.active) {
-        continue;
-      }
-
+    if (isGroup) {
       let groupName = "קבוצת נסיעות";
       try {
         if (!groupMetadataCache.has(jid)) {
@@ -1747,62 +1739,102 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       const junk = detectNonRide(cleanedText);
       if (junk) {
-        if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${junk} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
+        if (DEBUG_FILTER) console.log(`[נדחה מקבוצה ${groupName}] ${junk} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
         continue;
       }
 
-      const verdict = matchesAnySearch(cleanedText, driverSearch, groupName);
-
-      if (!verdict.ok) {
-        if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${verdict.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
-        continue;
+      // רשימת הנהגים שיש לבדוק עבורם התאמה לקבוצה זו:
+      const targetDriverPhones = new Set();
+      if (sessionContext.isMainBot) {
+        // הבוט הראשי סורק ומסנן עבור כל הנהגים המורשים / בעלי חיפושים פעילים במערכת!
+        const usersData = loadUsersData();
+        for (const u of (usersData.approvedUsers || [])) {
+          const p = cleanPhone(u.phone);
+          if (p) targetDriverPhones.add(p);
+        }
+        const allSearches = getAllUserSearches();
+        for (const p of Object.keys(allSearches)) {
+          const cleanP = cleanPhone(p);
+          if (cleanP) targetDriverPhones.add(cleanP);
+        }
+      } else if (sessionContext.driverPhone) {
+        // סשן נהג פרטי סורק עבור הנהג עצמו בלבד
+        targetDriverPhones.add(cleanPhone(sessionContext.driverPhone));
       }
 
-      // בדיקת כפילות מבודדת לפי נהג
-      const dup = deduper.check(cleanedText, driverPhone);
-      if (dup.duplicate) {
-        if (DEBUG_FILTER) console.log(`[כפילות ${driverPhone}] ${dup.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
+      if (targetDriverPhones.size === 0) {
         continue;
       }
 
       const rideSenderPhone = await getRealSenderPhone(sock, jid, m);
       const rideSenderName = m.pushName || "סדרן";
 
-      const rideData = {
-        cleanedText,
-        rawText: text,
-        driverPhone,
-        groupName,
-        groupJid: jid,
-        senderName: rideSenderName,
-        senderPhone: rideSenderPhone,
-        senderJid: m.key?.participant || m.key?.remoteJid || null,
-        originalMsgKey: m.key || null,
-        searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
-        matchedReason: verdict.reason,
-        matchedSearch: verdict.matchedSearch || null,
-        activeSearchesSnapshot: (driverSearch.searches || []).map((s) => ({
-          displayText: s.displayText,
-          mode: s.mode,
-          origin: s.origin,
-          destination: s.destination,
-        })),
-      };
+      for (const driverPhone of targetDriverPhones) {
+        const driverSearch = getUserSearch(driverPhone);
 
-      // שליחה לנהג: קודם דרך הבוט הראשי (עם התראה בטלפון), ובגיבוי דרך חשבון הנהג
-      const result = await deliverRideAlert(sock, driverPhone, rideData, m);
+        // סורקים אך ורק אם לנהג זה יש חיפוש פעיל!
+        if (!driverSearch || !driverSearch.active || !driverSearch.searches || driverSearch.searches.length === 0) {
+          continue;
+        }
 
-      if (result.ok) {
-        console.log(`[נשלח לנהג ${driverPhone} דרך ${result.via}] (${verdict.reason}): "${cleanedText.replace(/\n/g, " / ").slice(0, 80)}" | קבוצה: ${groupName}`);
-        recordEvent("sent", `${groupName} ⬅️ ${driverPhone}`, {
-          text: cleanedText.replace(/\n/g, " / ").slice(0, 80),
-          reason: verdict.reason,
-          driver: driverPhone,
-          via: result.via,
-        });
-      } else {
-        recordError("ride_delivery_failed", new Error(result.error), { driverPhone, groupName });
+        // אם הנהג עצמו הוא זה שפרסם את הנסיעה בקבוצה - לא שולחים לו התראה על עצמו
+        if (cleanPhone(rideSenderPhone) === driverPhone) {
+          continue;
+        }
+
+        const verdict = matchesAnySearch(cleanedText, driverSearch, groupName);
+
+        if (!verdict.ok) {
+          if (DEBUG_FILTER) console.log(`[נדחה ${driverPhone}] ${verdict.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
+          continue;
+        }
+
+        // בדיקת כפילות מבודדת לפי נהג
+        const dup = deduper.check(cleanedText, driverPhone);
+        if (dup.duplicate) {
+          if (DEBUG_FILTER) console.log(`[כפילות ${driverPhone}] ${dup.reason} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
+          continue;
+        }
+
+        const rideData = {
+          cleanedText,
+          rawText: text,
+          driverPhone,
+          groupName,
+          groupJid: jid,
+          senderName: rideSenderName,
+          senderPhone: rideSenderPhone,
+          senderJid: m.key?.participant || m.key?.remoteJid || null,
+          originalMsgKey: m.key || null,
+          searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
+          matchedReason: verdict.reason,
+          matchedSearch: verdict.matchedSearch || null,
+          activeSearchesSnapshot: (driverSearch.searches || []).map((s) => ({
+            displayText: s.displayText,
+            mode: s.mode,
+            origin: s.origin,
+            destination: s.destination,
+          })),
+        };
+
+        // שליחה לנהג: קודם דרך הבוט הראשי (עם התראה בטלפון), ובגיבוי דרך חשבון הנהג
+        const driverSession = getDriverSession(driverPhone);
+        const driverSock = driverSession?.sock;
+        const result = await deliverRideAlert(driverSock, driverPhone, rideData, m);
+
+        if (result.ok) {
+          console.log(`[נשלח לנהג ${driverPhone} דרך ${result.via}] (${verdict.reason}): "${cleanedText.replace(/\n/g, " / ").slice(0, 80)}" | קבוצה: ${groupName}`);
+          recordEvent("sent", `${groupName} ⬅️ ${driverPhone}`, {
+            text: cleanedText.replace(/\n/g, " / ").slice(0, 80),
+            reason: verdict.reason,
+            driver: driverPhone,
+            via: result.via,
+          });
+        } else {
+          recordError("ride_delivery_failed", new Error(result.error), { driverPhone, groupName });
+        }
       }
+      continue;
     }
   }
 }
