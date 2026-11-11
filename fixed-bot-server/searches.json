@@ -1,0 +1,27 @@
+{
+  "972515157166": {
+    "active": true,
+    "searches": [
+      {
+        "id": "s_test_1",
+        "mode": "internal",
+        "origin": "בית שמש",
+        "displayText": "פנימי בבית שמש"
+      }
+    ],
+    "pendingSearch": null,
+    "mode": "internal",
+    "origin": "בית שמש",
+    "destination": null,
+    "displayText": "פנימי בבית שמש"
+  },
+  "972599999999": {
+    "active": false,
+    "searches": [],
+    "pendingSearch": null,
+    "mode": null,
+    "origin": null,
+    "destination": null,
+    "displayText": "מופסק (תפוס)"
+  }
+}

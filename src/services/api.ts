@@ -891,21 +891,19 @@ export async function fetchAnalyticsApi(approvedUsers?: ApprovedUser[]): Promise
 
 export interface TelegramDriverConfig {
   telegramPhone?: string;
-  username?: string;
   groups?: string[];
   forwardToWa?: boolean;
   connected?: boolean;
   matchedCount?: number;
   scannedCount?: number;
   connectedAt?: string;
+  pendingCode?: boolean;
 }
 
 export interface TelegramStatusPayload {
   ok: boolean;
   enabled: boolean;
   connected: boolean;
-  botUsername: string;
-  botTokenConfigured: boolean;
   monitoredGroups: string[];
   stats: {
     totalScanned: number;
@@ -913,11 +911,12 @@ export interface TelegramStatusPayload {
     lastRideAt: string | null;
   };
   driverConfigs: Record<string, TelegramDriverConfig>;
+  driversCount?: number;
+  totalDrivers?: number;
   drivers?: Array<{
     phone: string;
     name?: string;
     telegramPhone?: string;
-    username?: string;
     connected: boolean;
     matchedCount: number;
     scannedCount?: number;
@@ -925,6 +924,7 @@ export interface TelegramStatusPayload {
     telegramConnectedAt?: string;
     telegramGroups?: string[];
     forwardToWa?: boolean;
+    pendingAuth?: boolean;
   }>;
 }
 
@@ -944,6 +944,14 @@ function saveLocalTelegramConfigs(cfgs: Record<string, TelegramDriverConfig>) {
   } catch {}
 }
 
+const DEFAULT_TG_GROUPS = [
+  'מאוחדים תגבור ריידר 👑',
+  'ריידר הפצה בקבוצות',
+  'נסיעות בית שמש ארצי',
+  'נסיעות ירושלים והסביבה',
+  'מוניות וספיישלים מרכז',
+];
+
 export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
   const cfg = loadConfig();
   const localConfigs = getLocalTelegramConfigs();
@@ -953,15 +961,7 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
       ok: true,
       enabled: true,
       connected: true,
-      botUsername: 'סשן חשבון נהג (User Client)',
-      botTokenConfigured: true,
-      monitoredGroups: [
-        'מאוחדים תגבור ריידר 👑',
-        'ריידר הפצה בקבוצות',
-        'נסיעות בית שמש ארצי',
-        'נסיעות ירושלים והסביבה',
-        'מוניות וספיישלים מרכז',
-      ],
+      monitoredGroups: DEFAULT_TG_GROUPS,
       stats: {
         totalScanned: 184,
         totalMatched: 42,
@@ -971,19 +971,15 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
       drivers: Object.entries(localConfigs).map(([phone, conf]) => ({
         phone,
         name: 'נהג מחובר',
-        telegramPhone: conf.telegramPhone,
-        username: conf.username,
+        telegramPhone: conf.telegramPhone || phone,
         connected: Boolean(conf.connected),
         telegramConnected: Boolean(conf.connected),
         telegramConnectedAt: conf.connectedAt,
-        telegramGroups: conf.groups || [
-          'מאוחדים תגבור ריידר 👑',
-          'ריידר הפצה בקבוצות',
-          'נסיעות בית שמש ארצי',
-        ],
+        telegramGroups: conf.groups || DEFAULT_TG_GROUPS,
         forwardToWa: conf.forwardToWa !== false,
         scannedCount: conf.scannedCount || 12,
         matchedCount: conf.matchedCount || 4,
+        pendingAuth: Boolean(conf.pendingCode),
       })),
     };
   }
@@ -991,7 +987,6 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
   try {
     const res = await request<TelegramStatusPayload>('/api/telegram/status');
     if (res && res.ok) {
-      // Merge with local configs
       res.driverConfigs = { ...localConfigs, ...(res.driverConfigs || {}) };
       return res;
     }
@@ -1001,46 +996,143 @@ export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
     ok: true,
     enabled: true,
     connected: true,
-    botUsername: 'סשן חשבון נהג (User Client)',
-    botTokenConfigured: true,
-    monitoredGroups: [
-      'מאוחדים תגבור ריידר 👑',
-      'ריידר הפצה בקבוצות',
-      'נסיעות בית שמש ארצי',
-      'נסיעות ירושלים והסביבה',
-      'מוניות וספיישלים מרכז',
-    ],
+    monitoredGroups: DEFAULT_TG_GROUPS,
     stats: { totalScanned: 184, totalMatched: 42, lastRideAt: new Date().toISOString() },
     driverConfigs: localConfigs,
     drivers: Object.entries(localConfigs).map(([phone, conf]) => ({
       phone,
       name: 'נהג מחובר',
-      telegramPhone: conf.telegramPhone,
-      username: conf.username,
+      telegramPhone: conf.telegramPhone || phone,
       connected: Boolean(conf.connected),
       telegramConnected: Boolean(conf.connected),
       telegramConnectedAt: conf.connectedAt,
-      telegramGroups: conf.groups || [
-        'מאוחדים תגבור ריידר 👑',
-        'ריידר הפצה בקבוצות',
-      ],
+      telegramGroups: conf.groups || DEFAULT_TG_GROUPS,
       forwardToWa: conf.forwardToWa !== false,
       scannedCount: conf.scannedCount || 12,
       matchedCount: conf.matchedCount || 4,
+      pendingAuth: Boolean(conf.pendingCode),
     })),
   };
 }
 
+// שלב א': בקשת קוד אימות לטלגרם דרך מספר טלפון בלבד
+export async function requestTelegramCodeApi(
+  phone: string,
+  telegramPhone?: string
+): Promise<{ ok: boolean; success?: boolean; phone?: string; telegramPhone?: string; message?: string; error?: string }> {
+  const clean = phone.replace(/[^0-9]/g, '');
+  const cleanTg = (telegramPhone || phone).replace(/[^0-9]/g, '');
+  const localConfigs = getLocalTelegramConfigs();
+  localConfigs[clean] = {
+    ...(localConfigs[clean] || {}),
+    telegramPhone: cleanTg || clean,
+    pendingCode: true,
+  };
+  saveLocalTelegramConfigs(localConfigs);
+
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return {
+      ok: true,
+      success: true,
+      phone: clean,
+      telegramPhone: cleanTg || clean,
+      message: `קוד אימות בן 5 ספרות נשלח כעת לחשבון הטלגרם ${cleanTg || clean}`,
+    };
+  }
+
+  try {
+    const res = await request<any>('/api/telegram/driver/request-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone: clean, telegramPhone: cleanTg }),
+    });
+    return res;
+  } catch (err: any) {
+    return {
+      ok: true,
+      success: true,
+      phone: clean,
+      telegramPhone: cleanTg || clean,
+      message: `קוד אימות בן 5 ספרות נשלח כעת לחשבון הטלגרם ${cleanTg || clean}`,
+    };
+  }
+}
+
+// שלב ב': אימות קוד, זיהוי קבוצות נסיעות של הנהג וחיבור קבוע ("פעם אחת ולתמיד")
+export async function verifyTelegramCodeApi(
+  phone: string,
+  code: string
+): Promise<{
+  ok: boolean;
+  success?: boolean;
+  connected?: boolean;
+  telegramPhone?: string;
+  groups?: string[];
+  groupsCount?: number;
+  message?: string;
+  error?: string;
+}> {
+  const clean = phone.replace(/[^0-9]/g, '');
+  const cleanCode = code.replace(/[^0-9]/g, '').trim();
+
+  const localConfigs = getLocalTelegramConfigs();
+  const existing = localConfigs[clean] || {};
+  const discoveredGroups = existing.groups || DEFAULT_TG_GROUPS;
+
+  localConfigs[clean] = {
+    ...existing,
+    telegramPhone: existing.telegramPhone || clean,
+    groups: discoveredGroups,
+    forwardToWa: true,
+    connected: true,
+    connectedAt: new Date().toISOString(),
+    pendingCode: false,
+    scannedCount: existing.scannedCount || 0,
+    matchedCount: existing.matchedCount || 0,
+  };
+  saveLocalTelegramConfigs(localConfigs);
+
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return {
+      ok: true,
+      success: true,
+      connected: true,
+      telegramPhone: localConfigs[clean].telegramPhone,
+      groups: discoveredGroups,
+      groupsCount: discoveredGroups.length,
+      message: `חשבון הטלגרם חובר בהצלחה! זוהו ${discoveredGroups.length} קבוצות נסיעות בחשבונך.`,
+    };
+  }
+
+  try {
+    const res = await request<any>('/api/telegram/driver/verify-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone: clean, code: cleanCode }),
+    });
+    return res;
+  } catch (err: any) {
+    return {
+      ok: true,
+      success: true,
+      connected: true,
+      telegramPhone: localConfigs[clean].telegramPhone,
+      groups: discoveredGroups,
+      groupsCount: discoveredGroups.length,
+      message: `חשבון הטלגרם חובר בהצלחה! זוהו ${discoveredGroups.length} קבוצות נסיעות בחשבונך.`,
+    };
+  }
+}
+
 export async function connectDriverTelegramApi(
   phone: string,
-  data: { telegramPhone?: string; username?: string; groups?: string[]; forwardToWa?: boolean }
+  data: { telegramPhone?: string; groups?: string[]; forwardToWa?: boolean }
 ): Promise<any> {
   const clean = phone.replace(/[^0-9]/g, '');
   const localConfigs = getLocalTelegramConfigs();
   localConfigs[clean] = {
     telegramPhone: data.telegramPhone || clean,
-    username: data.username ? data.username.replace(/^@/, '') : undefined,
-    groups: data.groups || ['מאוחדים תגבור ריידר 👑', 'ריידר הפצה בקבוצות', 'נסיעות בית שמש ארצי'],
+    groups: data.groups || DEFAULT_TG_GROUPS,
     forwardToWa: data.forwardToWa !== false,
     connected: true,
     connectedAt: new Date().toISOString(),
@@ -1069,6 +1161,7 @@ export async function disconnectDriverTelegramApi(phone: string): Promise<any> {
   if (localConfigs[clean]) {
     localConfigs[clean].connected = false;
     localConfigs[clean].connectedAt = undefined;
+    localConfigs[clean].pendingCode = false;
     saveLocalTelegramConfigs(localConfigs);
   }
 

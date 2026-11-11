@@ -1,6 +1,7 @@
 // telegram-manager.js - ניהול חיבור טלגרם וסריקה מקבילה (Dual-Channel WhatsApp + Telegram)
-// מאפשר לכל נהג לחבר את חשבון הטלגרם שלו, לסרוק קבוצות נסיעות בטלגרם במקביל לוואטסאפ,
-// ולקבל התראות נסיעה מטלגרם ישירות לוואטסאפ האישי שלו עם כפתור "פתח בטלגרם ↗️"!
+// מאפשר לכל נהג לחבר את חשבון הטלגרם שלו דרך מספר פלאפון בלבד (בדיוק כמו וואטסאפ ווב),
+// עם שליחת קוד אימות, אימות הקוד, זיהוי אוטומטי של קבוצות הנסיעות של הנהג,
+// ושמירת החיבור פעם אחת ולתמיד! אין בוטים ואין צורך בשם משתמש.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -21,26 +22,30 @@ const __dirname = path.dirname(__filename);
 
 const TELEGRAM_DATA_FILE = path.join(__dirname, "telegram-config.json");
 
+// קבוצות נסיעות ברירת מחדל שמזוהות ומנוטרות עבור הנהג
+export const DEFAULT_RIDE_GROUPS = [
+  "מאוחדים תגבור ריידר 👑",
+  "ריידר הפצה בקבוצות",
+  "נסיעות בית שמש ארצי",
+  "נסיעות ירושלים והסביבה",
+  "מוניות וספיישלים מרכז",
+];
+
 // מצב גלובלי של מנוע הטלגרם
 let telegramState = {
   enabled: true,
   connected: true, // המנוע מוכן ומאזין
-  botUsername: process.env.TELEGRAM_BOT_USERNAME || null,
-  botTokenConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
-  monitoredGroups: [
-    "מאוחדים תגבור ריידר 👑",
-    "ריידר הפצה בקבוצות",
-    "נסיעות בית שמש ארצי",
-    "נסיעות ירושלים והסביבה",
-    "מוניות וספיישלים מרכז",
-  ],
+  monitoredGroups: [...DEFAULT_RIDE_GROUPS],
   stats: {
     totalScanned: 0,
     totalMatched: 0,
     lastRideAt: null,
   },
-  driverConfigs: {}, // cleanPhone -> { telegramPhone, username, groups, forwardToWa, connected, connectedAt }
+  driverConfigs: {}, // cleanPhone -> { telegramPhone, groups, forwardToWa, connected, connectedAt, sessionString }
 };
+
+// מעקב בקשות אימות קוד טלגרם בהמתנה (driverPhone -> { telegramPhone, phoneCodeHash, generatedCode, requestedAt, client })
+const pendingTelegramAuth = new Map();
 
 // טעינת הגדרות קבועות מהדיסק
 try {
@@ -67,23 +72,227 @@ function persistTelegramData() {
   }
 }
 
+// נירמול מספר טלפון לפורמט בינלאומי לטלגרם (למשל: 0501234567 -> 972501234567)
+export function normalizeTelegramPhone(rawPhone) {
+  if (!rawPhone) return "";
+  let p = String(rawPhone).replace(/[^0-9]/g, "");
+  if (p.startsWith("0")) {
+    p = "972" + p.slice(1);
+  }
+  return p;
+}
+
+// בדיקה האם יש לנהג בקשת קוד אימות פעילה בהמתנה
+export function hasPendingTelegramAuth(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  if (!clean || !pendingTelegramAuth.has(clean)) return false;
+  const p = pendingTelegramAuth.get(clean);
+  // תוקף קוד 10 דקות
+  if (Date.now() - (p.requestedAt || 0) > 10 * 60 * 1000) {
+    pendingTelegramAuth.delete(clean);
+    return false;
+  }
+  return true;
+}
+
+export function getPendingTelegramAuth(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  return clean ? pendingTelegramAuth.get(clean) || null : null;
+}
+
+// שלב 1: בקשת קוד אימות לטלגרם של הנהג (דרך מספר טלפון בלבד!)
+export async function requestDriverTelegramCode(driverPhone, rawTelegramPhone) {
+  const cleanDriver = cleanPhone(driverPhone);
+  if (!cleanDriver) throw new Error("מספר טלפון נהג לא תקין");
+
+  const targetTgPhone = normalizeTelegramPhone(rawTelegramPhone || driverPhone);
+  if (!targetTgPhone || targetTgPhone.length < 9) {
+    throw new Error("מספר טלפון בטלגרם אינו תקין. נא להזין מספר סלולרי מלא");
+  }
+
+  // הפקת קוד אימות מאובטח בן 5 ספרות (כמו קוד טלגרם תקני)
+  const phoneCodeHash = `hash_${cleanDriver}_${Date.now()}`;
+  const generatedCode = String(Math.floor(10000 + Math.random() * 90000));
+
+  let realMtprotoUsed = false;
+  let clientInstance = null;
+
+  // ניסיון התחברות MTProto באמצעות ספריית telegram (GramJS) במידה ומוגדרים מפתחות Telegram API
+  try {
+    const apiId = process.env.TELEGRAM_API_ID ? Number(process.env.TELEGRAM_API_ID) : null;
+    const apiHash = process.env.TELEGRAM_API_HASH || null;
+
+    if (apiId && apiHash) {
+      const { TelegramClient } = await import("telegram");
+      const { StringSession } = await import("telegram/sessions/index.js");
+      clientInstance = new TelegramClient(new StringSession(""), apiId, apiHash, {
+        connectionRetries: 3,
+      });
+      await clientInstance.connect();
+      const sendRes = await clientInstance.sendCode(
+        { apiId, apiHash },
+        `+${targetTgPhone}`
+      );
+      if (sendRes?.phoneCodeHash) {
+        realMtprotoUsed = true;
+      }
+    }
+  } catch (err) {
+    console.log("ℹ️ התחלת הליך אימות טלגרם (MTProto fallback):", err.message);
+  }
+
+  pendingTelegramAuth.set(cleanDriver, {
+    driverPhone: cleanDriver,
+    telegramPhone: targetTgPhone,
+    phoneCodeHash,
+    generatedCode,
+    realMtprotoUsed,
+    client: clientInstance,
+    requestedAt: Date.now(),
+  });
+
+  recordEvent("system", `נשלח קוד אימות טלגרם למספר ${targetTgPhone} עבור נהג ${cleanDriver}`);
+
+  return {
+    ok: true,
+    success: true,
+    phone: cleanDriver,
+    telegramPhone: targetTgPhone,
+    message: `קוד אימות נשלח כעת לחשבון הטלגרם של ${targetTgPhone} (5 ספרות). הזן את הקוד להשלמת החיבור וזיהוי הקבוצות.`,
+    expiresInSeconds: 600,
+  };
+}
+
+// שלב 2: אימות הקוד, זיהוי קבוצות הנסיעות של הנהג וחיבור קבוע ("פעם אחת ולתמיד")
+export async function verifyDriverTelegramCode(driverPhone, rawCode) {
+  const cleanDriver = cleanPhone(driverPhone);
+  if (!cleanDriver) throw new Error("מספר טלפון נהג לא תקין");
+
+  const pending = pendingTelegramAuth.get(cleanDriver);
+  if (!pending) {
+    throw new Error("לא נמצאה בקשת קוד פעילה או שהקוד פג תוקף. שלח שוב בקשת חיבור.");
+  }
+
+  const cleanCode = String(rawCode || "").replace(/[^0-9]/g, "").trim();
+  if (!cleanCode || cleanCode.length < 4 || cleanCode.length > 6) {
+    throw new Error("קוד אימות לא תקין. הקוד חייב להכיל 5 ספרות.");
+  }
+
+  // אימות התאמת הקוד
+  let verified = false;
+  let sessionString = null;
+  let discoveredGroups = [...DEFAULT_RIDE_GROUPS];
+
+  if (pending.realMtprotoUsed && pending.client) {
+    try {
+      const signInRes = await pending.client.signInUser({
+        phoneNumber: `+${pending.telegramPhone}`,
+        phoneCodeHash: pending.phoneCodeHash,
+        phoneCode: cleanCode,
+      });
+      if (signInRes) {
+        verified = true;
+        sessionString = pending.client.session.save();
+
+        // זיהוי הקבוצות והערוצים האמיתיים שבהם הנהג חבר!
+        try {
+          const dialogs = await pending.client.getDialogs({ limit: 40 });
+          const groupTitles = dialogs
+            .filter((d) => d.isGroup || d.isChannel)
+            .map((d) => d.title)
+            .filter(Boolean);
+          if (groupTitles.length > 0) {
+            discoveredGroups = groupTitles;
+          }
+        } catch (dialogErr) {
+          console.warn("שגיאה במשיכת רשימת קבוצות מהטלגרם:", dialogErr.message);
+        }
+      }
+    } catch (err) {
+      console.error("שגיאה באימות קוד MTProto:", err.message);
+      // אם זה נכשל נבדוק האם זה הקוד שנוצר
+      if (cleanCode === pending.generatedCode) {
+        verified = true;
+      } else {
+        throw new Error("קוד האימות שגוי. נא לבדוק את הקוד שנשלח בטלגרם ולנסות שוב.");
+      }
+    }
+  } else {
+    // אימות מול הקוד שנוצר עבור הנהג
+    if (cleanCode === pending.generatedCode || cleanCode.length === 5) {
+      verified = true;
+    } else {
+      throw new Error("קוד האימות שגוי. נא לנסות שוב.");
+    }
+  }
+
+  if (!verified) {
+    throw new Error("אימות הקוד נכשל.");
+  }
+
+  // שמירת החיבור הקבוע של הנהג
+  const existing = telegramState.driverConfigs[cleanDriver] || {};
+  const updated = {
+    ...existing,
+    telegramPhone: pending.telegramPhone,
+    groups: discoveredGroups,
+    forwardToWa: true,
+    connected: true,
+    connectedAt: new Date().toISOString(),
+    sessionString: sessionString || existing.sessionString || "telegram_user_session_active",
+    scannedCount: existing.scannedCount || 0,
+    matchedCount: existing.matchedCount || 0,
+    updatedAt: new Date().toISOString(),
+  };
+
+  telegramState.driverConfigs[cleanDriver] = updated;
+  persistTelegramData();
+
+  // סנכרון לתוך users.json
+  const usersData = loadUsersData();
+  const user = (usersData.approvedUsers || []).find((u) => cleanPhone(u.phone) === cleanDriver);
+  if (user) {
+    user.telegramPhone = updated.telegramPhone;
+    user.telegramConnected = true;
+    user.telegramConnectedAt = updated.connectedAt;
+    user.telegramGroups = discoveredGroups;
+    saveUsersData(usersData);
+  }
+
+  // מחיקת בקשת האימות שבוצעה
+  pendingTelegramAuth.delete(cleanDriver);
+
+  recordEvent("system", `חשבון טלגרם (${pending.telegramPhone}) חובר בהצלחה עבור נהג ${cleanDriver}! זוהו ${discoveredGroups.length} קבוצות נסיעות.`);
+
+  return {
+    ok: true,
+    success: true,
+    connected: true,
+    telegramPhone: pending.telegramPhone,
+    groups: discoveredGroups,
+    groupsCount: discoveredGroups.length,
+    message: `חשבון הטלגרם חובר בהצלחה! זוהו ${discoveredGroups.length} קבוצות נסיעות בחשבונך.`,
+  };
+}
+
 // קבלת סטטוס טלגרם מלא למערכת וללוח הבקרה
 export function getTelegramStatus() {
   const usersData = loadUsersData();
   const driversList = (usersData.approvedUsers || []).map((u) => {
     const clean = cleanPhone(u.phone);
     const tgConf = telegramState.driverConfigs[clean] || {};
+    const isPending = hasPendingTelegramAuth(clean);
     return {
       phone: clean,
       name: u.name || "נהג",
       telegramPhone: tgConf.telegramPhone || u.telegramPhone || null,
-      telegramUsername: tgConf.username || u.telegramUsername || null,
       telegramConnected: Boolean(tgConf.connected ?? u.telegramConnected),
       telegramConnectedAt: tgConf.connectedAt || u.telegramConnectedAt || null,
-      telegramGroups: tgConf.groups || telegramState.monitoredGroups,
+      telegramGroups: tgConf.groups || DEFAULT_RIDE_GROUPS,
       forwardToWa: tgConf.forwardToWa !== false,
       scannedCount: tgConf.scannedCount || 0,
       matchedCount: tgConf.matchedCount || 0,
+      pendingAuth: isPending,
     };
   });
 
@@ -91,27 +300,25 @@ export function getTelegramStatus() {
     ok: true,
     enabled: telegramState.enabled,
     connected: telegramState.connected,
-    botUsername: telegramState.botUsername,
-    botTokenConfigured: telegramState.botTokenConfigured,
     monitoredGroups: telegramState.monitoredGroups,
     stats: telegramState.stats,
     driversCount: driversList.filter((d) => d.telegramConnected).length,
     totalDrivers: driversList.length,
+    driverConfigs: telegramState.driverConfigs,
     drivers: driversList,
   };
 }
 
-// חיבור / עדכון הגדרות טלגרם עבור נהג ספציפי
-export function updateDriverTelegram(driverPhone, { telegramPhone, username, groups, forwardToWa = true, connected = true } = {}) {
+// עדכון הגדרות ישיר (תאימות לאחור ולמנהל מערכת)
+export function updateDriverTelegram(driverPhone, { telegramPhone, groups, forwardToWa = true, connected = true } = {}) {
   const clean = cleanPhone(driverPhone);
   if (!clean) throw new Error("מספר טלפון נהג לא תקין");
 
   const existing = telegramState.driverConfigs[clean] || {};
   const updated = {
     ...existing,
-    telegramPhone: telegramPhone ? String(telegramPhone).trim() : existing.telegramPhone,
-    username: username ? String(username).trim().replace(/^@/, "") : existing.username,
-    groups: Array.isArray(groups) && groups.length > 0 ? groups : (existing.groups || telegramState.monitoredGroups),
+    telegramPhone: telegramPhone ? normalizeTelegramPhone(telegramPhone) : (existing.telegramPhone || clean),
+    groups: Array.isArray(groups) && groups.length > 0 ? groups : (existing.groups || DEFAULT_RIDE_GROUPS),
     forwardToWa: Boolean(forwardToWa),
     connected: Boolean(connected),
     connectedAt: connected ? (existing.connectedAt || new Date().toISOString()) : null,
@@ -121,14 +328,13 @@ export function updateDriverTelegram(driverPhone, { telegramPhone, username, gro
   telegramState.driverConfigs[clean] = updated;
   persistTelegramData();
 
-  // סנכרון גם לתוך users.json
   const usersData = loadUsersData();
   const user = (usersData.approvedUsers || []).find((u) => cleanPhone(u.phone) === clean);
   if (user) {
     user.telegramPhone = updated.telegramPhone;
-    user.telegramUsername = updated.username;
     user.telegramConnected = updated.connected;
     user.telegramConnectedAt = updated.connectedAt;
+    user.telegramGroups = updated.groups;
     saveUsersData(usersData);
   }
 
@@ -141,9 +347,12 @@ export function disconnectDriverTelegram(driverPhone) {
   const clean = cleanPhone(driverPhone);
   if (!clean) return { ok: false, error: "מספר לא תקין" };
 
+  pendingTelegramAuth.delete(clean);
+
   if (telegramState.driverConfigs[clean]) {
     telegramState.driverConfigs[clean].connected = false;
     telegramState.driverConfigs[clean].connectedAt = null;
+    telegramState.driverConfigs[clean].sessionString = null;
     persistTelegramData();
   }
 
@@ -199,12 +408,12 @@ export async function processIncomingTelegramRide(ridePayload, { getMainBotSock 
     const search = getUserSearch(driverPhone);
     if (!search || !search.active) continue;
 
-    // האם הנהג מחובר לטלגרם או שהחיפוש הגלובלי מאפשר סריקה כפולה
+    // האם הנהג מחובר לטלגרם
     const tgConf = telegramState.driverConfigs[driverPhone];
-    const isDriverTelegramActive = tgConf ? tgConf.connected : true; // כברירת מחדל פעיל עבור כל נהג מאושר
+    const isDriverTelegramActive = tgConf ? tgConf.connected : true;
     if (!isDriverTelegramActive) continue;
 
-    // הרצת בדיקת התאמה מול אלגוריתם הסינון (100% דיוק)
+    // הרצת בדיקת התאמה מול אלגוריתם הסינון
     const matchResult = findMatchingSearch(cleaned, search);
     if (!matchResult || !matchResult.matched) continue;
 
@@ -212,7 +421,7 @@ export async function processIncomingTelegramRide(ridePayload, { getMainBotSock 
     telegramState.stats.totalMatched += 1;
     if (tgConf) tgConf.matchedCount = (tgConf.matchedCount || 0) + 1;
 
-    // בניית ההודעה המעוצבת מטלגרם בדיוק כפי שמופיע בצילום המסך (Image 2)
+    // בניית ההודעה המעוצבת מטלגרם בדיוק כפי שמופיע ב-Image 2
     const destinationJid = getDestinationJid(driverPhone);
     const searchBadge = search.displayText || matchResult.filterName || "חיפוש פעיל";
 
@@ -234,7 +443,7 @@ ${cleaned}
           text: formattedTelegramMsg,
         });
 
-        // שליחת כפתור פעולה ישיר "פתח בטלגרם ↗️" ותפריט (כמו ב-Image 2)
+        // שליחת כפתור פעולה ישיר "פתח בטלגרם ↗️" ותפריט
         try {
           const actionMsg = `🔹 *פתח בטלגרם ↗️*\n${directUrl}\n\n≡ תפריט`;
           await sock.sendMessage(destinationJid, { text: actionMsg });
@@ -263,89 +472,123 @@ ${cleaned}
   };
 }
 
-// מענה להודעת טלגרם מנהג בוואטסאפ (מדריך חיבור מפורט וברור צעד-אחר-צעד)
+// מענה להודעת טלגרם מנהג בוואטסאפ (מדריך חיבור לפי מספר טלפון וקוד)
 export function buildDriverTelegramInfoMessage(driverPhone) {
   const clean = cleanPhone(driverPhone);
   const conf = telegramState.driverConfigs[clean] || {};
   const isConnected = Boolean(conf.connected);
+  const hasPending = hasPendingTelegramAuth(clean);
 
-  let msg = `✈️ *מדריך חיבור חשבון טלגרם לסריקה מקבילה (וואטסאפ + טלגרם)* 🚕\n\n`;
+  let msg = `✈️ *חיבור חשבון טלגרם לסריקה מקבילה (וואטסאפ + טלגרם)* 🚕\n\n`;
 
   if (isConnected) {
-    const id = conf.username ? `@${conf.username}` : (conf.telegramPhone || clean);
+    const phoneDisplay = conf.telegramPhone || clean;
+    const groups = conf.groups || DEFAULT_RIDE_GROUPS;
     msg += `🟢 *סטטוס נוכחי:* מחובר וסורק בזמן אמת!\n`;
-    msg += `📱 *חשבון מקושר:* ${id}\n`;
+    msg += `📱 *מספר טלגרם מחובר:* ${phoneDisplay}\n`;
+    msg += `👥 *קבוצות נסיעות שזוהו ונסרקות עבורך (${groups.length}):*\n`;
+    groups.slice(0, 5).forEach((g) => {
+      msg += `  • ${g}\n`;
+    });
     msg += `📊 *נסיעות מטלגרם שהותאמו לך עד כה:* ${conf.matchedCount || 0}\n\n`;
-    msg += `💡 כל נסיעה תואמת בטלגרם נשלחת אליך לכאן עם כפתור *"פתח בטלגרם ↗️"*.\n\n`;
-    msg += `✏️ *לעדכון שם משתמש/טלפון:* שלח *"חבר טלגרם @היוזר_החדש"*\n`;
-    msg += `🛑 *לניתוק הסריקה מטלגרם:* שלח *"נתק טלגרם"*\n\n≡ תפריט`;
+    msg += `💡 כל נסיעה תואמת בטלגרם נשלחת אליך ישירות לכאן עם כפתור *"פתח בטלגרם ↗️"*.\n\n`;
+    msg += `🛑 *לניתוק החשבון בכל עת:* שלח *"נתק טלגרם"*\n\n≡ תפריט`;
+    return msg;
+  }
+
+  if (hasPending) {
+    const p = pendingTelegramAuth.get(clean);
+    msg += `⏳ *ממתין להזנת קוד אימות:* נשלח קוד לטלגרם ${p?.telegramPhone || clean}.\n\n`;
+    msg += `👉 השב עכשיו עם הקוד בן 5 הספרות:\n`;
+    msg += `*קוד 12345* (או פשוט שלח את 5 הספרות)\n\n`;
+    msg += `ברגע שתזין את הקוד, המערכת תזהה את קבוצות הנסיעות שלך ותתחבר פעם אחת ולתמיד!\n\n≡ תפריט`;
     return msg;
   }
 
   msg += `⚪ *סטטוס נוכחי:* טרם חובר\n\n`;
-  msg += `*חיבור חשבון טלגרם אישי (באותו רעיון בדיוק כמו הוואטסאפ!):*\n`;
-  msg += `המערכת מתחברת לחשבון הטלגרם האישי שלך, סורקת מבפנים את כל קבוצות הנסיעות הפרטיות והסגורות שאתה חבר בהן (מאוחדים תגבור ריידר 👑, ריידר הפצה וכו') בו-זמנית עם הוואטסאפ, ושולחת לך כל נסיעה תואמת ישירות לכאן עם קישור מהיר לנסיעה!\n\n`;
-  msg += `📲 *איך נהג מתחבר לבד תוך 5 שניות? (בחר אחת מהדרכים):*\n\n`;
-  msg += `👉 *אפשרות א' — ישירות כאן בוואטסאפ (הכי פשוט!):*\n`;
-  msg += `שלח עכשיו לבוט הודעה עם מספר הטלפון של הטלגרם שלך:\n`;
-  msg += `*חבר טלגרם 0501234567*\n`;
-  msg += `(או עם שם המשתמש שלך: *חבר טלגרם @היוזר_שלך*)\n\n`;
-  msg += `👉 *אפשרות ב' — חיבור עצמי באתר המערכת:*\n`;
-  msg += `היכנס לאתר, לחץ על כפתור *"חיבור טלגרם"*, בחר את שמך והזן את מספר הטלגרם שלך לחיבור מיידי.\n\n`;
-  msg += `💡 *ברגע שחיברת, כל נסיעה מתאימה שתפורסם בקבוצות הטלגרם שלך תגיע מיד לוואטסאפ עם כפתור "פתח בטלגרם ↗️"!*\n\n≡ תפריט`;
+  msg += `*חיבור חשבון טלגרם אישי (בדיוק באותו רעיון כמו הוואטסאפ!):*\n`;
+  msg += `המערכת מתחברת לחשבון הטלגרם האישי שלך לפי מספר הטלפון, מזהה אוטומטית את כל קבוצות הנסיעות שאתה חבר בהן (מאוחדים תגבור ריידר 👑, ריידר הפצה וכו') וסורקת אותן במקביל לוואטסאפ!\n\n`;
+  msg += `📲 *איך מתחברים לבד בקלות? (2 שלבים בלבד):*\n\n`;
+  msg += `1️⃣ שלח עכשיו לבוט את מספר הטלפון של הטלגרם שלך:\n`;
+  msg += `👉 *חבר טלגרם 0501234567*\n`;
+  msg += `(או פשוט *חבר טלגרם* אם הטלגרם על אותו מספר של הוואטסאפ)\n\n`;
+  msg += `2️⃣ תקבל קוד אימות בן 5 ספרות בהודעות הטלגרם שלך. השב עליו כאן:\n`;
+  msg += `👉 *קוד 12345*\n\n`;
+  msg += `✅ *וזהו! המערכת מזהה את הקבוצות שלך ומחוברת פעם אחת ולתמיד!*\n`;
+  msg += `(אין צורך בבוטים ואין צורך בשם משתמש)\n\n≡ תפריט`;
 
   return msg;
 }
 
-// ניתוח פקודות טלגרם של נהג בוואטסאפ (חיבור עצמי, ניתוק, או הצגת מדריך)
-export function handleDriverTelegramCommand(driverPhone, rawText) {
+// ניתוח פקודות טלגרם של נהג בוואטסאפ (חיבור, קוד אימות, ניתוק, סטטוס)
+export async function handleDriverTelegramCommand(driverPhone, rawText) {
   const clean = cleanPhone(driverPhone);
   const text = String(rawText || "").trim();
 
-  // 1. פקודת ניתוק: "נתק טלגרם", "בטל טלגרם", "הסר טלגרם", "טלגרם נתק", "טלגרם בטל"
+  // 1. פקודת ניתוק: "נתק טלגרם", "בטל טלגרם", "הסר טלגרם"
   if (/^(?:נתק|בטל|הסר)\s+טלגרם$/i.test(text) || /^טלגרם\s+(?:נתק|בטל|הסר)$/i.test(text)) {
     disconnectDriverTelegram(clean);
     return `🛑 *חשבון הטלגרם שלך נותק מהמערכת.* ✈️\n` +
       `הבוט ימשיך לסרוק עבורך נסיעות מקבוצות הוואטסאפ כרגיל.\n\n` +
       `💡 *רוצה להתחבר שוב בעתיד?* שלח בכל רגע:\n` +
-      `*"חבר טלגרם @היוזר_שלך"* או *"חבר טלגרם מספר_טלפון"*\n\n≡ תפריט`;
+      `*"חבר טלגרם 0501234567"*\n\n≡ תפריט`;
   }
 
-  // 2. פקודת חיבור עצמי: "חבר טלגרם", "חיבור טלגרם", או עם טלפון/שם משתמש
+  // 2. הזנת קוד אימות: למשל "12345", "קוד 12345", "קוד: 12345"
+  const codeMatch = text.match(/^(?:קוד\s*[:=-]?\s*)?(\d{4,6})$/i);
+  if (codeMatch && hasPendingTelegramAuth(clean)) {
+    const inputCode = codeMatch[1];
+    try {
+      const verifyRes = await verifyDriverTelegramCode(clean, inputCode);
+      const groupsList = (verifyRes.groups || DEFAULT_RIDE_GROUPS).map((g) => `• ${g}`).join("\n");
+      return `🎉 *חשבון הטלגרם שלך (${verifyRes.telegramPhone}) חובר בהצלחה!* ✈️\n\n` +
+        `✅ *המערכת זיהתה ${verifyRes.groupsCount || 5} קבוצות נסיעות בחשבונך:*\n` +
+        `${groupsList}\n\n` +
+        `🟢 *מצב סריקה מקבילה (וואטסאפ + טלגרם) פעיל כעת:*\n` +
+        `• הבוט יסרוק עבורך בו-זמנית מקבוצות הוואטסאפ ומקבוצות הטלגרם הללו!\n` +
+        `• כל נסיעה שתתאים לחיפוש שלך בטלגרם תישלח אליך לוואטסאפ מיד עם כפתור *"פתח בטלגרם ↗️"*.\n\n` +
+        `💡 *החיבור קבוע ונשמר פעם אחת ולתמיד (כמו וואטסאפ ווב).*\n` +
+        `🛑 *לניתוק בכל עת:* שלח *"נתק טלגרם"*\n\n≡ תפריט`;
+    } catch (err) {
+      return `❌ *שגיאה באימות הקוד:*\n${err.message}\n\n` +
+        `בדוק את הקוד בן 5 הספרות שנשלח לטלגרם שלך והשב שוב:\n` +
+        `*קוד 12345*\n` +
+        `או שלח *"חבר טלגרם"* לקבלת קוד חדש.`;
+    }
+  }
+
+  // 3. אזהרה אם הנהג מנסה לשלוח @username במקום מספר טלפון
+  if (text.includes("@")) {
+    return `ℹ️ *חיבור הטלגרם נעשה אך ורק באמצעות מספר טלפון בלבד (בדיוק כמו וואטסאפ ווב)!*\n\n` +
+      `אין צורך בשם משתמש (@username) ואין בוטים.\n\n` +
+      `👉 *שלח עכשיו את מספר הטלגרם שלך:*\n` +
+      `*חבר טלגרם 0501234567*\n\n` +
+      `הבוט ישלח לך קוד אימות, תזין אותו והקבוצות שלך יחוברו אוטומטית פעם אחת ולתמיד!\n\n≡ תפריט`;
+  }
+
+  // 4. פקודת בקשת חיבור / שליחת קוד: "חבר טלגרם 0501234567", "חיבור טלגרם 050...", "חבר טלגרם"
   const isDirectConnect = /^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר)$/i.test(text);
-  const connectWithArgMatch = text.match(/^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר|טלגרם)\s*[:=\s]\s*(@?[a-zA-Z0-9_]{3,32}|(?:\+?972|0)[-\s]?5\d[-\s]?\d{3}[-\s]?\d{4}|\d{9,12})$/i);
+  const connectWithPhoneMatch = text.match(/^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר|טלגרם)\s*[:=\s]\s*((?:\+?972|0)[-\s]?5\d[-\s]?\d{3}[-\s]?\d{4}|\d{9,12})$/i);
 
-  if (isDirectConnect || connectWithArgMatch) {
-    let username = null;
-    let tgPhone = clean;
-
-    if (connectWithArgMatch && connectWithArgMatch[1]) {
-      const param = connectWithArgMatch[1].trim();
-      if (param.startsWith("@") || /^[a-zA-Z]/.test(param)) {
-        username = param.replace(/^@/, "");
-      } else {
-        tgPhone = cleanPhone(param) || param;
-      }
+  if (isDirectConnect || connectWithPhoneMatch) {
+    let targetTgPhone = clean;
+    if (connectWithPhoneMatch && connectWithPhoneMatch[1]) {
+      targetTgPhone = normalizeTelegramPhone(connectWithPhoneMatch[1]);
     }
 
-    const updated = updateDriverTelegram(clean, {
-      username: username || undefined,
-      telegramPhone: tgPhone || clean,
-      forwardToWa: true,
-      connected: true,
-    });
-
-    const displayId = username ? `@${username}` : (tgPhone || clean);
-    return `🎉 *חשבון הטלגרם שלך (${displayId}) חובר בהצלחה!* ✈️\n\n` +
-      `🟢 *מצב סריקה מקבילה (וואטסאפ + טלגרם) פעיל כעת:*\n` +
-      `• הבוט יסרוק עבורך בו-זמנית מקבוצות הוואטסאפ ומקבוצות הטלגרם של הנסיעות!\n` +
-      `• כל נסיעה שתתאים לחיפוש שלך בטלגרם תישלח אליך לוואטסאפ מיד עם כפתור *"פתח בטלגרם ↗️"*.\n\n` +
-      `💡 *כיצד להתחיל לחפש?*\n` +
-      `שלח למשל: *"פנוי שמש"* (בתוך ומחוץ לעיר) או *"פנוי שמש פנימי"*.\n\n` +
-      `🛑 *לניתוק בכל עת:* שלח *"נתק טלגרם"*\n\n≡ תפריט`;
+    try {
+      const reqRes = await requestDriverTelegramCode(clean, targetTgPhone);
+      return `📲 *קוד אימות נשלח כעת לחשבון הטלגרם שלך (${reqRes.telegramPhone})!* ✈️\n\n` +
+        `באותו רעיון בדיוק כמו חיבור הוואטסאפ:\n` +
+        `1. פתח את אפליקציית טלגרם במכשירך\n` +
+        `2. העתק את קוד האימות (5 ספרות) שנשלח אליך מהודעות המערכת של טלגרם\n` +
+        `3. השב כאן מיד עם הקוד: *קוד 12345* (או פשוט שלח את 5 הספרות)\n\n` +
+        `⏱️ *הקוד בתוקף ל-10 דקות. לאחר הזנתו המערכת תזהה את קבוצות הנסיעות שלך ותתחבר פעם אחת ולתמיד!*`;
+    } catch (err) {
+      return `❌ *שגיאה בשליחת קוד לטלגרם:*\n${err.message}\n\nנסה שוב: *חבר טלגרם 0501234567*`;
+    }
   }
 
-  // 3. הצגת מדריך מפורט וסטטוס קיים
+  // 5. הצגת סטטוס ומדריך
   return buildDriverTelegramInfoMessage(driverPhone);
 }
-

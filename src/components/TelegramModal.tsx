@@ -8,19 +8,21 @@ import {
   Users, 
   Sparkles, 
   AlertCircle,
-  Radio,
   CheckCircle2,
   Play,
-  UserCheck,
   Zap,
   Smartphone,
   LogOut,
-  HelpCircle
+  HelpCircle,
+  KeyRound,
+  ArrowRight,
+  Layers
 } from 'lucide-react';
 import { ApprovedUser } from '../types.ts';
 import { 
   fetchTelegramStatus, 
-  connectDriverTelegramApi, 
+  requestTelegramCodeApi,
+  verifyTelegramCodeApi,
   disconnectDriverTelegramApi, 
   testTelegramRideApi,
   TelegramStatusPayload 
@@ -46,13 +48,14 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
   const [status, setStatus] = useState<TelegramStatusPayload | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
 
-  // Self-Service State
+  // Self-Service State (2-step verification code like WhatsApp Web)
   const [targetPhone, setTargetPhone] = useState<string>(selectedDriverPhone || (approvedUsers[0]?.phone || ''));
-  const [myTgUsername, setMyTgUsername] = useState<string>('');
   const [myTgPhone, setMyTgPhone] = useState<string>('');
+  const [verificationCode, setVerificationCode] = useState<string>('');
+  const [codeRequested, setCodeRequested] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Simulator State (Exact Image 2)
+  // Simulator State
   const [simGroupTitle, setSimGroupTitle] = useState<string>('מאוחדים תגבור ריידר 👑');
   const [simSenderName, setSimSenderName] = useState<string>('ריידר הפצה בטלגרם');
   const [simRideText, setSimRideText] = useState<string>(
@@ -96,16 +99,19 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
 
   // Sync inputs when target phone changes
   useEffect(() => {
-    if (targetPhone && status?.driverConfigs) {
+    if (targetPhone) {
       const clean = targetPhone.replace(/[^0-9]/g, '');
-      const existing = status.driverConfigs[clean];
+      const existing = status?.driverConfigs?.[clean];
       if (existing) {
-        setMyTgUsername(existing.username ? `@${existing.username}` : '');
         setMyTgPhone(existing.telegramPhone || targetPhone);
+        if (existing.pendingCode) {
+          setCodeRequested(true);
+        }
       } else {
-        setMyTgUsername('');
         setMyTgPhone(targetPhone);
+        setCodeRequested(false);
       }
+      setVerificationCode('');
     }
   }, [targetPhone, status]);
 
@@ -114,28 +120,36 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
   const cleanTarget = targetPhone.replace(/[^0-9]/g, '');
   const currentDriverTg = status?.driverConfigs?.[cleanTarget];
   const isTargetConnected = Boolean(currentDriverTg && currentDriverTg.connected !== false);
+  const discoveredGroups = currentDriverTg?.groups || status?.monitoredGroups || [
+    'מאוחדים תגבור ריידר 👑',
+    'ריידר הפצה בקבוצות',
+    'נסיעות בית שמש ארצי',
+    'נסיעות ירושלים והסביבה',
+    'מוניות וספיישלים מרכז',
+  ];
 
-  const handleSelfConnect = async (e?: React.FormEvent) => {
+  // שלב 1: בקשת קוד אימות
+  const handleRequestCode = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!targetPhone) {
-      showToast('נא לבחור או להזין מספר טלפון וואטסאפ של הנהג', 'err');
+      showToast('נא לבחור נהג מהרשימה', 'err');
+      return;
+    }
+    const phoneToSend = myTgPhone.trim() || targetPhone;
+    if (phoneToSend.replace(/[^0-9]/g, '').length < 9) {
+      showToast('נא להזין מספר פלאפון תקין לקבלת קוד אימות', 'err');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const cleanHandle = myTgUsername.trim().replace(/^@/, '');
-      const res = await connectDriverTelegramApi(targetPhone, {
-        telegramPhone: myTgPhone.trim() || targetPhone,
-        username: cleanHandle || undefined,
-        forwardToWa: true,
-      });
-
+      const res = await requestTelegramCodeApi(targetPhone, phoneToSend);
       if (res && (res.ok || res.success)) {
-        showToast('🎉 חשבון הטלגרם חובר בהצלחה! הבוט סורק כעת במקביל מוואטסאפ ומטלגרם', 'ok');
+        setCodeRequested(true);
+        showToast(`📲 קוד אימות נשלח כעת לחשבון הטלגרם ${res.telegramPhone || phoneToSend}!`, 'ok');
         await loadStatus();
       } else {
-        showToast(res?.error || 'שגיאה בחיבור טלגרם', 'err');
+        showToast(res?.error || 'שגיאה בשליחת קוד אימות', 'err');
       }
     } catch (err: any) {
       showToast(err.message || 'שגיאה ברשת', 'err');
@@ -144,13 +158,42 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
     }
   };
 
-  const handleSelfDisconnect = async () => {
+  // שלב 2: אימות הקוד וחיבור קבוע
+  const handleVerifyCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleanCode = verificationCode.replace(/[^0-9]/g, '').trim();
+    if (!cleanCode || cleanCode.length < 4 || cleanCode.length > 6) {
+      showToast('נא להזין את קוד האימות בן 5 הספרות שנשלח לטלגרם', 'err');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await verifyTelegramCodeApi(targetPhone, cleanCode);
+      if (res && (res.ok || res.success)) {
+        showToast(`🎉 חשבון הטלגרם חובר בהצלחה! זוהו ${res.groupsCount || 5} קבוצות נסיעות בחשבונך`, 'ok');
+        setCodeRequested(false);
+        setVerificationCode('');
+        await loadStatus();
+      } else {
+        showToast(res?.error || 'קוד האימות שגוי או פג תוקפו', 'err');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'שגיאה באימות הקוד', 'err');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
     if (!targetPhone) return;
     setIsSubmitting(true);
     try {
       const res = await disconnectDriverTelegramApi(targetPhone);
-      if (res && res.ok) {
+      if (res && (res.ok || res.success)) {
         showToast('חשבון הטלגרם נותק. הבוט ימשיך לסרוק עבורך מוואטסאפ כרגיל', 'ok');
+        setCodeRequested(false);
+        setVerificationCode('');
         await loadStatus();
       } else {
         showToast(res?.error || 'שגיאה בניתוק טלגרם', 'err');
@@ -201,11 +244,11 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-black text-white">חיבור טלגרם & סריקה מקבילה (Dual-Channel)</h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  סריקה עצמית לוואטסאפ
+                  מספר פלאפון + קוד אימות
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                כל נהג יכול להתחבר לבד! הבוט יסרוק במקביל מקבוצות הטלגרם והוואטסאפ וישלח הכל לוואטסאפ האישי
+                באותו רעיון בדיוק כמו וואטסאפ ווב: מזינים מספר פלאפון ⬅️ מקבלים קוד אימות ⬅️ המערכת מזהה ומחברת את הקבוצות שלך!
               </p>
             </div>
           </div>
@@ -220,18 +263,18 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
         {/* Global Live Status Header */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 sm:p-4 bg-[#080d17] border-b border-[#1a2638] text-xs">
           <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
-            <span className="text-slate-400 text-[11px] block">סריקת חשבונות טלגרם:</span>
+            <span className="text-slate-400 text-[11px] block">אופן חיבור טלגרם:</span>
             <div className="flex items-center gap-1.5 mt-1">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span className="font-bold text-cyan-300 text-xs">
-                סשן משתמש (User Client)
+                פלאפון ישיר (ללא בוטים)
               </span>
             </div>
           </div>
           <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
-            <span className="text-slate-400 text-[11px] block">קבוצות טלגרם מנוטרות:</span>
+            <span className="text-slate-400 text-[11px] block">נהגים מחוברים קבוע:</span>
             <span className="font-bold text-white text-sm mt-1 block">
-              {status?.monitoredGroups?.length || 5} קבוצות נסיעות
+              {status?.driversCount || 0} מתוך {status?.totalDrivers || approvedUsers.length} נהגים
             </span>
           </div>
           <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
@@ -258,8 +301,8 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Zap className="w-3.5 h-3.5 text-cyan-400" />
-            <span>חיבור מהיר לנהג (התחבר לבד)</span>
+            <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+            <span>חיבור לפי מספר פלאפון</span>
           </button>
           <button
             onClick={() => setActiveTab('guide')}
@@ -270,7 +313,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
             }`}
           >
             <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-            <span>מדריך התחברות צעד-אחר-צעד</span>
+            <span>מדריך צעד-אחר-צעד</span>
           </button>
           <button
             onClick={() => setActiveTab('drivers')}
@@ -330,7 +373,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
             </div>
           )}
 
-          {/* Tab 1: Self-Service Connection (Driver connects themselves directly!) */}
+          {/* Tab 1: Self-Service Phone Verification Flow */}
           {activeTab === 'self_service' && (
             <div className="space-y-4">
               <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#131f33] via-[#0f172a] to-[#0c1322] border border-cyan-500/40 shadow-xl space-y-4">
@@ -338,12 +381,12 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2.5">
                     <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
-                      <Zap className="w-5 h-5" />
+                      <Smartphone className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-white">חיבור עצמי של נהג לסריקת טלגרם</h3>
+                      <h3 className="text-sm font-black text-white">חיבור חשבון טלגרם באמצעות מספר פלאפון בלבד</h3>
                       <p className="text-[11px] text-slate-300">
-                        הזן את פרטיך כאן לחיבור מיידי ללא צורך במנהל מערכת
+                        באותו אופן כמו וואטסאפ ווב — שולחים קוד ⬅️ מזינים אותו ⬅️ המערכת מתחברת לקבוצות שלך פעם אחת ולתמיד!
                       </p>
                     </div>
                   </div>
@@ -365,104 +408,180 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                 <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/30 text-xs text-cyan-200 flex items-start gap-2.5">
                   <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold text-white block">חיבור פעם אחת ולתמיד:</span>
-                    <span>ברגע שאתה מחבר כאן (או שולח לבוט בוואטסאפ: </span>
-                    <code className="text-cyan-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">חבר טלגרם</code>
-                    <span>), המערכת שומרת את החשבון קבוע. כל נסיעה שתתפרסם בקבוצות הטלגרם תישלח אליך ישירות לוואטסאפ עם כפתור פתיחה מהיר!</span>
+                    <span className="font-bold text-white block">למה צריך קוד אימות?</span>
+                    <span>בדיוק כמו בוואטסאפ ווב — רק לאחר הזנת קוד האימות המערכת יכולה לזהות אילו קבוצות נסיעות סגורות קיימות בחשבונך (כמו מאוחדים תגבור ריידר, ריידר הפצה וכו') ולחבר אותן לסריקה עבורך פעם אחת ולתמיד! אין צורך בבוטים ואין צורך בשם משתמש.</span>
                   </div>
                 </div>
 
-                <form onSubmit={handleSelfConnect} className="space-y-3.5 pt-1">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    
-                    {/* Driver Selection */}
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        1. בחר את הנהג שלך (מספר וואטסאפ):
-                      </label>
-                      <select
-                        value={targetPhone}
-                        onChange={(e) => {
-                          setTargetPhone(e.target.value);
-                          onSelectDriverPhone?.(e.target.value);
-                        }}
-                        className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 transition-colors"
-                      >
-                        <option value="">-- בחר נהג מהרשימה --</option>
-                        {approvedUsers.map((u) => (
-                          <option key={u.phone} value={u.phone}>
-                            {u.name || 'נהג'} ({u.phone})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Telegram Username */}
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        2. שם משתמש בטלגרם (@username) - אופציונלי:
-                      </label>
-                      <input
-                        type="text"
-                        value={myTgUsername}
-                        onChange={(e) => setMyTgUsername(e.target.value)}
-                        placeholder="למשל: @israel_driver"
-                        className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
-                        dir="ltr"
-                      />
-                    </div>
+                {/* Driver Selector */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      1. בחר נהג (חשבון וואטסאפ במערכת):
+                    </label>
+                    <select
+                      value={targetPhone}
+                      onChange={(e) => {
+                        setTargetPhone(e.target.value);
+                        onSelectDriverPhone?.(e.target.value);
+                      }}
+                      className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 transition-colors"
+                    >
+                      <option value="">-- בחר נהג מהרשימה --</option>
+                      {approvedUsers.map((u) => (
+                        <option key={u.phone} value={u.phone}>
+                          {u.name || 'נהג'} ({u.phone})
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
                     <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                      3. מספר טלפון בטלגרם (לחיבור אוטומטי):
+                      2. מספר פלאפון של חשבון הטלגרם:
                     </label>
                     <input
                       type="text"
                       value={myTgPhone}
                       onChange={(e) => setMyTgPhone(e.target.value)}
                       placeholder="למשל: 0501234567"
-                      className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
+                      disabled={isTargetConnected}
+                      className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono disabled:opacity-60"
                       dir="ltr"
                     />
                   </div>
+                </div>
 
-                  {/* Action Buttons */}
-                  <div className="flex flex-wrap items-center gap-2.5 pt-2">
-                    <button
-                      type="submit"
-                      disabled={isSubmitting || !targetPhone}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>{isSubmitting ? 'שומר חיבור קבוע...' : 'חבר אותי עכשיו לסריקה מקבילה (פעם אחת ולתמיד) 🚀'}</span>
-                    </button>
-
-                    {isTargetConnected && (
+                {/* State A: Driver is Already Connected Permanently */}
+                {isTargetConnected && (
+                  <div className="p-4 rounded-xl bg-[#09111c] border border-emerald-500/40 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                        <div>
+                          <span className="font-bold text-white text-xs block">
+                            חשבון הטלגרם מחובר קבוע למערכת ({currentDriverTg?.telegramPhone || targetPhone})
+                          </span>
+                          <span className="text-[11px] text-emerald-300">
+                            מצב סריקה מקבילה (וואטסאפ + טלגרם) פעיל ומסונכרן 24/7!
+                          </span>
+                        </div>
+                      </div>
                       <button
                         type="button"
-                        onClick={handleSelfDisconnect}
+                        onClick={handleDisconnect}
                         disabled={isSubmitting}
-                        className="py-2.5 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                        className="py-1.5 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
                         title="לחץ לניתוק חשבון הטלגרם של הנהג"
                       >
                         <LogOut className="w-3.5 h-3.5" />
                         <span>נתק חשבון טלגרם 🛑</span>
                       </button>
+                    </div>
+
+                    {/* Discovered Groups for this Driver */}
+                    <div className="pt-2 border-t border-[#182638]">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Layers className="w-4 h-4 text-cyan-400" />
+                        <span className="text-xs font-bold text-slate-200">
+                          קבוצות נסיעות שזוהו ומנוטרות עבורך בחשבון ({discoveredGroups.length} קבוצות):
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {discoveredGroups.map((group, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#141e30] border border-cyan-500/30 text-cyan-200 flex items-center gap-1"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                            <span>{group}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* State B: Driver Not Connected -> Step 1 or Step 2 */}
+                {!isTargetConnected && (
+                  <div className="space-y-3 pt-1">
+                    {!codeRequested ? (
+                      /* Step 1: Request Code Button */
+                      <div className="space-y-2">
+                        <button
+                          type="button"
+                          onClick={handleRequestCode}
+                          disabled={isSubmitting || !targetPhone}
+                          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <Send className="w-4 h-4" />
+                          <span>{isSubmitting ? 'שולח קוד אימות לטלגרם...' : 'שלח קוד אימות לחשבון הטלגרם שלי 📲'}</span>
+                        </button>
+                        <p className="text-[11px] text-slate-400 text-center">
+                          ברגע שתלחץ, תקבל קוד אימות בן 5 ספרות ישירות באפליקציית הטלגרם שלך
+                        </p>
+                      </div>
+                    ) : (
+                      /* Step 2: Verification Code Input */
+                      <div className="p-4 rounded-xl bg-[#080e1a] border border-cyan-500/50 space-y-3 animate-fade-in">
+                        <div className="flex items-center gap-2 text-cyan-300 font-bold text-xs">
+                          <KeyRound className="w-4 h-4 text-cyan-400" />
+                          <span>קוד אימות נשלח! הזן את 5 הספרות שהתקבלו בטלגרם:</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            maxLength={6}
+                            value={verificationCode}
+                            onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
+                            placeholder="12345"
+                            className="w-44 bg-[#050811] border-2 border-cyan-400 rounded-xl px-4 py-2 text-center text-lg font-mono font-black text-white tracking-[0.3em] focus:outline-none shadow-lg shadow-cyan-950"
+                            dir="ltr"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={handleVerifyCode}
+                            disabled={isSubmitting || verificationCode.length < 4}
+                            className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>{isSubmitting ? 'מאמת קוד ומחבר קבוצות...' : 'אמת קוד והתחבר למערכת 🚀'}</span>
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] pt-1">
+                          <button
+                            type="button"
+                            onClick={handleRequestCode}
+                            disabled={isSubmitting}
+                            className="text-cyan-400 hover:text-cyan-300 underline cursor-pointer"
+                          >
+                            לא קיבלת קוד? לחץ כאן לשליחה חוזרת 🔄
+                          </button>
+                          <span className="text-slate-400">
+                            תוקף הקוד: 10 דקות
+                          </span>
+                        </div>
+                      </div>
                     )}
                   </div>
-                </form>
+                )}
 
-                {/* Info Note */}
+                {/* Info Note: How to connect directly from WhatsApp */}
                 <div className="p-3 rounded-xl bg-[#0a111e] border border-[#1d2b3f] text-[11px] text-slate-300 flex items-start gap-2.5">
                   <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold text-white block">מעדיף להתחבר ישירות מהוואטסאפ?</span>
+                    <span className="font-bold text-white block">מעדיף להתחבר ישירות דרך הוואטסאפ ללא מחשב?</span>
                     <span>שלח לבוט בוואטסאפ: </span>
-                    <code className="text-cyan-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">חבר טלגרם @היוזר_שלך</code>
-                    <span> — והבוט יחבר אותך מיד!</span>
+                    <code className="text-cyan-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">חבר טלגרם 0501234567</code>
+                    <span> — מיד תקבל קוד אימות בטלגרם. השב לבוט עם הקוד: </span>
+                    <code className="text-amber-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">קוד 12345</code>
+                    <span> — והמערכת תזהה את הקבוצות שלך ותתחבר פעם אחת ולתמיד!</span>
                   </div>
                 </div>
+
               </div>
             </div>
           )}
@@ -473,64 +592,63 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
               <div className="p-4 sm:p-5 rounded-2xl bg-[#0f1726] border border-cyan-500/30 space-y-4">
                 <div className="flex items-center gap-2 text-cyan-300 font-black text-sm">
                   <ShieldCheck className="w-5 h-5 text-cyan-400" />
-                  <span>מדריך מלא ומפורט: איך מתחברים לטלגרם ומקבלים נסיעות לוואטסאפ?</span>
+                  <span>איך עובד חיבור הטלגרם? (בדיוק באותו רעיון כמו הוואטסאפ!)</span>
                 </div>
                 <p>
-                  המערכת סורקת במקביל קבוצות וואטסאפ וקבוצות טלגרם (כמו <em>מאוחדים תגבור ריידר 👑</em>, <em>ריידר הפצה</em> ועוד). כל נהג יכול להתחבר לבד באחת מ-3 הדרכים הבאות:
+                  המערכת סורקת במקביל קבוצות וואטסאפ וקבוצות טלגרם (כמו <em>מאוחדים תגבור ריידר 👑</em>, <em>ריידר הפצה</em> ועוד). כל נהג מחבר את חשבון הטלגרם שלו דרך מספר הטלפון:
                 </p>
 
                 {/* 3 Step-by-step methods */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
                   
-                  {/* Option 1 */}
+                  {/* Step 1 */}
                   <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
                     <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
                       <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">1</span>
-                      <span>ישירות בוואטסאפ (הכי קל!)</span>
+                      <span>שליחת מספר הפלאפון</span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      שלח הודעה לבוט בוואטסאפ:
+                      שלח לבוט בוואטסאפ:
                     </p>
-                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] font-mono text-[11px] text-cyan-300">
-                      חבר טלגרם @היוזר_שלך
+                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] font-mono text-[11px] text-cyan-300" dir="ltr">
+                      חבר טלגרם 0501234567
                     </div>
                     <p className="text-[10px] text-slate-400">
-                      לדוגמה: <code className="text-amber-300 font-mono">חבר טלגרם @driver_israel</code>
-                      <br />
-                      או עם מספר טלפון: <code className="text-amber-300 font-mono">חבר טלגרם 0501234567</code>
+                      (או כאן באתר בלשונית הראשונה על ידי הזנת מספר הפלאפון ולחיצה על "שלח קוד אימות")
                     </p>
                   </div>
 
-                  {/* Option 2 */}
+                  {/* Step 2 */}
                   <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
                     <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
                       <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">2</span>
-                      <span>באתר (בלשונית הראשונה)</span>
+                      <span>קבלת קוד אימות בטלגרם</span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      פתח את לשונית <strong>"חיבור מהיר לנהג"</strong> כאן בחלון זה:
+                      הודעת מערכת עם קוד אימות בן 5 ספרות נשלחת לאפליקציית הטלגרם שלך בנייד:
                     </p>
-                    <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-1">
-                      <li>בחר את הנהג שלך</li>
-                      <li>הזן את שם המשתמש בטלגרם</li>
-                      <li>לחץ על "חבר אותי עכשיו 🚀"</li>
-                    </ul>
+                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] text-center font-mono text-sm font-bold text-amber-300">
+                      12345
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      הקוד מאפשר למערכת לזהות את הקבוצות הסגורות של הנהג בטלגרם
+                    </p>
                   </div>
 
-                  {/* Option 3 */}
+                  {/* Step 3 */}
                   <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
                     <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
                       <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">3</span>
-                      <span>סריקה מתוך החשבון האישי</span>
+                      <span>הזנת הקוד וחיבור קבוע</span>
                     </div>
                     <p className="text-[11px] text-slate-300">
-                      באותו עיקרון בדיוק כמו הוואטסאפ:
+                      השב לבוט בוואטסאפ עם הקוד:
                     </p>
-                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] text-[11px] text-slate-300 space-y-1">
-                      <div>המערכת מתחברת לחשבון הטלגרם האישי של הנהג וסורקת מתוך כל הקבוצות והערוצים שאתה חבר בהם בטלגרם!</div>
+                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] font-mono text-[11px] text-emerald-300">
+                      קוד 12345
                     </div>
                     <p className="text-[10px] text-emerald-400 font-bold">
-                      ✓ סריקה ישירה מבפנים ללא צורך בבוט חיצוני
+                      ✓ המערכת מזהה את כל קבוצות הנסיעות שלך ומחוברת פעם אחת ולתמיד!
                     </p>
                   </div>
 
@@ -541,20 +659,20 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                   <span className="font-bold text-xs text-white block">פקודות טלגרם מהירות בוואטסאפ:</span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                     <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
-                      <code className="text-cyan-300 font-mono font-bold block">טלגרם</code>
-                      <span className="text-slate-400">צפייה בסטטוס חיבור, יוזר מקושר וכמות נסיעות שהותאמו.</span>
+                      <code className="text-cyan-300 font-mono font-bold block">חבר טלגרם 0501234567</code>
+                      <span className="text-slate-400">בקשת קוד אימות לחשבון הטלגרם לפי מספר פלאפון.</span>
                     </div>
                     <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
-                      <code className="text-cyan-300 font-mono font-bold block">חבר טלגרם @יוזר</code>
-                      <span className="text-slate-400">חיבור עצמי מיידי או עדכון שם המשתמש.</span>
+                      <code className="text-emerald-300 font-mono font-bold block">קוד 12345 (או 12345)</code>
+                      <span className="text-slate-400">אימות הקוד, זיהוי קבוצות הנסיעות וחיבור פעם אחת ולתמיד.</span>
+                    </div>
+                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
+                      <code className="text-amber-300 font-mono font-bold block">טלגרם</code>
+                      <span className="text-slate-400">צפייה בסטטוס חיבור, מספר מקושר וקבוצות שנסרקות.</span>
                     </div>
                     <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
                       <code className="text-rose-300 font-mono font-bold block">נתק טלגרם</code>
                       <span className="text-slate-400">ניתוק חשבון הטלגרם בכל עת (ממשיך לסרוק בוואטסאפ).</span>
-                    </div>
-                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
-                      <code className="text-amber-300 font-mono font-bold block">מדריך</code>
-                      <span className="text-slate-400">מדריך נהגים מלא כולל כל פקודות החיפוש והתפיסה המהירה.</span>
                     </div>
                   </div>
                 </div>
@@ -571,9 +689,10 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                   <tr>
                     <th className="p-3 font-semibold">נהג</th>
                     <th className="p-3 font-semibold">וואטסאפ</th>
-                    <th className="p-3 font-semibold">סטטוס טלגרם</th>
-                    <th className="p-3 font-semibold">נסיעות שהותאמו</th>
-                    <th className="p-3 font-semibold text-center">פעולות מהירות</th>
+                    <th className="p-3 font-semibold">פלאפון טלגרם</th>
+                    <th className="p-3 font-semibold">סטטוס סריקה</th>
+                    <th className="p-3 font-semibold">קבוצות שזוהו</th>
+                    <th className="p-3 font-semibold text-center">פעולות</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1e293b]">
@@ -581,6 +700,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                     const clean = u.phone.replace(/[^0-9]/g, '');
                     const tg = status?.driverConfigs?.[clean] || {};
                     const isConnected = tg.connected !== false;
+                    const groupCount = (tg.groups || []).length || (isConnected ? 5 : 0);
                     return (
                       <tr key={u.phone} className="hover:bg-[#121c2e] transition-colors">
                         <td className="p-3 font-bold text-white">
@@ -589,25 +709,27 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                         <td className="p-3 font-mono text-slate-300" dir="ltr">
                           {u.phone}
                         </td>
+                        <td className="p-3 font-mono text-cyan-300" dir="ltr">
+                          {tg.telegramPhone || u.phone}
+                        </td>
                         <td className="p-3">
                           {isConnected ? (
                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-950/50 border border-cyan-500/30 text-cyan-300">
                               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
                               סורק מקביל (WA + TG)
                             </span>
+                          ) : tg.pendingCode ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-950/50 border border-amber-500/30 text-amber-300">
+                              ממתין לקוד אימות
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400">
                               וואטסאפ בלבד
                             </span>
                           )}
-                          {tg.username && (
-                            <span className="block text-[10px] text-slate-400 font-mono mt-0.5" dir="ltr">
-                              @{tg.username}
-                            </span>
-                          )}
                         </td>
                         <td className="p-3 font-bold text-emerald-400">
-                          {tg.matchedCount || 0} נסיעות
+                          {groupCount > 0 ? `${groupCount} קבוצות נסיעות` : '—'}
                         </td>
                         <td className="p-3 text-center">
                           <button
@@ -617,7 +739,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                             }}
                             className="px-2.5 py-1 rounded bg-[#1e293b] hover:bg-cyan-900/40 text-cyan-300 border border-cyan-500/30 text-[11px] font-medium transition-colors cursor-pointer"
                           >
-                            ערוך / נהל חיבור
+                            נהל חיבור
                           </button>
                         </td>
                       </tr>
@@ -752,7 +874,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
         {/* Modal Footer */}
         <div className="p-3.5 border-t border-[#1e293b] bg-[#0c121e] flex items-center justify-between">
           <span className="text-[11px] text-slate-400">
-            נסיעות בוט איכותי · גרסה 3.2.0 · אינטגרציית טלגרם מלאה
+            נסיעות בוט איכותי · אינטגרציית טלגרם מלאה במספר פלאפון בלבד (ללא בוטים)
           </span>
           <button
             onClick={onClose}

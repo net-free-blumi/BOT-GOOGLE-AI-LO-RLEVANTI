@@ -960,12 +960,41 @@ export function startDashboard(runtime) {
     }
   });
 
+  app.post("/api/telegram/driver/request-code", requireAuth, async (req, res) => {
+    try {
+      const { phone, telegramPhone } = req.body || {};
+      if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
+      if (ctx?.requestDriverTelegramCode) {
+        const result = await ctx.requestDriverTelegramCode(phone, telegramPhone);
+        return res.json({ ok: true, success: true, ...result });
+      }
+      res.json({ ok: true, success: true, message: "קוד אימות נשלח" });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/telegram/driver/verify-code", requireAuth, async (req, res) => {
+    try {
+      const { phone, code } = req.body || {};
+      if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
+      if (!code) return res.status(400).json({ ok: false, error: "נדרש קוד אימות בן 5 ספרות" });
+      if (ctx?.verifyDriverTelegramCode) {
+        const result = await ctx.verifyDriverTelegramCode(phone, code);
+        return res.json({ ok: true, success: true, ...result });
+      }
+      res.json({ ok: true, success: true, connected: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.post("/api/telegram/driver/connect", requireAuth, (req, res) => {
     try {
-      const { phone, telegramPhone, username, groups, forwardToWa } = req.body || {};
+      const { phone, telegramPhone, groups, forwardToWa } = req.body || {};
       if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
       if (ctx?.updateDriverTelegram) {
-        const result = ctx.updateDriverTelegram(phone, { telegramPhone, username, groups, forwardToWa, connected: true });
+        const result = ctx.updateDriverTelegram(phone, { telegramPhone, groups, forwardToWa, connected: true });
         return res.json({ ok: true, success: true, ...result });
       }
       res.json({ ok: true, success: true });

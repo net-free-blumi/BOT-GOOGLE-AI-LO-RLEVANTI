@@ -21,7 +21,10 @@ import {
   disconnectDriverTelegram,
   processIncomingTelegramRide,
   buildDriverTelegramInfoMessage,
-  handleDriverTelegramCommand
+  handleDriverTelegramCommand,
+  hasPendingTelegramAuth,
+  requestDriverTelegramCode,
+  verifyDriverTelegramCode
 } from "./telegram-manager.js";
 import {
   extractInteractiveResponse,
@@ -1613,7 +1616,8 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
-      // טיפול בפקודת טלגרם / חיבור עצמי / ניתוק טלגרם עבור הנהג
+      // טיפול בפקודת טלגרם / חיבור עצמי / קוד אימות / ניתוק טלגרם עבור הנהג
+      const isTgCodeInput = hasPendingTelegramAuth(senderPhone) && (/^\d{4,6}$/.test(norm) || /^קוד\s*[:=-]?\s*\d{4,6}$/i.test(text));
       if (
         norm === "טלגרם" || 
         norm.startsWith("טלגרם ") || 
@@ -1623,9 +1627,10 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         norm.startsWith("בטל טלגרם") ||
         norm === "נתק טלגרם" ||
         norm === "בטל טלגרם" ||
-        norm.includes("טלגרם")
+        norm.includes("טלגרם") ||
+        isTgCodeInput
       ) {
-        const responseMsg = handleDriverTelegramCommand(senderPhone, text);
+        const responseMsg = await handleDriverTelegramCommand(senderPhone, text);
         await sock.sendMessage(jid, { text: responseMsg });
         continue;
       }
@@ -1942,6 +1947,8 @@ startDashboard({
     });
   },
   getTelegramStatus: () => getTelegramStatus(),
+  requestDriverTelegramCode: (phone, tgPhone) => requestDriverTelegramCode(phone, tgPhone),
+  verifyDriverTelegramCode: (phone, code) => verifyDriverTelegramCode(phone, code),
   updateDriverTelegram: (phone, config) => updateDriverTelegram(phone, config),
   disconnectDriverTelegram: (phone) => disconnectDriverTelegram(phone),
   processIncomingTelegramRide: (payload) => processIncomingTelegramRide(payload, { getMainBotSock }),

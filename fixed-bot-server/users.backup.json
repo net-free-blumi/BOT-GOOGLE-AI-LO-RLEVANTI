@@ -1,0 +1,26 @@
+{
+  "botPhone": "972555081810",
+  "adminPhone": "972515157166",
+  "cooldownHours": 24,
+  "approvedUsers": [
+    {
+      "phone": "972515157166",
+      "name": "מנהל ראשי",
+      "role": "admin",
+      "addedAt": "2026-11-11T16:10:18.827Z",
+      "id": "appr-972515157166-mwcbf3di",
+      "telegramPhone": "972515157166",
+      "telegramUsername": "driver_auto",
+      "telegramConnected": true,
+      "telegramConnectedAt": "2026-11-11T16:58:29.342Z",
+      "telegramGroups": [
+        "מאוחדים תגבור ריידר 👑",
+        "ריידר הפצה בקבוצות",
+        "נסיעות בית שמש ארצי",
+        "נסיעות ירושלים והסביבה",
+        "מוניות וספיישלים מרכז"
+      ]
+    }
+  ],
+  "pendingUsers": []
+}

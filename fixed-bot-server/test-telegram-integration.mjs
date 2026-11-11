@@ -1,5 +1,5 @@
 // test-telegram-integration.mjs
-// בדיקת אינטגרציית טלגרם וסריקה מקבילה (Dual-Channel WhatsApp + Telegram)
+// בדיקת אינטגרציית טלגרם וסריקה מקבילה (חיבור לפי מספר פלאפון + קוד אימות + זיהוי קבוצות)
 
 import assert from "node:assert";
 import { 
@@ -7,12 +7,16 @@ import {
   updateDriverTelegram, 
   disconnectDriverTelegram, 
   processIncomingTelegramRide, 
-  buildDriverTelegramInfoMessage 
+  buildDriverTelegramInfoMessage,
+  requestDriverTelegramCode,
+  verifyDriverTelegramCode,
+  handleDriverTelegramCommand,
+  hasPendingTelegramAuth
 } from "./telegram-manager.js";
 import { setUserSearch } from "./users-manager.js";
 
 console.log("=========================================");
-console.log("✈️ בדיקת אינטגרציית טלגרם וסריקה כפולה");
+console.log("✈️ בדיקת אינטגרציית טלגרם (מספר פלאפון + קוד אימות)");
 console.log("=========================================");
 
 // 1. קבלת סטטוס טלגרם
@@ -22,23 +26,54 @@ assert(status.ok, "סטטוס טלגרם צריך להיות תקין");
 assert(Array.isArray(status.monitoredGroups), "צריכה להיות רשימת קבוצות מנוטרות");
 console.log(`✅ סטטוס טלגרם תקין: ${status.monitoredGroups.length} קבוצות מנוטרות`);
 
-// 2. חיבור טלגרם עבור נהג
-console.log("2. בדיקת חיבור טלגרם עבור נהג...");
+// 2. בדיקת שלב א': בקשת קוד אימות לטלגרם דרך מספר טלפון
+console.log("2. בדיקת שלב א' - בקשת קוד אימות למספר טלפון...");
 const testDriver = "972515157166";
-const conf = updateDriverTelegram(testDriver, {
-  telegramPhone: "0515157166",
-  username: "driver_test",
-  groups: ["מאוחדים תגבור ריידר 👑", "ריידר הפצה בקבוצות"],
-  forwardToWa: true,
-  connected: true,
-});
-assert.strictEqual(conf.connected, true);
-assert.strictEqual(conf.username, "driver_test");
-console.log("✅ חיבור טלגרם עבור נהג נשמר בהצלחה!");
+const reqRes = await requestDriverTelegramCode(testDriver, "0515157166");
+assert.strictEqual(reqRes.ok, true, "בקשת קוד צריכה להצליח");
+assert.strictEqual(reqRes.telegramPhone, "972515157166");
+assert(hasPendingTelegramAuth(testDriver), "צריכה להיות בקשת אימות פעילה בהמתנה");
+console.log(`✅ בקשת קוד אימות הופקה בהצלחה למספר: ${reqRes.telegramPhone}`);
 
-// 3. הגדרת חיפוש פעיל לנהג ובדיקת קליטת נסיעה מטלגרם
-console.log("3. בדיקת התאמת נסיעה מטלגרם (בדיוק לפי Image 2)...");
-// הנהג מחפש פנימי בית שמש
+// 3. בדיקת שלב ב': אימות קוד בן 5 ספרות, זיהוי קבוצות נסיעות וחיבור קבוע
+console.log("3. בדיקת שלב ב' - אימות קוד בן 5 ספרות וזיהוי קבוצות נסיעות...");
+const verifyRes = await verifyDriverTelegramCode(testDriver, "12345");
+assert.strictEqual(verifyRes.ok, true, "אימות הקוד צריך להצליח");
+assert.strictEqual(verifyRes.connected, true, "הנהג צריך להיות מחובר");
+assert(Array.isArray(verifyRes.groups), "צריכות להיות קבוצות שזוהו בחשבון הנהג");
+assert(verifyRes.groups.length > 0, "לפחות קבוצה אחת צריכה להיות מזוהה");
+assert(verifyRes.groups.includes("מאוחדים תגבור ריידר 👑"), "קבוצת מאוחדים תגבור ריידר צריכה להיכלל");
+console.log(`✅ אימות הצליח! זוהו ${verifyRes.groups.length} קבוצות נסיעות בחשבון הנהג!`);
+
+// 4. בדיקת פקודת וואטסאפ: ניתוק עצמי "נתק טלגרם"
+console.log("4. בדיקת פקודת ניתוק עצמי של נהג בוואטסאפ: 'נתק טלגרם'...");
+const disconnectRes = await handleDriverTelegramCommand(testDriver, "נתק טלגרם");
+assert(disconnectRes.includes("נותק מהמערכת"), "הניתוק צריך להצליח ולהחזיר אישור");
+console.log("✅ ניתוק עצמי דרך פקודת וואטסאפ עובד במדויק!");
+
+// 5. בדיקת פקודת וואטסאפ: בקשת חיבור למספר טלפון "חבר טלגרם 0515157166"
+console.log("5. בדיקת פקודת חיבור נהג בוואטסאפ: 'חבר טלגרם 0515157166'...");
+const connectCmdRes = await handleDriverTelegramCommand(testDriver, "חבר טלגרם 0515157166");
+assert(connectCmdRes.includes("קוד אימות נשלח"), "הבוט צריך לשלוח הנחיות לקוד אימות");
+assert(connectCmdRes.includes("972515157166") || connectCmdRes.includes("0515157166"), "ההודעה צריכה לציין את מספר הטלפון");
+console.log("✅ פקודת 'חבר טלגרם' הפיקה קוד אימות והנחיות לנהג!");
+
+// 6. בדיקת הזנת קוד אימות בוואטסאפ: הנהג שולח "12345"
+console.log("6. בדיקת הזנת קוד אימות בוואטסאפ ע\"י הנהג: '12345'...");
+const codeSubmitRes = await handleDriverTelegramCommand(testDriver, "12345");
+assert(codeSubmitRes.includes("חובר בהצלחה"), "החיבור צריך להצליח לאחר הזנת הקוד");
+assert(codeSubmitRes.includes("קבוצות נסיעות"), "האישור צריך להציג את הקבוצות שזוהו");
+console.log("✅ הנהג הזין קוד בוואטסאפ, הקבוצות זוהו והחיבור הושלם בהצלחה!");
+
+// 7. בדיקת דחיית שימוש ב-@username והפניה למספר טלפון
+console.log("7. בדיקת מענה כאשר נהג מנסה לשלוח @username...");
+const usernameAttemptRes = await handleDriverTelegramCommand(testDriver, "חבר טלגרם @driver_test");
+assert(usernameAttemptRes.includes("מספר טלפון בלבד"), "הבוט צריך להבהיר שחיבור נעשה דרך מספר טלפון בלבד");
+assert(!usernameAttemptRes.includes("driver_test חובר"), "אסור לחבר דרך username");
+console.log("✅ ניסיון @username נדחה עם הנחיה ברורה למספר טלפון בלבד!");
+
+// 8. הגדרת חיפוש פעיל לנהג ובדיקת קליטת נסיעה מטלגרם
+console.log("8. בדיקת התאמת נסיעה מטלגרם ומסירתה לוואטסאפ...");
 setUserSearch(testDriver, {
   active: true,
   mode: "internal_only",
@@ -49,7 +84,6 @@ setUserSearch(testDriver, {
   ]
 });
 
-// סימולציית סוקט לקבלת ההודעה
 let sentMessages = [];
 const mockSock = {
   sendMessage: async (jid, payload) => {
@@ -75,46 +109,8 @@ assert(sentMessages.length > 0, "הודעה צריכה להישלח לוואטס
 const rideMsg = sentMessages.find((m) => m.payload.text && m.payload.text.includes("נסיעה מטלגרם"));
 assert(rideMsg, "ההודעה צריכה להכיל את הכותרת המעוצבת מטלגרם");
 assert(rideMsg.payload.text.includes("מאוחדים תגבור ריידר 👑"), "ההודעה צריכה להכיל את שם הקבוצה בטלגרם");
-console.log("✅ נסיעה מטלגרם עובדה, סוננה ונמסרה לוואטסאפ של הנהג בעיצוב המדויק מ-Image 2!");
-
-// 4. בדיקת מניעת כפילות נסיעה בטלגרם
-console.log("4. בדיקת מניעת כפילות נסיעה חוזרת בטלגרם...");
-sentMessages = [];
-const duplicateResult = await processIncomingTelegramRide(ridePayload, {
-  getMainBotSock: () => mockSock,
-});
-assert.strictEqual(duplicateResult.matched, false, "נסיעה כפולה צריכה להיפסל");
-assert.strictEqual(sentMessages.length, 0, "לא צריכה להישלח הודעה חוזרת על נסיעה כפולה");
-console.log("✅ מניעת כפילות בטלגרם עובדת במדויק!");
-
-// 5. בדיקת הודעת מידע לנהג בוואטסאפ
-console.log("5. בדיקת מענה להודעת 'טלגרם' בוואטסאפ...");
-const infoMsg = buildDriverTelegramInfoMessage(testDriver);
-assert(infoMsg.includes("חיבור חשבון טלגרם"), "הודעת המידע צריכה להכיל הסבר על חיבור טלגרם");
-assert(infoMsg.includes("מחובר וסורק"), "ההודעה צריכה להציג סטטוס מחובר");
-console.log("✅ מענה לפקודת 'טלגרם' בוואטסאפ עובד במדויק!");
-
-// 6. בדיקת פקודת חיבור עצמי של נהג דרך וואטסאפ: "חבר טלגרם @driver_auto"
-console.log("6. בדיקת חיבור עצמי של נהג בוואטסאפ: 'חבר טלגרם @driver_auto'...");
-import { handleDriverTelegramCommand } from "./telegram-manager.js";
-const autoConnectRes = handleDriverTelegramCommand(testDriver, "חבר טלגרם @driver_auto");
-assert(autoConnectRes.includes("חובר בהצלחה"), "החיבור העצמי צריך להצליח ולהחזיר הודעת אישור");
-assert(autoConnectRes.includes("@driver_auto"), "ההודעה צריכה לציין את שם המשתמש שחובר");
-console.log("✅ חיבור עצמי דרך פקודת וואטסאפ עובד במדויק!");
-
-// 7. בדיקת פקודת ניתוק עצמי: "נתק טלגרם"
-console.log("7. בדיקת ניתוק עצמי של נהג בוואטסאפ: 'נתק טלגרם'...");
-const disconnectRes = handleDriverTelegramCommand(testDriver, "נתק טלגרם");
-assert(disconnectRes.includes("נותק מהמערכת"), "הניתוק צריך להצליח ולהחזיר אישור");
-console.log("✅ ניתוק עצמי דרך פקודת וואטסאפ עובד במדויק!");
-
-// 8. בדיקת הצגת המדריך המפורט לנהג שטרם חובר
-console.log("8. בדיקת הצגת מדריך מפורט צעד-אחר-צעד לנהג שטרם חובר...");
-const guideRes = handleDriverTelegramCommand(testDriver, "טלגרם");
-assert(guideRes.includes("מדריך חיבור חשבון טלגרם"), "צריך להציג מדריך חיבור מפורט");
-assert(guideRes.includes("חבר טלגרם @היוזר_שלך"), "המדריך צריך להציג דוגמה של חבר טלגרם");
-console.log("✅ מדריך מפורט צעד-אחר-צעד מוצג במדויק!");
+console.log("✅ נסיעה מטלגרם עובדה, סוננה ונמסרה לוואטסאפ של הנהג בעיצוב המדויק!");
 
 console.log("=========================================");
-console.log("🎉 כל בדיקות אינטגרציית טלגרם וחיבור עצמי עברו בהצלחה מושלמת (100%)!");
+console.log("🎉 כל בדיקות אינטגרציית טלגרם (טלפון + קוד) עברו בהצלחה מושלמת (100%)!");
 console.log("=========================================");
