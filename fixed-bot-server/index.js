@@ -71,6 +71,7 @@ import {
   purgeAllDriverSessions,
   ensureDriverSessionForQr,
   getDriverSession,
+  cacheMessageForRetry,
 } from "./session-manager.js";
 import {
   detectNeighborhood,
@@ -367,6 +368,14 @@ function cleanSpamFromRide(rawText) {
 // זיהוי הודעות שברור שאינן נסיעה: פרסומות, הזמנות לקבוצות, קישורי רכישה, הודעות מערכת והודעות ארוכות במיוחד
 function detectNonRide(cleaned) {
   const t = String(cleaned || "");
+  if (
+    t.includes("בהמתנה להודעה זו") ||
+    t.includes("Waiting for this message") ||
+    t.includes("עשוי לחלוף זמן מה עד שהיא תופיע") ||
+    t.includes("This may take a while")
+  ) {
+    return "הודעת המתנה זמנית של וואטסאפ (Placeholder) - לא נסיעה";
+  }
   if (t.length > 700) return "הודעה ארוכה מדי - לא נסיעה";
   if (/chat\.whatsapp\.com\//i.test(t)) return "קישור הזמנה לקבוצה - לא נסיעה";
   if (/aliexpress|amazon\.|amzn\.to|s\.click\.|temu\.|shein\./i.test(t)) return "פרסומת / קישור רכישה - לא נסיעה";
@@ -459,7 +468,7 @@ function extractMessageText(m) {
   const interactiveText = extractInteractiveResponse(msg);
   if (interactiveText) return interactiveText;
 
-  return String(
+  const rawText = String(
     msg.conversation ||
     msg.extendedTextMessage?.text ||
     msg.imageMessage?.caption ||
@@ -469,6 +478,18 @@ function extractMessageText(m) {
     msg.templateButtonReplyMessage?.selectedId ||
     ""
   ).trim();
+
+  // סינון מוחלט של הודעות המתנה זמניות (Waiting for this message placeholder)
+  if (
+    rawText.includes("בהמתנה להודעה זו") ||
+    rawText.includes("Waiting for this message") ||
+    rawText.includes("עשוי לחלוף זמן מה עד שהיא תופיע") ||
+    rawText.includes("This may take a while")
+  ) {
+    return "";
+  }
+
+  return rawText;
 }
 
 // צ'אטים שאינם שיחה אמיתית: סטטוסים (סטוריז), רשימות תפוצה וערוצים - מתעלמים מהם לחלוטין
@@ -567,12 +588,20 @@ export async function sendRideClaimReply(sock, targetJid, text, quoteObj) {
 // שליחת התראת נסיעה לנהג (100% אמינות, הגעה מיידית ללא בליעת הודעות בוואטסאפ).
 async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
   const alertMsg = buildRideAlertText(rideData);
-  const driverJid = getDestinationJid(driverPhone);
-  const attempts = [];
 
+  // הבטחת JID יעד תקין לחלוטין ברשת וואטסאפ (ללא LID שעלול להיתקע ב'בהמתנה להודעה זו')
+  let targetPhone = cleanPhone(driverPhone);
+  if (targetPhone.startsWith("0")) targetPhone = "972" + targetPhone.slice(1);
+  const driverJid = `${targetPhone}@s.whatsapp.net`;
+
+  const attempts = [];
   const mainSock = getMainBotSock();
-  if (mainSock && getMainBotStatus().connected) attempts.push({ via: "main", sock: mainSock });
-  if (driverSock) attempts.push({ via: "driver-self", sock: driverSock });
+  if (mainSock && getMainBotStatus().connected) {
+    attempts.push({ via: "main", sock: mainSock });
+  }
+  if (driverSock && getDriverSession(driverPhone)?.status === "connected") {
+    attempts.push({ via: "driver-self", sock: driverSock });
+  }
 
   let lastError = null;
   for (const a of attempts) {
@@ -582,6 +611,9 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
       if (!sentMsg) continue;
 
       if (sentMsg.key?.id) {
+        // שמירת ההודעה במאגר השחזור לפתרון מוחלט של שגיאת 'בהמתנה להודעה זו'
+        cacheMessageForRetry(sentMsg.key.id, sentMsg.message || { conversation: alertMsg });
+
         sentAlertsCache.set(sentMsg.key.id, {
           msgId: sentMsg.key.id,
           rideData,

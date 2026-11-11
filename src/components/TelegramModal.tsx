@@ -356,12 +356,23 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                         : 'bg-amber-950/50 border-amber-500/40 text-amber-300'
                     }`}>
                       <span className={`w-2 h-2 rounded-full ${isTargetConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
-                      <span>{isTargetConnected ? 'מחובר לסריקה כפולה' : 'טרם חובר לטלגרם'}</span>
+                      <span>{isTargetConnected ? 'מחובר קבוע לסריקה כפולה ✅' : 'טרם חובר לטלגרם'}</span>
                     </div>
                   )}
                 </div>
 
-                <form onSubmit={handleSelfConnect} className="space-y-3.5 pt-2">
+                {/* Permanent connection banner */}
+                <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/30 text-xs text-cyan-200 flex items-start gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-white block">חיבור פעם אחת ולתמיד:</span>
+                    <span>ברגע שאתה מחבר כאן (או שולח לבוט בוואטסאפ: </span>
+                    <code className="text-cyan-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">חבר טלגרם</code>
+                    <span>), המערכת שומרת את החשבון קבוע. כל נסיעה שתתפרסם בקבוצות הטלגרם תישלח אליך ישירות לוואטסאפ עם כפתור פתיחה מהיר!</span>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSelfConnect} className="space-y-3.5 pt-1">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     
                     {/* Driver Selection */}
@@ -389,7 +400,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                     {/* Telegram Username */}
                     <div>
                       <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                        2. שם המשתמש שלך בטלגרם (@username):
+                        2. שם משתמש בטלגרם (@username) - אופציונלי:
                       </label>
                       <input
                         type="text"
@@ -404,7 +415,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
 
                   <div>
                     <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                      3. מספר טלפון בטלגרם (אופציונלי):
+                      3. מספר טלפון בטלגרם (לחיבור אוטומטי):
                     </label>
                     <input
                       type="text"
@@ -424,7 +435,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                       className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition-all cursor-pointer disabled:opacity-50"
                     >
                       <Check className="w-4 h-4" />
-                      <span>{isSubmitting ? 'שומר חיבור...' : 'חבר אותי עכשיו לסריקה מקבילה 🚀'}</span>
+                      <span>{isSubmitting ? 'שומר חיבור קבוע...' : 'חבר אותי עכשיו לסריקה מקבילה (פעם אחת ולתמיד) 🚀'}</span>
                     </button>
 
                     {isTargetConnected && (
@@ -433,9 +444,10 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                         onClick={handleSelfDisconnect}
                         disabled={isSubmitting}
                         className="py-2.5 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="לחץ לניתוק חשבון הטלגרם של הנהג"
                       >
                         <LogOut className="w-3.5 h-3.5" />
-                        <span>נתק חשבון</span>
+                        <span>נתק חשבון טלגרם 🛑</span>
                       </button>
                     )}
                   </div>

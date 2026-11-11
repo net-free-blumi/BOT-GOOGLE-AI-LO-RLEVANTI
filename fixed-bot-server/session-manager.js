@@ -22,6 +22,23 @@ const BOT_AUTH_DIR = path.join(AUTH_BASE_DIR, "bot");
 const SESSIONS_DIR = path.join(AUTH_BASE_DIR, "sessions");
 const BOT_ALERT_MARKER_FILE = path.join(BOT_AUTH_DIR, "alert-sent.json");
 
+// מאגר הודעות מהיר לפתרון מוחלט של שגיאת "בהמתנה להודעה זו" (Waiting for this message retry)
+const recentMessagesMap = new Map();
+
+export function cacheMessageForRetry(id, msg) {
+  if (!id || !msg) return;
+  recentMessagesMap.set(id, msg);
+  if (recentMessagesMap.size > 3000) {
+    const oldestKey = recentMessagesMap.keys().next().value;
+    recentMessagesMap.delete(oldestKey);
+  }
+}
+
+export function getCachedMessageForRetry(id) {
+  if (!id) return undefined;
+  return recentMessagesMap.get(id);
+}
+
 // יצירת תיקיות בסיס אם אינן קיימות
 if (!fs.existsSync(AUTH_BASE_DIR)) fs.mkdirSync(AUTH_BASE_DIR, { recursive: true });
 if (!fs.existsSync(BOT_AUTH_DIR)) fs.mkdirSync(BOT_AUTH_DIR, { recursive: true });
@@ -225,6 +242,8 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
   const version = await getWaVersion();
 
+  const msgRetryCounters = new Map();
+
   const sock = makeWASocket({
     ...(version ? { version } : {}),
     auth: state,
@@ -235,6 +254,19 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 2000,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
+    syncFullHistory: false,
+    msgRetryCounterCache: {
+      get: (key) => msgRetryCounters.get(key),
+      set: (key, value) => msgRetryCounters.set(key, value),
+      del: (key) => msgRetryCounters.delete(key),
+    },
+    getMessage: async (key) => {
+      if (key?.id) {
+        const cached = getCachedMessageForRetry(key.id);
+        if (cached) return cached;
+      }
+      return undefined;
+    },
   });
 
   mainBotSock = sock;
@@ -360,6 +392,13 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   });
 
   sock.ev.on("messages.upsert", async (upsert) => {
+    if (upsert.messages) {
+      for (const m of upsert.messages) {
+        if (m.key?.id && m.message) {
+          cacheMessageForRetry(m.key.id, m.message);
+        }
+      }
+    }
     if (onMessage) {
       await onMessage(sock, upsert, { isMainBot: true, botPhone });
     }
@@ -457,6 +496,8 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
   const { state, saveCreds } = await useMultiFileAuthState(driverAuthDir);
   const version = await getWaVersion();
 
+  const driverRetryCounters = new Map();
+
   const sock = makeWASocket({
     ...(version ? { version } : {}),
     auth: state,
@@ -467,6 +508,19 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 2000,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
+    syncFullHistory: false,
+    msgRetryCounterCache: {
+      get: (key) => driverRetryCounters.get(key),
+      set: (key, value) => driverRetryCounters.set(key, value),
+      del: (key) => driverRetryCounters.delete(key),
+    },
+    getMessage: async (key) => {
+      if (key?.id) {
+        const cached = getCachedMessageForRetry(key.id);
+        if (cached) return cached;
+      }
+      return undefined;
+    },
   });
 
   const sessionObj = {
@@ -548,6 +602,13 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
   });
 
   sock.ev.on("messages.upsert", async (upsert) => {
+    if (upsert.messages) {
+      for (const m of upsert.messages) {
+        if (m.key?.id && m.message) {
+          cacheMessageForRetry(m.key.id, m.message);
+        }
+      }
+    }
     if (onRideMessage) {
       await onRideMessage(sock, upsert, { isMainBot: false, driverPhone });
     }

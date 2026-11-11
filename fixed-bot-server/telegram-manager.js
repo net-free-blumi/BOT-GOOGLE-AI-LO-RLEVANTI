@@ -311,18 +311,21 @@ export function handleDriverTelegramCommand(driverPhone, rawText) {
       `*"חבר טלגרם @היוזר_שלך"* או *"חבר טלגרם מספר_טלפון"*\n\n≡ תפריט`;
   }
 
-  // 2. פקודת חיבור עצמי עם שם משתמש או טלפון:
-  // "חבר טלגרם @driver_israel", "חבר טלגרם 0501234567", "טלגרם @driver_israel", "חיבור טלגרם @driver_israel"
-  const connectMatch = text.match(/^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר|טלגרם)\s+(@?[a-zA-Z0-9_]{3,32}|05\d[-\s]?\d{7})$/i);
-  if (connectMatch) {
-    const param = connectMatch[1].trim();
-    let username = null;
-    let tgPhone = null;
+  // 2. פקודת חיבור עצמי: "חבר טלגרם", "חיבור טלגרם", או עם טלפון/שם משתמש
+  const isDirectConnect = /^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר)$/i.test(text);
+  const connectWithArgMatch = text.match(/^(?:חבר\s+טלגרם|חיבור\s+טלגרם|טלגרם\s+חבר|טלגרם)\s*[:=\s]\s*(@?[a-zA-Z0-9_]{3,32}|(?:\+?972|0)[-\s]?5\d[-\s]?\d{3}[-\s]?\d{4}|\d{9,12})$/i);
 
-    if (param.startsWith("@") || /^[a-zA-Z]/.test(param)) {
-      username = param.replace(/^@/, "");
-    } else {
-      tgPhone = cleanPhone(param) || param;
+  if (isDirectConnect || connectWithArgMatch) {
+    let username = null;
+    let tgPhone = clean;
+
+    if (connectWithArgMatch && connectWithArgMatch[1]) {
+      const param = connectWithArgMatch[1].trim();
+      if (param.startsWith("@") || /^[a-zA-Z]/.test(param)) {
+        username = param.replace(/^@/, "");
+      } else {
+        tgPhone = cleanPhone(param) || param;
+      }
     }
 
     const updated = updateDriverTelegram(clean, {
@@ -336,7 +339,7 @@ export function handleDriverTelegramCommand(driverPhone, rawText) {
     return `🎉 *חשבון הטלגרם שלך (${displayId}) חובר בהצלחה!* ✈️\n\n` +
       `🟢 *מצב סריקה מקבילה (וואטסאפ + טלגרם) פעיל כעת:*\n` +
       `• הבוט יסרוק עבורך בו-זמנית מקבוצות הוואטסאפ ומקבוצות הטלגרם של הנסיעות!\n` +
-      `• כל נסיעה שתתאים לחיפוש שלך בטלגרם תישלח אליך לכאן מיד עם כפתור *"פתח בטלגרם ↗️"*.\n\n` +
+      `• כל נסיעה שתתאים לחיפוש שלך בטלגרם תישלח אליך לוואטסאפ מיד עם כפתור *"פתח בטלגרם ↗️"*.\n\n` +
       `💡 *כיצד להתחיל לחפש?*\n` +
       `שלח למשל: *"פנוי שמש"* (בתוך ומחוץ לעיר) או *"פנוי שמש פנימי"*.\n\n` +
       `🛑 *לניתוק בכל עת:* שלח *"נתק טלגרם"*\n\n≡ תפריט`;
