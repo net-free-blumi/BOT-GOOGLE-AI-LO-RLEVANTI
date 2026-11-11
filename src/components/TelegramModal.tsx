@@ -7,13 +7,16 @@ import {
   ShieldCheck, 
   ExternalLink, 
   Users, 
-  MessageSquare, 
   Sparkles, 
   AlertCircle,
   Radio,
-  Sliders,
   CheckCircle2,
-  Play
+  Play,
+  UserCheck,
+  Zap,
+  Smartphone,
+  LogOut,
+  HelpCircle
 } from 'lucide-react';
 import { ApprovedUser } from '../types.ts';
 import { 
@@ -28,25 +31,29 @@ interface TelegramModalProps {
   isOpen: boolean;
   onClose: () => void;
   approvedUsers: ApprovedUser[];
+  selectedDriverPhone?: string;
+  onSelectDriverPhone?: (phone: string) => void;
 }
 
 export const TelegramModal: React.FC<TelegramModalProps> = ({
   isOpen,
   onClose,
   approvedUsers = [],
+  selectedDriverPhone = '',
+  onSelectDriverPhone,
 }) => {
-  const [activeTab, setActiveTab] = useState<'drivers' | 'simulator' | 'guide'>('drivers');
+  const [activeTab, setActiveTab] = useState<'self_service' | 'guide' | 'drivers' | 'simulator'>('self_service');
   const [loading, setLoading] = useState<boolean>(false);
   const [status, setStatus] = useState<TelegramStatusPayload | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'ok' | 'err' } | null>(null);
 
-  // Driver Edit State
-  const [selectedDriverPhone, setSelectedDriverPhone] = useState<string>('');
-  const [driverTgUsername, setDriverTgUsername] = useState<string>('');
-  const [driverTgPhone, setDriverTgPhone] = useState<string>('');
-  const [isSavingDriver, setIsSavingDriver] = useState<boolean>(false);
+  // Self-Service State
+  const [targetPhone, setTargetPhone] = useState<string>(selectedDriverPhone || (approvedUsers[0]?.phone || ''));
+  const [myTgUsername, setMyTgUsername] = useState<string>('');
+  const [myTgPhone, setMyTgPhone] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Simulator State (Defaults from Image 2)
+  // Simulator State (Exact Image 2)
   const [simGroupTitle, setSimGroupTitle] = useState<string>('מאוחדים תגבור ריידר 👑');
   const [simSenderName, setSimSenderName] = useState<string>('ריידר הפצה בטלגרם');
   const [simRideText, setSimRideText] = useState<string>(
@@ -60,7 +67,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
     setToastMessage({ text, type });
     setTimeout(() => {
       setToastMessage((curr) => (curr?.text === text ? null : curr));
-    }, 4000);
+    }, 4500);
   };
 
   const loadStatus = async () => {
@@ -80,44 +87,79 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadStatus();
+      if (selectedDriverPhone) {
+        setTargetPhone(selectedDriverPhone);
+      } else if (approvedUsers.length > 0 && !targetPhone) {
+        setTargetPhone(approvedUsers[0].phone);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, selectedDriverPhone]);
+
+  // Sync inputs when target phone changes
+  useEffect(() => {
+    if (targetPhone && status?.driverConfigs) {
+      const clean = targetPhone.replace(/[^0-9]/g, '');
+      const existing = status.driverConfigs[clean];
+      if (existing) {
+        setMyTgUsername(existing.username ? `@${existing.username}` : '');
+        setMyTgPhone(existing.telegramPhone || targetPhone);
+      } else {
+        setMyTgUsername('');
+        setMyTgPhone(targetPhone);
+      }
+    }
+  }, [targetPhone, status]);
 
   if (!isOpen) return null;
 
-  const handleConnectDriver = async (phone: string) => {
-    setIsSavingDriver(true);
+  const cleanTarget = targetPhone.replace(/[^0-9]/g, '');
+  const currentDriverTg = status?.driverConfigs?.[cleanTarget];
+  const isTargetConnected = Boolean(currentDriverTg && currentDriverTg.connected !== false);
+
+  const handleSelfConnect = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!targetPhone) {
+      showToast('נא לבחור או להזין מספר טלפון וואטסאפ של הנהג', 'err');
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      const res = await connectDriverTelegramApi(phone, {
-        telegramPhone: driverTgPhone || phone,
-        username: driverTgUsername.replace(/^@/, ''),
+      const cleanHandle = myTgUsername.trim().replace(/^@/, '');
+      const res = await connectDriverTelegramApi(targetPhone, {
+        telegramPhone: myTgPhone.trim() || targetPhone,
+        username: cleanHandle || undefined,
         forwardToWa: true,
       });
+
       if (res && (res.ok || res.success)) {
-        showToast('חיבור הטלגרם לנהג עודכן בהצלחה! הבוט יסרוק במקביל', 'ok');
-        setSelectedDriverPhone('');
-        setDriverTgUsername('');
-        setDriverTgPhone('');
+        showToast('🎉 חשבון הטלגרם חובר בהצלחה! הבוט סורק כעת במקביל מוואטסאפ ומטלגרם', 'ok');
         await loadStatus();
       } else {
-        showToast(res?.error || 'שגיאה בעדכון חיבור טלגרם', 'err');
+        showToast(res?.error || 'שגיאה בחיבור טלגרם', 'err');
       }
     } catch (err: any) {
       showToast(err.message || 'שגיאה ברשת', 'err');
     } finally {
-      setIsSavingDriver(false);
+      setIsSubmitting(false);
     }
   };
 
-  const handleDisconnectDriver = async (phone: string) => {
+  const handleSelfDisconnect = async () => {
+    if (!targetPhone) return;
+    setIsSubmitting(true);
     try {
-      const res = await disconnectDriverTelegramApi(phone);
+      const res = await disconnectDriverTelegramApi(targetPhone);
       if (res && res.ok) {
-        showToast('חיבור הטלגרם של הנהג נותק', 'ok');
+        showToast('חשבון הטלגרם נותק. הבוט ימשיך לסרוק עבורך מוואטסאפ כרגיל', 'ok');
         await loadStatus();
+      } else {
+        showToast(res?.error || 'שגיאה בניתוק טלגרם', 'err');
       }
     } catch (err: any) {
       showToast(err.message || 'שגיאה ברשת', 'err');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -133,9 +175,9 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
       });
       setSimResult(res);
       if (res.ok && res.matched) {
-        showToast(`נסיעה נמסרה בהצלחה ל-${res.matchedDriversCount || 1} נהגים תואמים!`, 'ok');
+        showToast(`נסיעה נמסרה בהצלחה לוואטסאפ של ${res.matchedDriversCount || 1} נהגים תואמים!`, 'ok');
       } else if (res.ok && !res.matched) {
-        showToast('הנסיעה נקלטה אך לא נמצא נהג עם חיפוש תואם כרגע', 'ok');
+        showToast('הנסיעה נקלטה בהצלחה אך אין כרגע נהג עם חיפוש תואם', 'ok');
       } else {
         showToast(res.error || 'שגיאה בבדיקת נסיעה', 'err');
       }
@@ -147,57 +189,65 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in" dir="rtl">
-      <div className="bg-[#0f172a] border border-cyan-500/30 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl shadow-cyan-950/50 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in" dir="rtl">
+      <div className="bg-[#0b121e] border border-cyan-500/40 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl shadow-cyan-950/60 overflow-hidden">
         
         {/* Modal Header */}
-        <div className="p-4 sm:p-5 border-b border-[#1e293b] flex items-center justify-between bg-gradient-to-l from-cyan-950/40 via-slate-900 to-[#0f172a]">
+        <div className="p-4 sm:p-5 border-b border-[#1e2c42] flex items-center justify-between bg-gradient-to-l from-cyan-950/50 via-slate-900 to-[#0b121e]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 via-sky-600 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/25">
               <Send className="w-5 h-5 -rotate-45" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black text-white">סריקה מקבילה מטלגרם (Dual-Channel)</h2>
+                <h2 className="text-lg font-black text-white">חיבור טלגרם & סריקה מקבילה (Dual-Channel)</h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  וואטסאפ + טלגרם בו-זמנית
+                  סריקה עצמית לוואטסאפ
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                סריקה חיה של קבוצות טלגרם ושליחת התראות נסיעה מתאימות ישירות לוואטסאפ של הנהג
+              <p className="text-xs text-slate-300 mt-0.5">
+                כל נהג יכול להתחבר לבד! הבוט יסרוק במקביל מקבוצות הטלגרם והוואטסאפ וישלח הכל לוואטסאפ האישי
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Status Highlights */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 sm:p-4 bg-[#0a0f1d] border-b border-[#1e293b] text-xs">
-          <div className="p-2.5 rounded-xl bg-[#111927] border border-[#1e293b]">
+        {/* Global Live Status Header */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 sm:p-4 bg-[#080d17] border-b border-[#1a2638] text-xs">
+          <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
             <span className="text-slate-400 text-[11px] block">בוט מאזין בטלגרם:</span>
             <div className="flex items-center gap-1.5 mt-1">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-bold text-cyan-300">{status?.botUsername || '@NsiotRidesBot'}</span>
+              <a
+                href="https://t.me/NsiotRidesBot"
+                target="_blank"
+                rel="noreferrer"
+                className="font-bold text-cyan-300 hover:underline flex items-center gap-1"
+              >
+                <span>{status?.botUsername || '@NsiotRidesBot'}</span>
+                <ExternalLink className="w-2.5 h-2.5" />
+              </a>
             </div>
           </div>
-          <div className="p-2.5 rounded-xl bg-[#111927] border border-[#1e293b]">
-            <span className="text-slate-400 text-[11px] block">קבוצות מנוטרות:</span>
+          <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
+            <span className="text-slate-400 text-[11px] block">קבוצות טלגרם מנוטרות:</span>
             <span className="font-bold text-white text-sm mt-1 block">
               {status?.monitoredGroups?.length || 5} קבוצות נסיעות
             </span>
           </div>
-          <div className="p-2.5 rounded-xl bg-[#111927] border border-[#1e293b]">
+          <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
             <span className="text-slate-400 text-[11px] block">נסיעות שנסרקו מטלגרם:</span>
             <span className="font-bold text-amber-400 text-sm mt-1 block">
               {status?.stats?.totalScanned || 0}
             </span>
           </div>
-          <div className="p-2.5 rounded-xl bg-[#111927] border border-[#1e293b]">
+          <div className="p-2.5 rounded-xl bg-[#0f1726] border border-[#1e2d42]">
             <span className="text-slate-400 text-[11px] block">נמסרו לוואטסאפ לנהגים:</span>
             <span className="font-bold text-emerald-400 text-sm mt-1 block">
               {status?.stats?.totalMatched || 0}
@@ -206,41 +256,55 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-2 px-4 pt-3 border-b border-[#1e293b] bg-[#0c1322]">
+        <div className="flex items-center gap-2 px-4 pt-3 border-b border-[#1a2638] bg-[#0c1422]">
           <button
-            onClick={() => setActiveTab('drivers')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 ${
-              activeTab === 'drivers'
-                ? 'border-cyan-400 text-cyan-300 bg-[#141f33]'
+            onClick={() => setActiveTab('self_service')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'self_service'
+                ? 'border-cyan-400 text-cyan-300 bg-[#131f33]'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            👥 נהגים מחוברים ({approvedUsers.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('simulator')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 ${
-              activeTab === 'simulator'
-                ? 'border-cyan-400 text-cyan-300 bg-[#141f33]'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            🚀 סימולטור נסיעה מטלגרם (תצוגה מקדימה)
+            <Zap className="w-3.5 h-3.5 text-cyan-400" />
+            <span>חיבור מהיר לנהג (התחבר לבד)</span>
           </button>
           <button
             onClick={() => setActiveTab('guide')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 ${
+            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'guide'
-                ? 'border-cyan-400 text-cyan-300 bg-[#141f33]'
+                ? 'border-cyan-400 text-cyan-300 bg-[#131f33]'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            📖 מדריך סריקה כפולה והתחברות
+            <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+            <span>מדריך התחברות צעד-אחר-צעד</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('drivers')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'drivers'
+                ? 'border-cyan-400 text-cyan-300 bg-[#131f33]'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>כל הנהגים ({approvedUsers.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('simulator')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-t-lg transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'simulator'
+                ? 'border-cyan-400 text-cyan-300 bg-[#131f33]'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Play className="w-3.5 h-3.5 text-emerald-400" />
+            <span>סימולטור נסיעה מטלגרם</span>
           </button>
           <button
             onClick={loadStatus}
             disabled={loading}
-            className="mr-auto p-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
+            className="mr-auto p-1.5 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
             title="רענן נתונים"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -255,132 +319,317 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
             <div
               className={`p-3 rounded-xl text-xs font-bold flex items-center justify-between border ${
                 toastMessage.type === 'ok'
-                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
-                  : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                  : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
               }`}
             >
-              <span>{toastMessage.text}</span>
-              <button onClick={() => setToastMessage(null)}>
+              <div className="flex items-center gap-2">
+                {toastMessage.type === 'ok' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{toastMessage.text}</span>
+              </div>
+              <button onClick={() => setToastMessage(null)} className="cursor-pointer">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
 
-          {/* Tab 1: Drivers List */}
-          {activeTab === 'drivers' && (
+          {/* Tab 1: Self-Service Connection (Driver connects themselves directly!) */}
+          {activeTab === 'self_service' && (
             <div className="space-y-4">
-              {/* Quick Connect Form */}
-              {selectedDriverPhone && (
-                <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/40 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-cyan-300">
-                      חיבור / עריכת פרטי טלגרם עבור נהג: {selectedDriverPhone}
-                    </span>
-                    <button
-                      onClick={() => setSelectedDriverPhone('')}
-                      className="text-xs text-slate-400 hover:text-white"
-                    >
-                      ביטול
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="text-[11px] text-slate-400 block mb-1">שם משתמש בטלגרם (אופציונלי):</label>
-                      <input
-                        type="text"
-                        value={driverTgUsername}
-                        onChange={(e) => setDriverTgUsername(e.target.value)}
-                        placeholder="למשל: driver_shlomo"
-                        className="w-full bg-[#0a0f1d] border border-[#233348] rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                        dir="ltr"
-                      />
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#131f33] via-[#0f172a] to-[#0c1322] border border-cyan-500/40 shadow-xl space-y-4">
+                
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
+                      <Zap className="w-5 h-5" />
                     </div>
                     <div>
-                      <label className="text-[11px] text-slate-400 block mb-1">טלפון טלגרם:</label>
-                      <input
-                        type="text"
-                        value={driverTgPhone}
-                        onChange={(e) => setDriverTgPhone(e.target.value)}
-                        placeholder="למשל: 0501234567"
-                        className="w-full bg-[#0a0f1d] border border-[#233348] rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                        dir="ltr"
-                      />
+                      <h3 className="text-sm font-black text-white">חיבור עצמי של נהג לסריקת טלגרם</h3>
+                      <p className="text-[11px] text-slate-300">
+                        הזן את פרטיך כאן לחיבור מיידי ללא צורך במנהל מערכת
+                      </p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleConnectDriver(selectedDriverPhone)}
-                    disabled={isSavingDriver}
-                    className="w-full py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>שמור והפעל סריקה מקבילה</span>
-                  </button>
-                </div>
-              )}
 
-              {/* Drivers Table */}
-              <div className="border border-[#1e293b] rounded-xl overflow-hidden bg-[#0c121e]">
-                <table className="w-full text-right text-xs">
-                  <thead className="bg-[#111927] border-b border-[#1e293b] text-slate-400">
-                    <tr>
-                      <th className="p-3 font-semibold">נהג</th>
-                      <th className="p-3 font-semibold">טלפון וואטסאפ</th>
-                      <th className="p-3 font-semibold">סטטוס טלגרם</th>
-                      <th className="p-3 font-semibold">נסיעות שהותאמו</th>
-                      <th className="p-3 font-semibold text-center">פעולות</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#1e293b]">
-                    {approvedUsers.map((u) => {
-                      const clean = u.phone.replace(/[^0-9]/g, '');
-                      const tg = status?.driverConfigs?.[clean] || {};
-                      const isConnected = tg.connected !== false; // כברירת מחדל מאושר
-                      return (
-                        <tr key={u.phone} className="hover:bg-[#121c2e] transition-colors">
-                          <td className="p-3 font-bold text-white">
-                            {u.name || 'נהג'}
-                          </td>
-                          <td className="p-3 font-mono text-slate-300" dir="ltr">
-                            {u.phone}
-                          </td>
-                          <td className="p-3">
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-950/50 border border-cyan-500/30 text-cyan-300">
-                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
-                              סורק מקביל (WA + TG)
-                            </span>
-                            {tg.username && (
-                              <span className="block text-[10px] text-slate-400 font-mono mt-0.5" dir="ltr">
-                                @{tg.username}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 font-bold text-emerald-400">
-                            {tg.matchedCount || 0} נסיעות
-                          </td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => {
-                                  setSelectedDriverPhone(u.phone);
-                                  setDriverTgUsername(tg.username || '');
-                                  setDriverTgPhone(tg.telegramPhone || u.phone);
-                                }}
-                                className="px-2.5 py-1 rounded bg-[#1e293b] hover:bg-cyan-900/40 text-cyan-300 border border-cyan-500/30 text-[11px] font-medium transition-colors"
-                              >
-                                הגדר טלגרם
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                  {/* Status Tag for Selected Driver */}
+                  {targetPhone && (
+                    <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border ${
+                      isTargetConnected
+                        ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-300'
+                        : 'bg-amber-950/50 border-amber-500/40 text-amber-300'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${isTargetConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                      <span>{isTargetConnected ? 'מחובר לסריקה כפולה' : 'טרם חובר לטלגרם'}</span>
+                    </div>
+                  )}
+                </div>
+
+                <form onSubmit={handleSelfConnect} className="space-y-3.5 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    
+                    {/* Driver Selection */}
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                        1. בחר את הנהג שלך (מספר וואטסאפ):
+                      </label>
+                      <select
+                        value={targetPhone}
+                        onChange={(e) => {
+                          setTargetPhone(e.target.value);
+                          onSelectDriverPhone?.(e.target.value);
+                        }}
+                        className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 transition-colors"
+                      >
+                        <option value="">-- בחר נהג מהרשימה --</option>
+                        {approvedUsers.map((u) => (
+                          <option key={u.phone} value={u.phone}>
+                            {u.name || 'נהג'} ({u.phone})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Telegram Username */}
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                        2. שם המשתמש שלך בטלגרם (@username):
+                      </label>
+                      <input
+                        type="text"
+                        value={myTgUsername}
+                        onChange={(e) => setMyTgUsername(e.target.value)}
+                        placeholder="למשל: @israel_driver"
+                        className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                      3. מספר טלפון בטלגרם (אופציונלי):
+                    </label>
+                    <input
+                      type="text"
+                      value={myTgPhone}
+                      onChange={(e) => setMyTgPhone(e.target.value)}
+                      placeholder="למשל: 0501234567"
+                      className="w-full bg-[#080d17] border border-[#23354d] hover:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex flex-wrap items-center gap-2.5 pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || !targetPhone}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{isSubmitting ? 'שומר חיבור...' : 'חבר אותי עכשיו לסריקה מקבילה 🚀'}</span>
+                    </button>
+
+                    {isTargetConnected && (
+                      <button
+                        type="button"
+                        onClick={handleSelfDisconnect}
+                        disabled={isSubmitting}
+                        className="py-2.5 px-4 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>נתק חשבון</span>
+                      </button>
+                    )}
+                  </div>
+                </form>
+
+                {/* Info Note */}
+                <div className="p-3 rounded-xl bg-[#0a111e] border border-[#1d2b3f] text-[11px] text-slate-300 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-white block">מעדיף להתחבר ישירות מהוואטסאפ?</span>
+                    <span>שלח לבוט בוואטסאפ: </span>
+                    <code className="text-cyan-300 font-mono px-1 py-0.5 bg-[#121c2c] rounded">חבר טלגרם @היוזר_שלך</code>
+                    <span> — והבוט יחבר אותך מיד!</span>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Tab 2: Simulator & Preview */}
+          {/* Tab 2: Step-by-Step Driver Guide */}
+          {activeTab === 'guide' && (
+            <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
+              <div className="p-4 sm:p-5 rounded-2xl bg-[#0f1726] border border-cyan-500/30 space-y-4">
+                <div className="flex items-center gap-2 text-cyan-300 font-black text-sm">
+                  <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                  <span>מדריך מלא ומפורט: איך מתחברים לטלגרם ומקבלים נסיעות לוואטסאפ?</span>
+                </div>
+                <p>
+                  המערכת סורקת במקביל קבוצות וואטסאפ וקבוצות טלגרם (כמו <em>מאוחדים תגבור ריידר 👑</em>, <em>ריידר הפצה</em> ועוד). כל נהג יכול להתחבר לבד באחת מ-3 הדרכים הבאות:
+                </p>
+
+                {/* 3 Step-by-step methods */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                  
+                  {/* Option 1 */}
+                  <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
+                    <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">1</span>
+                      <span>ישירות בוואטסאפ (הכי קל!)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      שלח הודעה לבוט בוואטסאפ:
+                    </p>
+                    <div className="p-2 rounded-lg bg-[#0a0f1a] border border-[#23354d] font-mono text-[11px] text-cyan-300">
+                      חבר טלגרם @היוזר_שלך
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      לדוגמה: <code className="text-amber-300 font-mono">חבר טלגרם @driver_israel</code>
+                      <br />
+                      או עם מספר טלפון: <code className="text-amber-300 font-mono">חבר טלגרם 0501234567</code>
+                    </p>
+                  </div>
+
+                  {/* Option 2 */}
+                  <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
+                    <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">2</span>
+                      <span>באתר (בלשונית הראשונה)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      פתח את לשונית <strong>"חיבור מהיר לנהג"</strong> כאן בחלון זה:
+                    </p>
+                    <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-1">
+                      <li>בחר את הנהג שלך</li>
+                      <li>הזן את שם המשתמש בטלגרם</li>
+                      <li>לחץ על "חבר אותי עכשיו 🚀"</li>
+                    </ul>
+                  </div>
+
+                  {/* Option 3 */}
+                  <div className="p-3.5 rounded-xl bg-[#141e30] border border-cyan-500/30 space-y-2">
+                    <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-[10px] font-black">3</span>
+                      <span>ישירות מול הבוט בטלגרם</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      היכנס לבוט בטלגרם:
+                    </p>
+                    <a
+                      href="https://t.me/NsiotRidesBot"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-cyan-300 font-bold hover:underline"
+                    >
+                      <span>https://t.me/NsiotRidesBot</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <p className="text-[10px] text-slate-400">
+                      לחץ על <strong>START</strong> (או שלח <code>/start</code>).
+                    </p>
+                  </div>
+
+                </div>
+
+                {/* Commands Cheatsheet */}
+                <div className="p-3.5 rounded-xl bg-[#090e18] border border-[#1e2d42] space-y-2">
+                  <span className="font-bold text-xs text-white block">פקודות טלגרם מהירות בוואטסאפ:</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
+                      <code className="text-cyan-300 font-mono font-bold block">טלגרם</code>
+                      <span className="text-slate-400">צפייה בסטטוס חיבור, יוזר מקושר וכמות נסיעות שהותאמו.</span>
+                    </div>
+                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
+                      <code className="text-cyan-300 font-mono font-bold block">חבר טלגרם @יוזר</code>
+                      <span className="text-slate-400">חיבור עצמי מיידי או עדכון שם המשתמש.</span>
+                    </div>
+                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
+                      <code className="text-rose-300 font-mono font-bold block">נתק טלגרם</code>
+                      <span className="text-slate-400">ניתוק חשבון הטלגרם בכל עת (ממשיך לסרוק בוואטסאפ).</span>
+                    </div>
+                    <div className="p-2 rounded bg-[#101726] border border-[#1e2d42]">
+                      <code className="text-amber-300 font-mono font-bold block">מדריך</code>
+                      <span className="text-slate-400">מדריך נהגים מלא כולל כל פקודות החיפוש והתפיסה המהירה.</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: All Drivers Table */}
+          {activeTab === 'drivers' && (
+            <div className="border border-[#1e293b] rounded-xl overflow-hidden bg-[#0c121e]">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-[#111927] border-b border-[#1e293b] text-slate-400">
+                  <tr>
+                    <th className="p-3 font-semibold">נהג</th>
+                    <th className="p-3 font-semibold">וואטסאפ</th>
+                    <th className="p-3 font-semibold">סטטוס טלגרם</th>
+                    <th className="p-3 font-semibold">נסיעות שהותאמו</th>
+                    <th className="p-3 font-semibold text-center">פעולות מהירות</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1e293b]">
+                  {approvedUsers.map((u) => {
+                    const clean = u.phone.replace(/[^0-9]/g, '');
+                    const tg = status?.driverConfigs?.[clean] || {};
+                    const isConnected = tg.connected !== false;
+                    return (
+                      <tr key={u.phone} className="hover:bg-[#121c2e] transition-colors">
+                        <td className="p-3 font-bold text-white">
+                          {u.name || 'נהג'}
+                        </td>
+                        <td className="p-3 font-mono text-slate-300" dir="ltr">
+                          {u.phone}
+                        </td>
+                        <td className="p-3">
+                          {isConnected ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-950/50 border border-cyan-500/30 text-cyan-300">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                              סורק מקביל (WA + TG)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-400">
+                              וואטסאפ בלבד
+                            </span>
+                          )}
+                          {tg.username && (
+                            <span className="block text-[10px] text-slate-400 font-mono mt-0.5" dir="ltr">
+                              @{tg.username}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 font-bold text-emerald-400">
+                          {tg.matchedCount || 0} נסיעות
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => {
+                              setTargetPhone(u.phone);
+                              setActiveTab('self_service');
+                            }}
+                            className="px-2.5 py-1 rounded bg-[#1e293b] hover:bg-cyan-900/40 text-cyan-300 border border-cyan-500/30 text-[11px] font-medium transition-colors cursor-pointer"
+                          >
+                            ערוך / נהל חיבור
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Tab 4: Simulator & WhatsApp Live Preview */}
           {activeTab === 'simulator' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Form Input */}
@@ -499,53 +748,6 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
             </div>
           )}
 
-          {/* Tab 3: Complete Guide */}
-          {activeTab === 'guide' && (
-            <div className="space-y-4 text-xs text-slate-300 leading-relaxed p-2">
-              <div className="p-4 rounded-xl bg-gradient-to-r from-cyan-950/40 to-slate-900 border border-cyan-500/30 space-y-2">
-                <h3 className="text-sm font-black text-cyan-300 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4" />
-                  כיצד עובדת הסריקה המקבילה (Dual-Channel WhatsApp + Telegram)?
-                </h3>
-                <p>
-                  המערכת מחברת את ערוצי הוואטסאפ והטלגרם של הנסיעות למנוע בינה מלאכותי יחיד:
-                </p>
-                <ul className="list-disc list-inside space-y-1.5 text-slate-300 pr-1">
-                  <li><strong>סריקה בו-זמנית:</strong> כאשר נהג שולח בוואטסאפ פקודת חיפוש (למשל: <em>"פנוי שמש"</em> או <em>"פ ים שמש"</em>), הבוט סורק במקביל הן את קבוצות הוואטסאפ והן את קבוצות הטלגרם.</li>
-                  <li><strong>סינון קפדני:</strong> בדיקת המוצא, היעד, המחיר ומניעת הכפילויות נעשית לפי אותם אלגוריתמים מדויקים.</li>
-                  <li><strong>התראה מיידית לוואטסאפ:</strong> הנהג אינו צריך להישאר עם טלגרם פתוח! כל נסיעה מתאימה מטלגרם נשלחת מיד לוואטסאפ הפרטי שלו בעיצוב נקי עם שם הקבוצה, שם הסדרן וכפתור <em>"פתח בטלגרם ↗️"</em>.</li>
-                </ul>
-              </div>
-
-              <div className="p-4 rounded-xl bg-[#111927] border border-[#1e293b] space-y-2">
-                <h4 className="font-bold text-white text-xs">איך הנהג מתחבר מהוואטסאפ?</h4>
-                <p>
-                  כל נהג מאושר יכול לשלוח לבוט בוואטסאפ את המילה <strong>"טלגרם"</strong>. הבוט יציג לו את סטטוס החיבור והסריקה.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-[#111927] border border-[#1e293b] space-y-2">
-                <h4 className="font-bold text-white text-xs">הגדרת קבוצות מנוטרות:</h4>
-                <p>
-                  קבוצות הטלגרם מוגדרות מראש במערכת וכוללות את:
-                </p>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {(status?.monitoredGroups || [
-                    'מאוחדים תגבור ריידר 👑',
-                    'ריידר הפצה בקבוצות',
-                    'נסיעות בית שמש ארצי',
-                    'נסיעות ירושלים והסביבה',
-                    'מוניות וספיישלים מרכז',
-                  ]).map((g) => (
-                    <span key={g} className="px-2 py-1 rounded-md bg-[#1a2538] border border-[#2a3a52] text-cyan-200 text-[11px] font-medium">
-                      {g}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
         </div>
 
         {/* Modal Footer */}
@@ -555,7 +757,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
           </span>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-[#1e293b] hover:bg-[#28384f] text-white text-xs font-bold transition-colors"
+            className="px-4 py-1.5 rounded-lg bg-[#1e293b] hover:bg-[#28384f] text-white text-xs font-bold transition-colors cursor-pointer"
           >
             סגור
           </button>

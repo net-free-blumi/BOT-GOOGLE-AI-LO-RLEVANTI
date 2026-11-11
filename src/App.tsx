@@ -495,6 +495,7 @@ export default function App() {
               onStopSearch={handleStopSearch}
               shortcuts={shortcuts}
               onOpenShortcutsModal={() => setShortcutsModalOpen(true)}
+              onOpenTelegramModal={() => setTelegramModalOpen(true)}
               loading={actionLoading}
             />
           </div>
@@ -617,6 +618,11 @@ export default function App() {
         isOpen={telegramModalOpen}
         onClose={() => setTelegramModalOpen(false)}
         approvedUsers={approvedUsersList}
+        selectedDriverPhone={selectedDriverPhone}
+        onSelectDriverPhone={(phone) => {
+          setSelectedDriverPhone(phone);
+          localStorage.setItem('rides_selected_driver', phone);
+        }}
       />
 
       {/* Analytics & Graphs Modal */}

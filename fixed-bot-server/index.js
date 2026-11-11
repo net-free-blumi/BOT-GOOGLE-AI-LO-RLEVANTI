@@ -20,7 +20,8 @@ import {
   updateDriverTelegram,
   disconnectDriverTelegram,
   processIncomingTelegramRide,
-  buildDriverTelegramInfoMessage
+  buildDriverTelegramInfoMessage,
+  handleDriverTelegramCommand
 } from "./telegram-manager.js";
 import {
   extractInteractiveResponse,
@@ -814,9 +815,14 @@ export async function sendDriverGuide(sock, jid) {
     `• המקרה יישלח מיד לטיפול ותיקון בקבוצת הבאגים!\n\n`;
 
   guideText += `🔹 *8. סריקה מקבילה מטלגרם (וואטסאפ + טלגרם)* ✈️\n` +
-    `• הבוט מסוגל לסרוק עבורך נסיעות בו-זמנית גם מכל קבוצות הטלגרם שלך!\n` +
+    `• הבוט סורק עבורך נסיעות בו-זמנית גם מכל קבוצות הטלגרם (מאוחדים תגבור ריידר, ריידר הפצה וכו')!\n` +
     `• נסיעה מתאימה מטלגרם תישלח אליך מיד לוואטסאפ עם כפתור "פתח בטלגרם ↗️".\n` +
-    `• לחיבור וצפייה בסטטוס: שלח לבוט *"טלגרם"* או היכנס ללוח הבקרה באתר בלשונית "טלגרם".`;
+    `• *איך מתחברים לבד תוך 5 שניות?*\n` +
+    `  👉 *כאן בוואטסאפ:* שלח לבוט *"חבר טלגרם @היוזר_שלך"* (למשל: *חבר טלגרם @driver_israel*) או *"חבר טלגרם 0501234567"*.\n` +
+    `  👉 *באתר:* היכנס ללוח הבקרה בלשונית "חיבור טלגרם", הזן את פרטיך ולחץ "חבר אותי".\n` +
+    `  👉 *בטלגרם:* שלח */start* לבוט בטלגרם (@NsiotRidesBot).\n` +
+    `• *לצפייה בסטטוס החיבור שלך:* שלח *"טלגרם"*.\n` +
+    `• *לניתוק בכל עת:* שלח *"נתק טלגרם"*.`;
 
   await sock.sendMessage(jid, { text: guideText });
 }
@@ -1575,10 +1581,20 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         continue;
       }
 
-      // טיפול בפקודת טלגרם / חיבור טלגרם עבור הנהג
-      if (norm === "טלגרם" || norm === "חיבור טלגרם" || norm === "חבר טלגרם" || norm.startsWith("טלגרם ")) {
-        const infoMsg = buildDriverTelegramInfoMessage(senderPhone);
-        await sock.sendMessage(jid, { text: infoMsg }, { quoted: m });
+      // טיפול בפקודת טלגרם / חיבור עצמי / ניתוק טלגרם עבור הנהג
+      if (
+        norm === "טלגרם" || 
+        norm.startsWith("טלגרם ") || 
+        norm.startsWith("חבר טלגרם") || 
+        norm.startsWith("חיבור טלגרם") || 
+        norm.startsWith("נתק טלגרם") || 
+        norm.startsWith("בטל טלגרם") ||
+        norm === "נתק טלגרם" ||
+        norm === "בטל טלגרם" ||
+        norm.includes("טלגרם")
+      ) {
+        const responseMsg = handleDriverTelegramCommand(senderPhone, text);
+        await sock.sendMessage(jid, { text: responseMsg });
         continue;
       }
 

@@ -24,6 +24,7 @@ interface ActiveSearchCardProps {
   onStopSearch: () => Promise<void>;
   shortcuts: CityAlias[];
   onOpenShortcutsModal: () => void;
+  onOpenTelegramModal?: () => void;
   loading: boolean;
 }
 
@@ -33,6 +34,7 @@ export const ActiveSearchCard: React.FC<ActiveSearchCardProps> = ({
   onStopSearch,
   shortcuts,
   onOpenShortcutsModal,
+  onOpenTelegramModal,
   loading,
 }) => {
   const [customInput, setCustomInput] = useState('');
@@ -112,20 +114,34 @@ export const ActiveSearchCard: React.FC<ActiveSearchCardProps> = ({
           </div>
         </div>
 
-        {/* Emergency Stop / Sleep Button */}
-        <button
-          onClick={onStopSearch}
-          disabled={loading || !search.active}
-          className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            search.active
-              ? 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10 hover:scale-[1.02]'
-              : 'bg-slate-800/40 border border-slate-700/40 text-slate-500 cursor-not-allowed'
-          }`}
-          title="עצור את החיפוש - הבוט ייכנס למצב שינה/תפוס ולא ישלח נסיעות"
-        >
-          <Square className="w-3.5 h-3.5 fill-current" />
-          עצור חיפוש (תפוס / שינה)
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Telegram Dual-Channel Quick Button */}
+          {onOpenTelegramModal && (
+            <button
+              onClick={onOpenTelegramModal}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-500/40 text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer"
+              title="סריקה מקבילה מטלגרם - לחץ לחיבור עצמי או ניהול"
+            >
+              <Send className="w-3.5 h-3.5 text-cyan-400 -rotate-45" />
+              <span>חיבור טלגרם</span>
+            </button>
+          )}
+
+          {/* Emergency Stop / Sleep Button */}
+          <button
+            onClick={onStopSearch}
+            disabled={loading || !search.active}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              search.active
+                ? 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 shadow-lg shadow-rose-500/10 hover:scale-[1.02]'
+                : 'bg-slate-800/40 border border-slate-700/40 text-slate-500 cursor-not-allowed'
+            }`}
+            title="עצור את החיפוש - הבוט ייכנס למצב שינה/תפוס ולא ישלח נסיעות"
+          >
+            <Square className="w-3.5 h-3.5 fill-current" />
+            עצור חיפוש (תפוס / שינה)
+          </button>
+        </div>
       </div>
 
       {/* Active Search Banner */}

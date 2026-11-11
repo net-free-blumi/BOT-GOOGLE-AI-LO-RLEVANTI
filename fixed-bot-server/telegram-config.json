@@ -11,23 +11,23 @@
     "מוניות וספיישלים מרכז"
   ],
   "stats": {
-    "totalScanned": 7,
-    "totalMatched": 4,
-    "lastRideAt": "2026-11-11T13:51:13.170Z"
+    "totalScanned": 13,
+    "totalMatched": 7,
+    "lastRideAt": "2026-11-11T14:03:20.443Z"
   },
   "driverConfigs": {
     "972515157166": {
-      "telegramPhone": "0515157166",
-      "username": "driver_test",
+      "telegramPhone": "972515157166",
+      "username": "driver_auto",
       "groups": [
         "מאוחדים תגבור ריידר 👑",
         "ריידר הפצה בקבוצות"
       ],
       "forwardToWa": true,
-      "connected": true,
-      "connectedAt": "2026-11-11T13:40:57.937Z",
-      "updatedAt": "2026-11-11T13:51:13.125Z",
-      "matchedCount": 4
+      "connected": false,
+      "connectedAt": null,
+      "updatedAt": "2026-11-11T14:03:20.446Z",
+      "matchedCount": 7
     }
   }
 }

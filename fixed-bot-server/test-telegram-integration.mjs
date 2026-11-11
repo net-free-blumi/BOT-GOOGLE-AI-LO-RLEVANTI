@@ -94,6 +94,27 @@ assert(infoMsg.includes("חיבור חשבון טלגרם"), "הודעת המי�
 assert(infoMsg.includes("מחובר וסורק"), "ההודעה צריכה להציג סטטוס מחובר");
 console.log("✅ מענה לפקודת 'טלגרם' בוואטסאפ עובד במדויק!");
 
+// 6. בדיקת פקודת חיבור עצמי של נהג דרך וואטסאפ: "חבר טלגרם @driver_auto"
+console.log("6. בדיקת חיבור עצמי של נהג בוואטסאפ: 'חבר טלגרם @driver_auto'...");
+import { handleDriverTelegramCommand } from "./telegram-manager.js";
+const autoConnectRes = handleDriverTelegramCommand(testDriver, "חבר טלגרם @driver_auto");
+assert(autoConnectRes.includes("חובר בהצלחה"), "החיבור העצמי צריך להצליח ולהחזיר הודעת אישור");
+assert(autoConnectRes.includes("@driver_auto"), "ההודעה צריכה לציין את שם המשתמש שחובר");
+console.log("✅ חיבור עצמי דרך פקודת וואטסאפ עובד במדויק!");
+
+// 7. בדיקת פקודת ניתוק עצמי: "נתק טלגרם"
+console.log("7. בדיקת ניתוק עצמי של נהג בוואטסאפ: 'נתק טלגרם'...");
+const disconnectRes = handleDriverTelegramCommand(testDriver, "נתק טלגרם");
+assert(disconnectRes.includes("נותק מהמערכת"), "הניתוק צריך להצליח ולהחזיר אישור");
+console.log("✅ ניתוק עצמי דרך פקודת וואטסאפ עובד במדויק!");
+
+// 8. בדיקת הצגת המדריך המפורט לנהג שטרם חובר
+console.log("8. בדיקת הצגת מדריך מפורט צעד-אחר-צעד לנהג שטרם חובר...");
+const guideRes = handleDriverTelegramCommand(testDriver, "טלגרם");
+assert(guideRes.includes("מדריך חיבור חשבון טלגרם"), "צריך להציג מדריך חיבור מפורט");
+assert(guideRes.includes("חבר טלגרם @היוזר_שלך"), "המדריך צריך להציג דוגמה של חבר טלגרם");
+console.log("✅ מדריך מפורט צעד-אחר-צעד מוצג במדויק!");
+
 console.log("=========================================");
-console.log("🎉 כל בדיקות אינטגרציית טלגרם עברו בהצלחה מושלמת (100%)!");
+console.log("🎉 כל בדיקות אינטגרציית טלגרם וחיבור עצמי עברו בהצלחה מושלמת (100%)!");
 console.log("=========================================");
