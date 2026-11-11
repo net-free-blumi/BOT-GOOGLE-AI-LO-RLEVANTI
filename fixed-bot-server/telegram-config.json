@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "connected": true,
+  "botUsername": "@NsiotRidesBot",
+  "botTokenConfigured": false,
+  "monitoredGroups": [
+    "מאוחדים תגבור ריידר 👑",
+    "ריידר הפצה בקבוצות",
+    "נסיעות בית שמש ארצי",
+    "נסיעות ירושלים והסביבה",
+    "מוניות וספיישלים מרכז"
+  ],
+  "stats": {
+    "totalScanned": 5,
+    "totalMatched": 3,
+    "lastRideAt": "2026-11-11T13:46:19.400Z"
+  },
+  "driverConfigs": {
+    "972515157166": {
+      "telegramPhone": "0515157166",
+      "username": "driver_test",
+      "groups": [
+        "מאוחדים תגבור ריידר 👑",
+        "ריידר הפצה בקבוצות"
+      ],
+      "forwardToWa": true,
+      "connected": true,
+      "connectedAt": "2026-11-11T13:40:57.937Z",
+      "updatedAt": "2026-11-11T13:46:19.363Z",
+      "matchedCount": 3
+    }
+  }
+}

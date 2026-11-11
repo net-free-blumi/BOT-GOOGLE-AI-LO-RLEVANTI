@@ -234,9 +234,9 @@ ${cleaned}
           text: formattedTelegramMsg,
         });
 
-        // שליחת כפתור פעולה ישיר "פתח בטלגרם ↗️" ותפריט
+        // שליחת כפתור פעולה ישיר "פתח בטלגרם ↗️" ותפריט (כמו ב-Image 2)
         try {
-          const actionMsg = `👉 *לפתיחת הנסיעה בטלגרם:* ${directUrl}\n💡 *לתפריט מהיר שלח:* "תפריט"`;
+          const actionMsg = `🔹 *פתח בטלגרם ↗️*\n${directUrl}\n\n≡ תפריט`;
           await sock.sendMessage(destinationJid, { text: actionMsg });
         } catch (e) {}
 

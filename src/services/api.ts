@@ -889,3 +889,118 @@ export async function fetchAnalyticsApi(approvedUsers?: ApprovedUser[]): Promise
   }
 }
 
+export interface TelegramDriverConfig {
+  telegramPhone?: string;
+  username?: string;
+  groups?: string[];
+  forwardToWa?: boolean;
+  connected?: boolean;
+  matchedCount?: number;
+  connectedAt?: string;
+}
+
+export interface TelegramStatusPayload {
+  ok: boolean;
+  enabled: boolean;
+  connected: boolean;
+  botUsername: string;
+  botTokenConfigured: boolean;
+  monitoredGroups: string[];
+  stats: {
+    totalScanned: number;
+    totalMatched: number;
+    lastRideAt: string | null;
+  };
+  driverConfigs: Record<string, TelegramDriverConfig>;
+  drivers?: Array<{
+    phone: string;
+    telegramPhone?: string;
+    username?: string;
+    connected: boolean;
+    matchedCount: number;
+  }>;
+}
+
+export async function fetchTelegramStatus(): Promise<TelegramStatusPayload> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return {
+      ok: true,
+      enabled: true,
+      connected: true,
+      botUsername: '@NsiotRidesBot',
+      botTokenConfigured: true,
+      monitoredGroups: [
+        'מאוחדים תגבור ריידר 👑',
+        'ריידר הפצה בקבוצות',
+        'נסיעות בית שמש ארצי',
+        'נסיעות ירושלים והסביבה',
+        'מוניות וספיישלים מרכז',
+      ],
+      stats: {
+        totalScanned: 184,
+        totalMatched: 42,
+        lastRideAt: new Date().toISOString(),
+      },
+      driverConfigs: {},
+      drivers: [],
+    };
+  }
+  try {
+    return await request<TelegramStatusPayload>('/api/telegram/status');
+  } catch {
+    return {
+      ok: false,
+      enabled: false,
+      connected: false,
+      botUsername: '@NsiotRidesBot',
+      botTokenConfigured: false,
+      monitoredGroups: [],
+      stats: { totalScanned: 0, totalMatched: 0, lastRideAt: null },
+      driverConfigs: {},
+      drivers: [],
+    };
+  }
+}
+
+export async function connectDriverTelegramApi(
+  phone: string,
+  data: { telegramPhone?: string; username?: string; groups?: string[]; forwardToWa?: boolean }
+): Promise<any> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, success: true };
+  }
+  return await request<any>('/api/telegram/driver/connect', {
+    method: 'POST',
+    body: JSON.stringify({ phone, ...data }),
+  });
+}
+
+export async function disconnectDriverTelegramApi(phone: string): Promise<any> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, success: true };
+  }
+  return await request<any>('/api/telegram/driver/disconnect', {
+    method: 'POST',
+    body: JSON.stringify({ phone }),
+  });
+}
+
+export async function testTelegramRideApi(payload: {
+  groupTitle?: string;
+  senderName?: string;
+  text: string;
+  directUrl?: string;
+}): Promise<any> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, matched: true, matchedDriversCount: 1, cleanedText: payload.text };
+  }
+  return await request<any>('/api/telegram/test-ride', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+

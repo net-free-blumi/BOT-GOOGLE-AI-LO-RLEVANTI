@@ -50,10 +50,10 @@ setUserSearch(testDriver, {
 });
 
 // סימולציית סוקט לקבלת ההודעה
-let sentMessage = null;
+let sentMessages = [];
 const mockSock = {
   sendMessage: async (jid, payload) => {
-    sentMessage = { jid, payload };
+    sentMessages.push({ jid, payload });
     return { key: { id: "mock-msg-id" } };
   }
 };
@@ -71,19 +71,20 @@ const matchResult = await processIncomingTelegramRide(ridePayload, {
 
 assert.strictEqual(matchResult.ok, true, "עיבוד נסיעת טלגרם צריך להצליח");
 assert.strictEqual(matchResult.matched, true, "הנסיעה צריכה להתאים לחיפוש של הנהג");
-assert(sentMessage, "הודעה צריכה להישלח לוואטסאפ של הנהג");
-assert(sentMessage.payload.text.includes("🔹 *נסיעה מטלגרם* 🔹"), "ההודעה צריכה להכיל את הכותרת המעוצבת מטלגרם");
-assert(sentMessage.payload.text.includes("מאוחדים תגבור ריידר 👑"), "ההודעה צריכה להכיל את שם הקבוצה בטלגרם");
+assert(sentMessages.length > 0, "הודעה צריכה להישלח לוואטסאפ של הנהג");
+const rideMsg = sentMessages.find((m) => m.payload.text && m.payload.text.includes("נסיעה מטלגרם"));
+assert(rideMsg, "ההודעה צריכה להכיל את הכותרת המעוצבת מטלגרם");
+assert(rideMsg.payload.text.includes("מאוחדים תגבור ריידר 👑"), "ההודעה צריכה להכיל את שם הקבוצה בטלגרם");
 console.log("✅ נסיעה מטלגרם עובדה, סוננה ונמסרה לוואטסאפ של הנהג בעיצוב המדויק מ-Image 2!");
 
 // 4. בדיקת מניעת כפילות נסיעה בטלגרם
 console.log("4. בדיקת מניעת כפילות נסיעה חוזרת בטלגרם...");
-sentMessage = null;
+sentMessages = [];
 const duplicateResult = await processIncomingTelegramRide(ridePayload, {
   getMainBotSock: () => mockSock,
 });
 assert.strictEqual(duplicateResult.matched, false, "נסיעה כפולה צריכה להיפסל");
-assert.strictEqual(sentMessage, null, "לא צריכה להישלח הודעה חוזרת על נסיעה כפולה");
+assert.strictEqual(sentMessages.length, 0, "לא צריכה להישלח הודעה חוזרת על נסיעה כפולה");
 console.log("✅ מניעת כפילות בטלגרם עובדת במדויק!");
 
 // 5. בדיקת הודעת מידע לנהג בוואטסאפ

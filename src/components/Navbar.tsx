@@ -18,7 +18,8 @@ import {
   Bug,
   Megaphone,
   Scale,
-  BarChart3
+  BarChart3,
+  Send
 } from 'lucide-react';
 import { WhatsAppState, DriverState, ConnectionConfig, ApprovedUser } from '../types.ts';
 import { Logo } from './Logo.tsx';
@@ -43,6 +44,7 @@ interface NavbarProps {
   onOpenSpamModal: () => void;
   onOpenAiHandoffModal: () => void;
   onOpenUsersModal: () => void;
+  onOpenTelegramModal?: () => void;
   onOpenBroadcastModal?: () => void;
   onOpenBugModal?: () => void;
   onOpenLegalModal?: (tab?: 'about' | 'accessibility' | 'terms' | 'privacy') => void;
@@ -70,6 +72,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSpamModal,
   onOpenAiHandoffModal,
   onOpenUsersModal,
+  onOpenTelegramModal,
   onOpenBroadcastModal,
   onOpenBugModal,
   onOpenLegalModal,
@@ -217,6 +220,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Megaphone className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden sm:inline">שידור לנהגים</span>
           </button>
+
+          {/* Telegram Dual-Channel Modal Button */}
+          {onOpenTelegramModal && (
+            <button
+              onClick={onOpenTelegramModal}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-500/40 text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer"
+              title="סריקה מקבילה מוואטסאפ וטלגרם בו-זמנית (Dual-Channel)"
+            >
+              <Send className="w-3.5 h-3.5 text-cyan-400 -rotate-45" />
+              <span className="hidden sm:inline">חיבור טלגרם</span>
+              <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40 hidden md:inline">
+                כפול
+              </span>
+            </button>
+          )}
 
           {/* Analytics & Charts Modal Button */}
           {onOpenAnalyticsModal && (

@@ -514,7 +514,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     // ניקוי חתימת תחנה וקישורים כדי ששם התחנה בתחתית ההודעה לא יזהם את זיהוי המקומות
     const matchText = stripStationAndLinks(text) || text;
     const places = findPlaces(matchText);
-    const home = state.origin;
+    const home = state.origin || state.city || DEFAULT_CITY;
 
     // רשימת כל הערים שזוהו בהודעה
     const detectedCities = [...new Set(places.map((p) => p.city))];
@@ -523,7 +523,7 @@ export function createMatcher(citiesData, streetsData = {}) {
     // ==========================================
     // מצב 1: פנימי בלבד (internal)
     // ==========================================
-    if (state.mode === "internal") {
+    if (state.mode === "internal" || state.mode === "internal_only") {
       const internalCheck = checkInternalRide(text, home, places, externalCities, groupName);
       if (internalCheck.ok) {
         return yes(internalCheck.reason);
@@ -630,7 +630,7 @@ export const detectInternalTransitionJerusalem = (text) => get().detectInternalT
 
 export function matchesAnySearch(rideText, userSearchState, groupName = "") {
   if (!userSearchState || !userSearchState.active) {
-    return { ok: false, reason: "אין חיפוש פעיל" };
+    return { ok: false, matched: false, reason: "אין חיפוש פעיל" };
   }
   const searches = Array.isArray(userSearchState.searches) && userSearchState.searches.length > 0
     ? userSearchState.searches
@@ -641,12 +641,22 @@ export function matchesAnySearch(rideText, userSearchState, groupName = "") {
     if (verdict.ok) {
       return {
         ok: true,
+        matched: true,
         reason: verdict.reason,
         matchedSearch: s,
+        filterName: s.displayText || s.origin || "חיפוש פעיל",
       };
     }
   }
-  return { ok: false, reason: "לא תואם לאף אחד מהחיפושים הפעילים" };
+  return { ok: false, matched: false, reason: "לא תואם לאף אחד מהחיפושים הפעילים" };
+}
+
+export function cleanRideText(text) {
+  return stripStationAndLinks(text).trim() || String(text || "").trim();
+}
+
+export function findMatchingSearch(rideText, userSearchState, groupName = "") {
+  return matchesAnySearch(rideText, userSearchState, groupName);
 }
 
 export const CITY_ALIAS_MAP = {

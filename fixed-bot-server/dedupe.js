@@ -173,3 +173,12 @@ export function createDeduper(findPlaces, { windowMs = 15 * 60 * 1000 } = {}) {
     },
   };
 }
+
+let defaultDeduper = null;
+export function isDuplicateRide(text, driverScope = "") {
+  if (!defaultDeduper) {
+    defaultDeduper = createDeduper(null, { windowMs: 15 * 60 * 1000 });
+  }
+  const res = defaultDeduper.check(text, driverScope);
+  return res.duplicate;
+}

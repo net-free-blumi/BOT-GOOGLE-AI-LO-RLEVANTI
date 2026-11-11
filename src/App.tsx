@@ -42,6 +42,7 @@ import { AiHandoffModal } from './components/AiHandoffModal.tsx';
 import { UsersManagementModal } from './components/UsersManagementModal.tsx';
 import { BugTrackerModal } from './components/BugTrackerModal.tsx';
 import { BroadcastModal } from './components/BroadcastModal.tsx';
+import { TelegramModal } from './components/TelegramModal.tsx';
 import { AnalyticsModal } from './components/AnalyticsModal.tsx';
 import { MainScreenAnalytics } from './components/MainScreenAnalytics.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
@@ -81,6 +82,7 @@ export default function App() {
   const [spamModalOpen, setSpamModalOpen] = useState(false);
   const [aiHandoffModalOpen, setAiHandoffModalOpen] = useState(false);
   const [usersModalOpen, setUsersModalOpen] = useState(false);
+  const [telegramModalOpen, setTelegramModalOpen] = useState(false);
   const [broadcastModalOpen, setBroadcastModalOpen] = useState(false);
   const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
   const [bugModalOpen, setBugModalOpen] = useState(false);
@@ -408,6 +410,7 @@ export default function App() {
         onOpenSpamModal={() => setSpamModalOpen(true)}
         onOpenAiHandoffModal={() => setAiHandoffModalOpen(true)}
         onOpenUsersModal={() => setUsersModalOpen(true)}
+        onOpenTelegramModal={() => setTelegramModalOpen(true)}
         onOpenBroadcastModal={() => setBroadcastModalOpen(true)}
         onOpenAnalyticsModal={() => setAnalyticsModalOpen(true)}
         onOpenBugModal={() => setBugModalOpen(true)}
@@ -607,6 +610,13 @@ export default function App() {
         approvedUsers={approvedUsersList}
         activeSessionsCount={status?.stats?.totalConnectedDrivers ?? approvedUsersList.filter(u => u.connectionStatus === 'connected').length}
         onSendBroadcast={handleSendBroadcast}
+      />
+
+      {/* Telegram Dual-Channel Scanning Modal */}
+      <TelegramModal
+        isOpen={telegramModalOpen}
+        onClose={() => setTelegramModalOpen(false)}
+        approvedUsers={approvedUsersList}
       />
 
       {/* Analytics & Graphs Modal */}
