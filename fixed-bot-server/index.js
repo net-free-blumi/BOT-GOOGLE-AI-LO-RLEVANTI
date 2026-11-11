@@ -1051,17 +1051,17 @@ export async function sendConfusedStickerAndMessage(sock, jid, quotedMsg, sender
   }
   lastConfusedStickerSent.set(senderPhone, now);
 
-  // 1. שליחת המדבקה המעוצבת (WebP שקופה ועגולה ללא רקע)
+  // 1. שליחת המדבקה המעוצבת (WebP שקופה ועגולה ללא רקע) בנפרד ולא כתגובה
   try {
     if (fs.existsSync(STICKER_WEBP_PATH)) {
       const stickerBuf = fs.readFileSync(STICKER_WEBP_PATH);
-      await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: quotedMsg });
+      await sock.sendMessage(jid, { sticker: stickerBuf });
     } else if (fs.existsSync(STICKER_PNG_PATH)) {
       const imgBuf = fs.readFileSync(STICKER_PNG_PATH);
-      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" }, { quoted: quotedMsg });
+      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" });
     } else if (fs.existsSync(STICKER_JPG_PATH)) {
       const imgBuf = fs.readFileSync(STICKER_JPG_PATH);
-      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" }, { quoted: quotedMsg });
+      await sock.sendMessage(jid, { image: imgBuf, caption: "🤔" });
     }
   } catch (err) {
     console.warn("⚠️ שגיאה בשליחת מדבקת וואטסאפ:", err?.message);
@@ -1083,7 +1083,7 @@ export async function sendConfusedStickerAndMessage(sock, jid, quotedMsg, sender
     `• *תפוס* ⬅️ הפסקת חיפוש / מצב שינה 🛑\n\n` +
     `להצגת כל האפשרויות והערים שלח: *"תפריט"*.`;
 
-  await sock.sendMessage(jid, { text: msg }, { quoted: quotedMsg });
+  await sock.sendMessage(jid, { text: msg });
 }
 
 // טיפול בשינוי סטטוס סשן נהג - מסונן לחלוטין כנגד התעוררות שרת, שחזור סשנים והתחברויות חוזרות
@@ -1562,16 +1562,16 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         stopUserSearch(senderPhone);
         recordEvent("command", `חיפוש הופסק ע"י ${pushName} (${senderPhone})`);
 
-        // שליחת מדבקת "בהצלחה בדרך!" עגולה ושקופה בדיוק לפי דרישת המשתמש וצילום המסך (Image 1)
+        // שליחת מדבקת "בהצלחה בדרך!" עגולה ושקופה בנפרד (ללא תגובה להודעה)
         if (fs.existsSync(STICKER_BUSY_WEBP_PATH)) {
           try {
             const stickerBuf = fs.readFileSync(STICKER_BUSY_WEBP_PATH);
-            await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: m });
+            await sock.sendMessage(jid, { sticker: stickerBuf });
           } catch (e) {}
         }
         await sock.sendMessage(jid, { 
           text: `👍 נסיעה טובה! עצרתי את החיפוש.\n\n≡ תפריט` 
-        }, { quoted: m });
+        });
         continue;
       }
 
@@ -1666,11 +1666,11 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
         }
 
         if (stageResult.status === "activated_immediately") {
-          // שליחת מדבקת "אני על זה!" עגולה ושקופה בדיוק לפי דרישת המשתמש וצילום המסך (Image 1)
+          // שליחת מדבקת "אני על זה!" עגולה ושקופה בנפרד (ללא תגובה להודעה)
           if (fs.existsSync(STICKER_SEARCH_WEBP_PATH)) {
             try {
               const stickerBuf = fs.readFileSync(STICKER_SEARCH_WEBP_PATH);
-              await sock.sendMessage(jid, { sticker: stickerBuf }, { quoted: m });
+              await sock.sendMessage(jid, { sticker: stickerBuf });
             } catch (e) {}
           }
 
@@ -1679,7 +1679,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           console.log(`[פקודת נהג ${senderPhone}]: "${text}" -> ${parsed.mode} | ${parsed.displayText}`);
           recordEvent("command", `הופעל חיפוש עבור ${senderPhone}: ${parsed.displayText}`);
 
-          await sock.sendMessage(jid, { text: responseMsg }, { quoted: m });
+          await sock.sendMessage(jid, { text: responseMsg });
           continue;
         }
 
