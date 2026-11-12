@@ -23,6 +23,7 @@ import {
   fetchTelegramStatus, 
   requestTelegramCodeApi,
   verifyTelegramCodeApi,
+  cancelTelegramAuthApi,
   disconnectDriverTelegramApi, 
   testTelegramRideApi,
   TelegramStatusPayload 
@@ -114,6 +115,28 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
       setVerificationCode('');
     }
   }, [targetPhone, status]);
+
+  // Close on Escape key press
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // ביטול תהליך האימות וחזרה להזנת מספר
+  const handleCancelProcess = async () => {
+    setCodeRequested(false);
+    setVerificationCode('');
+    if (targetPhone) {
+      await cancelTelegramAuthApi(targetPhone);
+    }
+    showToast('תהליך האימות בוטל', 'ok');
+  };
 
   if (!isOpen) return null;
 
@@ -231,8 +254,19 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in" dir="rtl">
-      <div className="bg-[#0b121e] border border-cyan-500/40 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl shadow-cyan-950/60 overflow-hidden">
+    <div 
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in cursor-pointer" 
+      dir="rtl"
+    >
+      <div 
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[#0b121e] border border-cyan-500/40 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl shadow-cyan-950/60 overflow-hidden cursor-default"
+      >
         
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-[#1e2c42] flex items-center justify-between bg-gradient-to-l from-cyan-950/50 via-slate-900 to-[#0b121e]">
@@ -536,7 +570,7 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                             value={verificationCode}
                             onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
                             placeholder="12345"
-                            className="w-44 bg-[#050811] border-2 border-cyan-400 rounded-xl px-4 py-2 text-center text-lg font-mono font-black text-white tracking-[0.3em] focus:outline-none shadow-lg shadow-cyan-950"
+                            className="w-36 sm:w-44 bg-[#050811] border-2 border-cyan-400 rounded-xl px-4 py-2 text-center text-lg font-mono font-black text-white tracking-[0.3em] focus:outline-none shadow-lg shadow-cyan-950"
                             dir="ltr"
                             autoFocus
                           />
@@ -544,10 +578,20 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                             type="button"
                             onClick={handleVerifyCode}
                             disabled={isSubmitting || verificationCode.length < 4}
-                            className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/40 transition-all cursor-pointer disabled:opacity-50"
+                            className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40 transition-all cursor-pointer disabled:opacity-50"
                           >
                             <Check className="w-4 h-4" />
-                            <span>{isSubmitting ? 'מאמת קוד ומחבר קבוצות...' : 'אמת קוד והתחבר למערכת 🚀'}</span>
+                            <span>{isSubmitting ? 'מאמת קוד...' : 'אמת קוד והתחבר למערכת 🚀'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelProcess}
+                            disabled={isSubmitting}
+                            className="py-2.5 px-3 rounded-xl bg-[#1a2333] hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/40 border border-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            title="בטל תהליך וחזור להזנת מספר"
+                          >
+                            <X className="w-4 h-4" />
+                            <span>בטל</span>
                           </button>
                         </div>
 
@@ -560,9 +604,14 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
                           >
                             לא קיבלת קוד? לחץ כאן לשליחה חוזרת 🔄
                           </button>
-                          <span className="text-slate-400">
-                            תוקף הקוד: 10 דקות
-                          </span>
+                          <button
+                            type="button"
+                            onClick={handleCancelProcess}
+                            disabled={isSubmitting}
+                            className="text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                          >
+                            רוצה להחליף מספר? לחץ לביטול וחזרה ↩️
+                          </button>
                         </div>
                       </div>
                     )}

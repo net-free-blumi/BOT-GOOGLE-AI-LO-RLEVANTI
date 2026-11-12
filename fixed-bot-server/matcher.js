@@ -628,7 +628,34 @@ export const findPlaces = (text) => get().findPlaces(text);
 export const detectInternalTransitionBeitShemesh = (text) => get().detectInternalTransitionBeitShemesh(text);
 export const detectInternalTransitionJerusalem = (text) => get().detectInternalTransitionJerusalem(text);
 
+// זיהוי וסינון מוחלט של הודעות המתנה זמניות (Waiting for this message placeholder)
+// מנקה תווי כיוון ויוניקוד בלתי נראים (\u200e, \u200f וכו') כדי למנוע עקיפת פילטר
+export function isWaitingForMessagePlaceholder(rawText) {
+  if (!rawText) return true;
+  const clean = String(rawText)
+    .replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean || clean.length < 4) return true;
+  const lower = clean.toLowerCase();
+  return (
+    clean.includes("בהמתנה להודעה") ||
+    clean.includes("ממתין להודעה") ||
+    clean.includes("הודעה זו ממתינה") ||
+    clean.includes("עשוי לחלוף זמן מה") ||
+    clean.includes("יתכן שיחלוף זמן") ||
+    clean.includes("יתכן שייקח זמן") ||
+    lower.includes("waiting for this message") ||
+    lower.includes("waiting for message") ||
+    lower.includes("this may take a while") ||
+    lower.includes("ciphertexterror")
+  );
+}
+
 export function matchesAnySearch(rideText, userSearchState, groupName = "") {
+  if (!rideText || isWaitingForMessagePlaceholder(rideText)) {
+    return { ok: false, matched: false, reason: "הודעת המתנה זמנית של וואטסאפ (לא נסיעה)" };
+  }
   if (!userSearchState || !userSearchState.active) {
     return { ok: false, matched: false, reason: "אין חיפוש פעיל" };
   }
@@ -652,6 +679,7 @@ export function matchesAnySearch(rideText, userSearchState, groupName = "") {
 }
 
 export function cleanRideText(text) {
+  if (!text || isWaitingForMessagePlaceholder(text)) return "";
   return stripStationAndLinks(text).trim() || String(text || "").trim();
 }
 

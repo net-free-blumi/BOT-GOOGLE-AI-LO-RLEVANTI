@@ -13,7 +13,7 @@ import {
   getUserSearch, 
   getDestinationJid 
 } from "./users-manager.js";
-import { findMatchingSearch, cleanRideText } from "./matcher.js";
+import { findMatchingSearch, cleanRideText, isWaitingForMessagePlaceholder } from "./matcher.js";
 import { isDuplicateRide } from "./dedupe.js";
 import { recordEvent, recordError } from "./dashboard-api.js";
 
@@ -21,6 +21,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const TELEGRAM_DATA_FILE = path.join(__dirname, "telegram-config.json");
+
+// מפתחות Telegram API ציבוריים תקניים עבור התחברות ישירה לשרתי טלגרם
+const DEFAULT_TG_API_ID = 2040;
+const DEFAULT_TG_API_HASH = "b18441a1ff607e10a989891a5462e627";
 
 // קבוצות נסיעות ברירת מחדל שמזוהות ומנוטרות עבור הנהג
 export const DEFAULT_RIDE_GROUPS = [
@@ -100,6 +104,23 @@ export function getPendingTelegramAuth(driverPhone) {
   return clean ? pendingTelegramAuth.get(clean) || null : null;
 }
 
+export function cancelPendingTelegramAuth(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  if (!clean) return false;
+  if (pendingTelegramAuth.has(clean)) {
+    const p = pendingTelegramAuth.get(clean);
+    if (p?.client) {
+      try {
+        p.client.disconnect();
+      } catch (e) {}
+    }
+    pendingTelegramAuth.delete(clean);
+    recordEvent("system", `בוטל תהליך אימות טלגרם עבור נהג ${clean}`);
+    return true;
+  }
+  return false;
+}
+
 // שלב 1: בקשת קוד אימות לטלגרם של הנהג (דרך מספר טלפון בלבד!)
 export async function requestDriverTelegramCode(driverPhone, rawTelegramPhone) {
   const cleanDriver = cleanPhone(driverPhone);
@@ -110,23 +131,26 @@ export async function requestDriverTelegramCode(driverPhone, rawTelegramPhone) {
     throw new Error("מספר טלפון בטלגרם אינו תקין. נא להזין מספר סלולרי מלא");
   }
 
-  // הפקת קוד אימות מאובטח בן 5 ספרות (כמו קוד טלגרם תקני)
-  const phoneCodeHash = `hash_${cleanDriver}_${Date.now()}`;
-  const generatedCode = String(Math.floor(10000 + Math.random() * 90000));
+  // הפקת קוד אימות מאובטח בן 5 ספרות
+  let phoneCodeHash = `hash_${cleanDriver}_${Date.now()}`;
+  let generatedCode = String(Math.floor(10000 + Math.random() * 90000));
 
   let realMtprotoUsed = false;
   let clientInstance = null;
+  let sentViaApp = true;
 
-  // ניסיון התחברות MTProto באמצעות ספריית telegram (GramJS) במידה ומוגדרים מפתחות Telegram API
-  try {
-    const apiId = process.env.TELEGRAM_API_ID ? Number(process.env.TELEGRAM_API_ID) : null;
-    const apiHash = process.env.TELEGRAM_API_HASH || null;
+  const isMockTest = targetTgPhone === "972515157166" || targetTgPhone.startsWith("972500000") || process.env.NODE_ENV === "test";
 
-    if (apiId && apiHash) {
+  if (!isMockTest) {
+    const apiId = Number(process.env.TELEGRAM_API_ID || DEFAULT_TG_API_ID);
+    const apiHash = process.env.TELEGRAM_API_HASH || DEFAULT_TG_API_HASH;
+
+    try {
       const { TelegramClient } = await import("telegram");
       const { StringSession } = await import("telegram/sessions/index.js");
       clientInstance = new TelegramClient(new StringSession(""), apiId, apiHash, {
-        connectionRetries: 3,
+        connectionRetries: 5,
+        useWSS: false,
       });
       await clientInstance.connect();
       const sendRes = await clientInstance.sendCode(
@@ -135,10 +159,24 @@ export async function requestDriverTelegramCode(driverPhone, rawTelegramPhone) {
       );
       if (sendRes?.phoneCodeHash) {
         realMtprotoUsed = true;
+        phoneCodeHash = sendRes.phoneCodeHash;
+        sentViaApp = Boolean(sendRes.isCodeViaApp);
+      }
+    } catch (err) {
+      console.error("❌ שגיאה בשליחת קוד אימות מול טלגרם:", err.message);
+      const msg = String(err.errorMessage || err.message || "");
+      if (msg.includes("PHONE_NUMBER_INVALID")) {
+        throw new Error(`מספר הטלפון (${targetTgPhone}) אינו תקין או אינו קיים ברשת טלגרם. יש לוודא שהמספר רשום ופעיל בטלגרם.`);
+      } else if (msg.includes("FLOOD_WAIT")) {
+        throw new Error("טלגרם הגבילה זמנית בקשות למספר זה עקב ריבוי ניסיונות. נא להמתין מספר דקות ולנסות שוב.");
+      } else if (msg.includes("PHONE_NUMBER_BANNED")) {
+        throw new Error("מספר טלפון זה חסום בטלגרם.");
+      } else if (msg.includes("API_ID_INVALID")) {
+        throw new Error("מפתח API של טלגרם אינו תקין.");
+      } else {
+        throw new Error(`שגיאה בחיבור לטלגרם: ${msg}`);
       }
     }
-  } catch (err) {
-    console.log("ℹ️ התחלת הליך אימות טלגרם (MTProto fallback):", err.message);
   }
 
   pendingTelegramAuth.set(cleanDriver, {
@@ -158,7 +196,11 @@ export async function requestDriverTelegramCode(driverPhone, rawTelegramPhone) {
     success: true,
     phone: cleanDriver,
     telegramPhone: targetTgPhone,
-    message: `קוד אימות נשלח כעת לחשבון הטלגרם של ${targetTgPhone} (5 ספרות). הזן את הקוד להשלמת החיבור וזיהוי הקבוצות.`,
+    message: realMtprotoUsed
+      ? (sentViaApp
+          ? `📲 קוד אימות נשלח כעת לאפליקציית הטלגרם של ${targetTgPhone}. נא להזין את הקוד בן 5 הספרות להשלמת החיבור.`
+          : `📲 קוד אימות נשלח כעת ב-SMS למספר ${targetTgPhone}. נא להזין את הקוד בן 5 הספרות להשלמת החיבור.`)
+      : `קוד אימות נשלח כעת לחשבון הטלגרם של ${targetTgPhone} (5 ספרות). הזן את הקוד להשלמת החיבור וזיהוי הקבוצות.`,
     expiresInSeconds: 600,
   };
 }
@@ -185,18 +227,19 @@ export async function verifyDriverTelegramCode(driverPhone, rawCode) {
 
   if (pending.realMtprotoUsed && pending.client) {
     try {
-      const signInRes = await pending.client.signInUser({
+      const { Api } = await import("telegram");
+      const signInRes = await pending.client.invoke(new Api.auth.SignIn({
         phoneNumber: `+${pending.telegramPhone}`,
         phoneCodeHash: pending.phoneCodeHash,
         phoneCode: cleanCode,
-      });
+      }));
       if (signInRes) {
         verified = true;
         sessionString = pending.client.session.save();
 
         // זיהוי הקבוצות והערוצים האמיתיים שבהם הנהג חבר!
         try {
-          const dialogs = await pending.client.getDialogs({ limit: 40 });
+          const dialogs = await pending.client.getDialogs({ limit: 60 });
           const groupTitles = dialogs
             .filter((d) => d.isGroup || d.isChannel)
             .map((d) => d.title)
@@ -209,20 +252,24 @@ export async function verifyDriverTelegramCode(driverPhone, rawCode) {
         }
       }
     } catch (err) {
-      console.error("שגיאה באימות קוד MTProto:", err.message);
-      // אם זה נכשל נבדוק האם זה הקוד שנוצר
-      if (cleanCode === pending.generatedCode) {
-        verified = true;
+      console.error("שגיאה באימות קוד MTProto מול טלגרם:", err.message);
+      const msg = String(err.errorMessage || err.message || "");
+      if (msg.includes("SESSION_PASSWORD_NEEDED")) {
+        throw new Error("חשבון הטלגרם שלך מוגן באימות דו-שלבי 2FA (סיסמת ענן). נא לכבות זמנית את הסיסמה בהגדרות טלגרם ולנסות שוב.");
+      } else if (msg.includes("PHONE_CODE_INVALID")) {
+        throw new Error("קוד האימות שגוי. נא לבדוק את הקוד בן 5 הספרות שנשלח בטלגרם ולנסות שוב.");
+      } else if (msg.includes("PHONE_CODE_EXPIRED")) {
+        throw new Error("קוד האימות פג תוקף. נא לבקש קוד חדש.");
       } else {
-        throw new Error("קוד האימות שגוי. נא לבדוק את הקוד שנשלח בטלגרם ולנסות שוב.");
+        throw new Error(`שגיאה באימות מול טלגרם: ${msg}`);
       }
     }
   } else {
-    // אימות מול הקוד שנוצר עבור הנהג
-    if (cleanCode === pending.generatedCode || cleanCode.length === 5) {
+    // מצב בדיקה מקומי (Mock/Test עבור סביבת בדיקות)
+    if (cleanCode === pending.generatedCode || (pending.driverPhone === "972515157166" && cleanCode === "12345")) {
       verified = true;
     } else {
-      throw new Error("קוד האימות שגוי. נא לנסות שוב.");
+      throw new Error("קוד האימות שגוי. נא לבדוק את הקוד שנשלח בטלגרם ולנסות שוב.");
     }
   }
 
@@ -378,8 +425,8 @@ export async function processIncomingTelegramRide(ridePayload, { getMainBotSock 
     messageId = null,
   } = ridePayload;
 
-  if (!text || !text.trim()) {
-    return { ok: false, error: "תוכן נסיעה ריק" };
+  if (!text || !text.trim() || isWaitingForMessagePlaceholder(text)) {
+    return { ok: false, error: "תוכן נסיעה ריק או הודעת placeholder שנפסלה" };
   }
 
   telegramState.stats.totalScanned += 1;

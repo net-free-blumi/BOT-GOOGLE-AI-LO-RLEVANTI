@@ -265,7 +265,7 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
         const cached = getCachedMessageForRetry(key.id);
         if (cached) return cached;
       }
-      return undefined;
+      return { conversation: "🚕 נסיעות בוט איכותי" };
     },
   });
 
@@ -519,7 +519,7 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
         const cached = getCachedMessageForRetry(key.id);
         if (cached) return cached;
       }
-      return undefined;
+      return { conversation: "🚕 נסיעות בוט איכותי" };
     },
   });
 

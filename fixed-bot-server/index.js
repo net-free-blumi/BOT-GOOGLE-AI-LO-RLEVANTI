@@ -2,7 +2,7 @@ import cron from "node-cron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
+import { normalizeText, parseDriverCommand, processDriverCommand, rideMatches, matchesAnySearch, findPlaces, extractDispatcherContact, buildQuotedRideMessage, isWaitingForMessagePlaceholder } from "./matcher.js";
 import { createDeduper } from "./dedupe.js";
 import { startDashboard, recordEvent, recordError } from "./dashboard-api.js";
 
@@ -24,7 +24,8 @@ import {
   handleDriverTelegramCommand,
   hasPendingTelegramAuth,
   requestDriverTelegramCode,
-  verifyDriverTelegramCode
+  verifyDriverTelegramCode,
+  cancelPendingTelegramAuth
 } from "./telegram-manager.js";
 import {
   extractInteractiveResponse,
@@ -371,12 +372,7 @@ function cleanSpamFromRide(rawText) {
 // זיהוי הודעות שברור שאינן נסיעה: פרסומות, הזמנות לקבוצות, קישורי רכישה, הודעות מערכת והודעות ארוכות במיוחד
 function detectNonRide(cleaned) {
   const t = String(cleaned || "");
-  if (
-    t.includes("בהמתנה להודעה זו") ||
-    t.includes("Waiting for this message") ||
-    t.includes("עשוי לחלוף זמן מה עד שהיא תופיע") ||
-    t.includes("This may take a while")
-  ) {
+  if (isWaitingForMessagePlaceholder(t)) {
     return "הודעת המתנה זמנית של וואטסאפ (Placeholder) - לא נסיעה";
   }
   if (t.length > 700) return "הודעה ארוכה מדי - לא נסיעה";
@@ -469,7 +465,10 @@ function extractMessageText(m) {
   }
   // בדיקה מקיפה של תגובת כפתורים או תפריט נפתח (Interactive / Buttons / List / Native Flow)
   const interactiveText = extractInteractiveResponse(msg);
-  if (interactiveText) return interactiveText;
+  if (interactiveText) {
+    if (isWaitingForMessagePlaceholder(interactiveText)) return "";
+    return interactiveText;
+  }
 
   const rawText = String(
     msg.conversation ||
@@ -482,13 +481,8 @@ function extractMessageText(m) {
     ""
   ).trim();
 
-  // סינון מוחלט של הודעות המתנה זמניות (Waiting for this message placeholder)
-  if (
-    rawText.includes("בהמתנה להודעה זו") ||
-    rawText.includes("Waiting for this message") ||
-    rawText.includes("עשוי לחלוף זמן מה עד שהיא תופיע") ||
-    rawText.includes("This may take a while")
-  ) {
+  // סינון מוחלט של הודעות המתנה זמניות (Waiting for this message placeholder) כולל תווי יוניקוד סמויים
+  if (isWaitingForMessagePlaceholder(rawText)) {
     return "";
   }
 
@@ -590,6 +584,15 @@ export async function sendRideClaimReply(sock, targetJid, text, quoteObj) {
 
 // שליחת התראת נסיעה לנהג (100% אמינות, הגעה מיידית ללא בליעת הודעות בוואטסאפ).
 async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
+  // בדיקת בטיחות מוחלטת: פסילת כל הודעת דמה/המתנה לפני שליחה לנהג
+  if (
+    isWaitingForMessagePlaceholder(rideData?.cleanedText) || 
+    isWaitingForMessagePlaceholder(rideData?.rawText)
+  ) {
+    console.warn(`⚠️ ניסיון שליחת הודעת דמה/placeholder ("בהמתנה להודעה זו") נבלם לחלוטין לפני שליחה לנהג ${driverPhone}`);
+    return { ok: false, error: "הודעת placeholder נפסלה" };
+  }
+
   const alertMsg = buildRideAlertText(rideData);
 
   // הבטחת JID יעד תקין לחלוטין ברשת וואטסאפ (ללא LID שעלול להיתקע ב'בהמתנה להודעה זו')
@@ -1774,6 +1777,10 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       // ניקוי פרסומות/פוטר דרייבוט לפני כל בדיקה
       const cleanedText = cleanSpamFromRide(text);
 
+      if (isWaitingForMessagePlaceholder(text) || isWaitingForMessagePlaceholder(cleanedText)) {
+        continue;
+      }
+
       const junk = detectNonRide(cleanedText);
       if (junk) {
         if (DEBUG_FILTER) console.log(`[נדחה מקבוצה ${groupName}] ${junk} | "${text.replace(/\n/g, " / ").slice(0, 80)}"`);
@@ -1949,6 +1956,7 @@ startDashboard({
   getTelegramStatus: () => getTelegramStatus(),
   requestDriverTelegramCode: (phone, tgPhone) => requestDriverTelegramCode(phone, tgPhone),
   verifyDriverTelegramCode: (phone, code) => verifyDriverTelegramCode(phone, code),
+  cancelPendingTelegramAuth: (phone) => cancelPendingTelegramAuth(phone),
   updateDriverTelegram: (phone, config) => updateDriverTelegram(phone, config),
   disconnectDriverTelegram: (phone) => disconnectDriverTelegram(phone),
   processIncomingTelegramRide: (payload) => processIncomingTelegramRide(payload, { getMainBotSock }),

@@ -989,6 +989,18 @@ export function startDashboard(runtime) {
     }
   });
 
+  app.post("/api/telegram/driver/cancel-code", requireAuth, (req, res) => {
+    try {
+      const { phone } = req.body || {};
+      if (ctx?.cancelPendingTelegramAuth) {
+        ctx.cancelPendingTelegramAuth(phone);
+      }
+      res.json({ ok: true, cancelled: true });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.post("/api/telegram/driver/connect", requireAuth, (req, res) => {
     try {
       const { phone, telegramPhone, groups, forwardToWa } = req.body || {};

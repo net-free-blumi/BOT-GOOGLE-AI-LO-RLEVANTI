@@ -11,7 +11,8 @@ import {
   requestDriverTelegramCode,
   verifyDriverTelegramCode,
   handleDriverTelegramCommand,
-  hasPendingTelegramAuth
+  hasPendingTelegramAuth,
+  cancelPendingTelegramAuth
 } from "./telegram-manager.js";
 import { setUserSearch } from "./users-manager.js";
 
@@ -110,6 +111,38 @@ const rideMsg = sentMessages.find((m) => m.payload.text && m.payload.text.includ
 assert(rideMsg, "ההודעה צריכה להכיל את הכותרת המעוצבת מטלגרם");
 assert(rideMsg.payload.text.includes("מאוחדים תגבור ריידר 👑"), "ההודעה צריכה להכיל את שם הקבוצה בטלגרם");
 console.log("✅ נסיעה מטלגרם עובדה, סוננה ונמסרה לוואטסאפ של הנהג בעיצוב המדויק!");
+
+// 9. בדיקת דחיית קוד אימות שגוי (השרת חייב לזרוק שגיאה ולא לאשר סתם כך!)
+console.log("9. בדיקת דחיית קוד אימות שגוי...");
+await requestDriverTelegramCode(testDriver, "0515157166");
+let rejectedError = null;
+try {
+  await verifyDriverTelegramCode(testDriver, "99999");
+} catch (e) {
+  rejectedError = e;
+}
+assert(rejectedError, "קוד שגוי חייב להידחות עם שגיאה ברורה!");
+assert(rejectedError.message.includes("קוד האימות שגוי"), "הודעת השגיאה צריכה לציין שהקוד שגוי");
+console.log("✅ קוד אימות שגוי נדחה בצורה קפדנית כנדרש!");
+
+// 10. בדיקת ביטול תהליך אימות באמצע
+console.log("10. בדיקת ביטול תהליך אימות באמצע...");
+assert(hasPendingTelegramAuth(testDriver), "צריכה להיות בקשה פעילה לפני ביטול");
+const cancelled = cancelPendingTelegramAuth(testDriver);
+assert.strictEqual(cancelled, true, "פעולת הביטול צריכה להצליח");
+assert.strictEqual(hasPendingTelegramAuth(testDriver), false, "הבקשה צריכה להימחק ולא להיות פעילה יותר");
+console.log("✅ ביטול תהליך אימות באמצע עובד במדויק!");
+
+// 11. בדיקת חסימת הודעות placeholder ('בהמתנה להודעה זו') מטלגרם
+console.log("11. בדיקת פסילת הודעות 'בהמתנה להודעה זו' מטלגרם...");
+const placeholderRes = await processIncomingTelegramRide({
+  groupTitle: "מאוחדים תגבור ריידר 👑",
+  senderName: "ריידר הפצה",
+  text: "בהמתנה להודעה זו. הדבר עשוי להימשך זמן מה.",
+  directUrl: "https://t.me/c/123/456",
+});
+assert.strictEqual(placeholderRes.ok, false, "הודעת פלייסהולדר צריכה להיפסל");
+console.log("✅ הודעת 'בהמתנה להודעה זו' נחסמה לחלוטין מטלגרם!");
 
 console.log("=========================================");
 console.log("🎉 כל בדיקות אינטגרציית טלגרם (טלפון + קוד) עברו בהצלחה מושלמת (100%)!");

@@ -1022,22 +1022,22 @@ export async function requestTelegramCodeApi(
 ): Promise<{ ok: boolean; success?: boolean; phone?: string; telegramPhone?: string; message?: string; error?: string }> {
   const clean = phone.replace(/[^0-9]/g, '');
   const cleanTg = (telegramPhone || phone).replace(/[^0-9]/g, '');
-  const localConfigs = getLocalTelegramConfigs();
-  localConfigs[clean] = {
-    ...(localConfigs[clean] || {}),
-    telegramPhone: cleanTg || clean,
-    pendingCode: true,
-  };
-  saveLocalTelegramConfigs(localConfigs);
 
   const cfg = loadConfig();
   if (cfg.useDemoMode) {
+    const localConfigs = getLocalTelegramConfigs();
+    localConfigs[clean] = {
+      ...(localConfigs[clean] || {}),
+      telegramPhone: cleanTg || clean,
+      pendingCode: true,
+    };
+    saveLocalTelegramConfigs(localConfigs);
     return {
       ok: true,
       success: true,
       phone: clean,
       telegramPhone: cleanTg || clean,
-      message: `קוד אימות בן 5 ספרות נשלח כעת לחשבון הטלגרם ${cleanTg || clean}`,
+      message: `(מצב הדגמה) קוד אימות בן 5 ספרות נשלח לחשבון ${cleanTg || clean}`,
     };
   }
 
@@ -1046,14 +1046,24 @@ export async function requestTelegramCodeApi(
       method: 'POST',
       body: JSON.stringify({ phone: clean, telegramPhone: cleanTg }),
     });
-    return res;
+    if (res && (res.ok || res.success)) {
+      const localConfigs = getLocalTelegramConfigs();
+      localConfigs[clean] = {
+        ...(localConfigs[clean] || {}),
+        telegramPhone: cleanTg || clean,
+        pendingCode: true,
+      };
+      saveLocalTelegramConfigs(localConfigs);
+      return res;
+    }
+    return {
+      ok: false,
+      error: res?.error || 'שגיאה בשליחת קוד אימות מטלגרם',
+    };
   } catch (err: any) {
     return {
-      ok: true,
-      success: true,
-      phone: clean,
-      telegramPhone: cleanTg || clean,
-      message: `קוד אימות בן 5 ספרות נשלח כעת לחשבון הטלגרם ${cleanTg || clean}`,
+      ok: false,
+      error: err.message || 'שגיאת תקשורת מול השרת בשליחת קוד טלגרם',
     };
   }
 }
@@ -1075,25 +1085,27 @@ export async function verifyTelegramCodeApi(
   const clean = phone.replace(/[^0-9]/g, '');
   const cleanCode = code.replace(/[^0-9]/g, '').trim();
 
-  const localConfigs = getLocalTelegramConfigs();
-  const existing = localConfigs[clean] || {};
-  const discoveredGroups = existing.groups || DEFAULT_TG_GROUPS;
-
-  localConfigs[clean] = {
-    ...existing,
-    telegramPhone: existing.telegramPhone || clean,
-    groups: discoveredGroups,
-    forwardToWa: true,
-    connected: true,
-    connectedAt: new Date().toISOString(),
-    pendingCode: false,
-    scannedCount: existing.scannedCount || 0,
-    matchedCount: existing.matchedCount || 0,
-  };
-  saveLocalTelegramConfigs(localConfigs);
-
   const cfg = loadConfig();
   if (cfg.useDemoMode) {
+    if (cleanCode !== '12345') {
+      return {
+        ok: false,
+        error: 'קוד אימות שגוי. במצב הדגמה הקוד הוא 12345',
+      };
+    }
+    const localConfigs = getLocalTelegramConfigs();
+    const existing = localConfigs[clean] || {};
+    const discoveredGroups = existing.groups || DEFAULT_TG_GROUPS;
+    localConfigs[clean] = {
+      ...existing,
+      telegramPhone: existing.telegramPhone || clean,
+      groups: discoveredGroups,
+      forwardToWa: true,
+      connected: true,
+      connectedAt: new Date().toISOString(),
+      pendingCode: false,
+    };
+    saveLocalTelegramConfigs(localConfigs);
     return {
       ok: true,
       success: true,
@@ -1110,16 +1122,36 @@ export async function verifyTelegramCodeApi(
       method: 'POST',
       body: JSON.stringify({ phone: clean, code: cleanCode }),
     });
-    return res;
+
+    if (res && (res.ok || res.success)) {
+      const localConfigs = getLocalTelegramConfigs();
+      const existing = localConfigs[clean] || {};
+      const discoveredGroups = res.groups || existing.groups || DEFAULT_TG_GROUPS;
+
+      localConfigs[clean] = {
+        ...existing,
+        telegramPhone: res.telegramPhone || existing.telegramPhone || clean,
+        groups: discoveredGroups,
+        forwardToWa: true,
+        connected: true,
+        connectedAt: res.connectedAt || new Date().toISOString(),
+        pendingCode: false,
+        scannedCount: existing.scannedCount || 0,
+        matchedCount: existing.matchedCount || 0,
+      };
+      saveLocalTelegramConfigs(localConfigs);
+
+      return res;
+    }
+
+    return {
+      ok: false,
+      error: res?.error || 'קוד האימות שגוי. נא לבדוק את הקוד ולנסות שוב.',
+    };
   } catch (err: any) {
     return {
-      ok: true,
-      success: true,
-      connected: true,
-      telegramPhone: localConfigs[clean].telegramPhone,
-      groups: discoveredGroups,
-      groupsCount: discoveredGroups.length,
-      message: `חשבון הטלגרם חובר בהצלחה! זוהו ${discoveredGroups.length} קבוצות נסיעות בחשבונך.`,
+      ok: false,
+      error: err.message || 'שגיאת שרת באימות קוד טלגרם',
     };
   }
 }
@@ -1171,6 +1203,28 @@ export async function disconnectDriverTelegramApi(phone: string): Promise<any> {
   }
   try {
     return await request<any>('/api/telegram/driver/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    });
+  } catch {
+    return { ok: true, success: true };
+  }
+}
+
+export async function cancelTelegramAuthApi(phone: string): Promise<any> {
+  const clean = phone.replace(/[^0-9]/g, '');
+  const localConfigs = getLocalTelegramConfigs();
+  if (localConfigs[clean]) {
+    localConfigs[clean].pendingCode = false;
+    saveLocalTelegramConfigs(localConfigs);
+  }
+
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, success: true };
+  }
+  try {
+    return await request<any>('/api/telegram/driver/cancel-code', {
       method: 'POST',
       body: JSON.stringify({ phone }),
     });
