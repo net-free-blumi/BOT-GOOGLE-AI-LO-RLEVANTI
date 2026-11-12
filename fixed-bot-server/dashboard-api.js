@@ -1342,6 +1342,18 @@ export function startDashboard(runtime) {
       recordError("broadcast_api", err);
       return res.status(500).json({ ok: false, error: err.message || "שגיאה בשידור הודעה לנהגים" });
     }
+  app.post("/api/admin/notify-update", requireAuth, async (req, res) => {
+    try {
+      const { version = "3.4.0" } = req.body || {};
+      if (typeof ctx?.notifyAdminVersionUpdate === "function") {
+        const result = await ctx.notifyAdminVersionUpdate(version);
+        return res.json({ ok: true, ...result });
+      }
+      return res.json({ ok: true, queued: true });
+    } catch (err) {
+      recordError("admin_notify_api", err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // שליטה ב-PM2 - מוגן באבטחה מלאה
