@@ -255,6 +255,11 @@ export const TelegramModal: React.FC<TelegramModalProps> = ({
 
   return (
     <div 
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();

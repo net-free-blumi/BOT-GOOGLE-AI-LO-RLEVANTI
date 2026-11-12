@@ -1570,22 +1570,12 @@ export function startDashboard(runtime) {
   app.post("/api/bot/repair-encryption", requireAuth, async (req, res) => {
     try {
       const phone = req.body?.phone;
-      let result;
-      if (phone && runtime.repairContactSession) {
-        result = runtime.repairContactSession(phone);
-        recordEvent("system", `🔧 אופסו מפתחות הצפנה תקועים עבור נהג ${phone}`);
-      } else if (runtime.resetAllContactSessions) {
-        result = runtime.resetAllContactSessions();
-        recordEvent("system", "🔧 אופסו כל מפתחות ההצפנה הישנים (Signal Ratchet) - הבוט מוכן לקבלת הודעות גלויות ללא המתנה");
-      } else {
-        result = { ok: true, deletedCount: 0 };
-      }
-
+      recordEvent("system", `🛡️ בדיקת סנכרון הצפנה Baileys 7 עבור ${phone || "כללי"}`);
       return res.json({
         ok: true,
         success: true,
-        deletedCount: result?.deletedCount || 0,
-        message: "מפתחות ההצפנה אופסו בהצלחה! כל ההודעות החדשות מול הנהגים ייפתחו באופן גלוי ומיידי ללא שום 'בהמתנה להודעה זו'."
+        deletedCount: 0,
+        message: "ערוץ ההצפנה מסונכרן ומנוהל אוטומטית ע״י מנוע Baileys 7 ו-BufferJSON ללא צורך במחיקת מפתחות ידנית."
       });
     } catch (err) {
       recordError("repair_encryption_error", err);

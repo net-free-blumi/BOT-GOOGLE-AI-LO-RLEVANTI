@@ -6,7 +6,8 @@ import makeWASocket, {
   useMultiFileAuthState, 
   makeCacheableSignalKeyStore,
   DisconnectReason, 
-  fetchLatestBaileysVersion 
+  fetchLatestBaileysVersion,
+  BufferJSON
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import fs from "node:fs";
@@ -27,11 +28,11 @@ const MESSAGE_STORE_FILE = path.join(AUTH_BASE_DIR, "messages-store.json");
 // מאגר הודעות מהיר ומגובה בדיסק לפתרון מוחלט של שגיאת "בהמתנה להודעה זו" (Waiting for this message retry)
 const recentMessagesMap = new Map();
 
-// טעינת הודעות שמורות מהדיסק עם עליית השרת (כדי שריסטארטים לא ישברו בקשות retry של וואטסאפ)
+// טעינת הודעות שמורות מהדיסק עם עליית השרת בעזרת BufferJSON.reviver (שומר על Buffer/Uint8Array ומפתחות הצפנה תקינים)
 try {
   if (fs.existsSync(MESSAGE_STORE_FILE)) {
     const raw = fs.readFileSync(MESSAGE_STORE_FILE, "utf8");
-    const data = JSON.parse(raw);
+    const data = JSON.parse(raw, BufferJSON.reviver);
     for (const [k, v] of Object.entries(data)) {
       recentMessagesMap.set(k, v);
     }
@@ -47,7 +48,7 @@ function persistMessageStore() {
       const keys = Array.from(recentMessagesMap.keys()).slice(-3000);
       const obj = {};
       for (const k of keys) obj[k] = recentMessagesMap.get(k);
-      fs.writeFileSync(MESSAGE_STORE_FILE, JSON.stringify(obj), "utf8");
+      fs.writeFileSync(MESSAGE_STORE_FILE, JSON.stringify(obj, BufferJSON.replacer), "utf8");
     } catch (e) {}
   }, 2500);
 }
@@ -84,62 +85,49 @@ export function wrapSocketForRetry(sock) {
   return sock;
 }
 
-// מעקב מונה ניסיונות retry גלובלי השורד ריסטארט של סוקט (מונע לולאות retry אינסופיות)
-const globalMsgRetryCounters = new Map();
-
-// איפוס מפתחות הצפנה תקועים של איש קשר ספציפי (מחדש Signal Pre-Key Ratchet ללא ניתוק מהבוט)
-export function repairContactSession(contactPhoneOrJid) {
-  const clean = cleanPhone(contactPhoneOrJid);
-  const dirs = [BOT_AUTH_DIR];
-  for (const [phone] of driverSessions.entries()) {
-    dirs.push(path.join(SESSIONS_DIR, cleanPhone(phone)));
+// מחלקת מטמון עם TTL והגבלת גודל עבור msgRetryCounterCache נפרד לכל סוקט (מונע דליפות זיכרון והשפעה הדדית)
+export class TtlCache {
+  constructor(ttlMs = 10 * 60 * 1000, maxSize = 5000) {
+    this.m = new Map();
+    this.ttl = ttlMs;
+    this.maxSize = maxSize;
   }
-
-  let deletedCount = 0;
-  for (const dir of dirs) {
-    if (!fs.existsSync(dir)) continue;
-    try {
-      const files = fs.readdirSync(dir);
-      for (const file of files) {
-        if (file === "creds.json" || file.startsWith("app-state")) continue;
-        if (clean && (file.startsWith("session-") || file.startsWith("sender-key-")) && file.includes(clean)) {
-          try {
-            fs.unlinkSync(path.join(dir, file));
-            deletedCount++;
-          } catch (e) {}
-        }
-      }
-    } catch (e) {}
+  get(k) {
+    const e = this.m.get(k);
+    if (!e) return undefined;
+    if (Date.now() > e.exp) {
+      this.m.delete(k);
+      return undefined;
+    }
+    return e.v;
   }
-  console.log(`🧹 [Signal Session Repair] אופסו ${deletedCount} מפתחות הצפנה ישנים עבור ${cleanPhone(contactPhoneOrJid) || "כללי"}`);
-  return { ok: true, deletedCount };
+  set(k, v) {
+    if (this.m.size >= this.maxSize) {
+      const oldest = this.m.keys().next().value;
+      if (oldest !== undefined) this.m.delete(oldest);
+    }
+    this.m.set(k, { v, exp: Date.now() + this.ttl });
+  }
+  del(k) {
+    return this.m.delete(k);
+  }
+  delete(k) {
+    return this.m.delete(k);
+  }
 }
 
-// איפוס מלא של כל ה-Sessions התקועים (משמר את creds.json כך שהבוט נשאר מחובר 100%)
-export function resetAllContactSessions() {
-  let deletedCount = 0;
-  const dirs = [BOT_AUTH_DIR];
-  for (const [phone] of driverSessions.entries()) {
-    dirs.push(path.join(SESSIONS_DIR, cleanPhone(phone)));
-  }
+// ניהול מפתחות הצפנה ו-Signal Keystore:
+// ב-Baileys 7 ניהול המפתחות וה-Mutex מתבצע מובנה ע"י הספרייה.
+// מחיקת קבצי session מהדיסק בזמן שהסוקט פעיל מנוטרלת למניעת Bad MAC ופיצול זיכרון-דיסק.
+export function repairContactSession(contactPhoneOrJid) {
+  console.log(`ℹ️ [Signal Session] ניהול מפתחות מתבצע אוטומטית ע"י Baileys 7 Signal Keystore - מחיקת קבצים בזמן ריצה מנוטרלת (${cleanPhone(contactPhoneOrJid) || "כללי"}).`);
+  return { ok: true, deletedCount: 0, reason: "managed_by_baileys7" };
+}
 
-  for (const dir of dirs) {
-    if (!fs.existsSync(dir)) continue;
-    try {
-      const files = fs.readdirSync(dir);
-      for (const file of files) {
-        if (file === "creds.json" || file.startsWith("app-state")) continue;
-        if (file.startsWith("session-") || file.startsWith("sender-key-")) {
-          try {
-            fs.unlinkSync(path.join(dir, file));
-            deletedCount++;
-          } catch (e) {}
-        }
-      }
-    } catch (e) {}
-  }
-  console.log(`🧹 [Signal Full Reset] אופסו ${deletedCount} מפתחות הצפנה של שיחות (הבוט נשאר מחובר ב-100%)`);
-  return { ok: true, deletedCount };
+// איפוס מלא בטוח ללא פגיעה בסוקטים חיים
+export function resetAllContactSessions() {
+  console.log(`ℹ️ [Signal Session] ניהול מפתחות מתבצע אוטומטית ע"י Baileys 7 Signal Keystore - מחיקת קבצים בזמן ריצה מנוטרלת.`);
+  return { ok: true, deletedCount: 0, reason: "managed_by_baileys7" };
 }
 
 // יצירת תיקיות בסיס אם אינן קיימות
@@ -358,12 +346,9 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 2000,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
+    shouldSyncHistoryMessage: () => true,
     syncFullHistory: false,
-    msgRetryCounterCache: {
-      get: (key) => globalMsgRetryCounters.get(key),
-      set: (key, value) => globalMsgRetryCounters.set(key, value),
-      del: (key) => globalMsgRetryCounters.delete(key),
-    },
+    msgRetryCounterCache: new TtlCache(10 * 60 * 1000, 5000),
     getMessage: async (key) => {
       if (key?.id) {
         const cached = getCachedMessageForRetry(key.id);
@@ -496,14 +481,22 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
     }
   });
 
-  sock.ev.on("messages.upsert", async (upsert) => {
-    if (upsert.messages) {
-      for (const m of upsert.messages) {
-        if (m.key?.id && m.message) {
-          cacheMessageForRetry(m.key.id, m.message);
+  // האזנה לאירועי עדכון מיפוי LID->PN מובנים של Baileys 7
+  sock.ev.on("lid-mapping.update", (update) => {
+    try {
+      const list = Array.isArray(update) ? update : (update?.mapping ? [update.mapping] : []);
+      for (const item of list) {
+        const lid = item?.lid ? String(item.lid).split("@")[0].split(":")[0].replace(/\D/g, "") : null;
+        const pn = item?.pn ? String(item.pn).split("@")[0].split(":")[0].replace(/\D/g, "") : null;
+        if (lid && pn) {
+          registerLidMapping(lid, pn);
+          console.log(`🔗 [LID Event] עודכן מיפוי בוט ראשי LID->PN: ${lid} -> ${pn}`);
         }
       }
-    }
+    } catch (e) {}
+  });
+
+  sock.ev.on("messages.upsert", async (upsert) => {
     if (onMessage) {
       await onMessage(sock, upsert, { isMainBot: true, botPhone });
     }
@@ -614,12 +607,9 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     defaultQueryTimeoutMs: 60000,
     retryRequestDelayMs: 2000,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
+    shouldSyncHistoryMessage: () => true,
     syncFullHistory: false,
-    msgRetryCounterCache: {
-      get: (key) => globalMsgRetryCounters.get(key),
-      set: (key, value) => globalMsgRetryCounters.set(key, value),
-      del: (key) => globalMsgRetryCounters.delete(key),
-    },
+    msgRetryCounterCache: new TtlCache(10 * 60 * 1000, 5000),
     getMessage: async (key) => {
       if (key?.id) {
         const cached = getCachedMessageForRetry(key.id);
@@ -722,14 +712,22 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     }
   });
 
-  sock.ev.on("messages.upsert", async (upsert) => {
-    if (upsert.messages) {
-      for (const m of upsert.messages) {
-        if (m.key?.id && m.message) {
-          cacheMessageForRetry(m.key.id, m.message);
+  // האזנה לאירועי עדכון מיפוי LID->PN מובנים של Baileys 7 עבור חשבון הנהג
+  sock.ev.on("lid-mapping.update", (update) => {
+    try {
+      const list = Array.isArray(update) ? update : (update?.mapping ? [update.mapping] : []);
+      for (const item of list) {
+        const lid = item?.lid ? String(item.lid).split("@")[0].split(":")[0].replace(/\D/g, "") : null;
+        const pn = item?.pn ? String(item.pn).split("@")[0].split(":")[0].replace(/\D/g, "") : null;
+        if (lid && pn) {
+          registerLidMapping(lid, pn);
+          console.log(`🔗 [LID Event] עודכן מיפוי נהג (${driverPhone}) LID->PN: ${lid} -> ${pn}`);
         }
       }
-    }
+    } catch (e) {}
+  });
+
+  sock.ev.on("messages.upsert", async (upsert) => {
     if (onRideMessage) {
       await onRideMessage(sock, upsert, { isMainBot: false, driverPhone });
     }
