@@ -1520,6 +1520,35 @@ export function startDashboard(runtime) {
     }
   });
 
+  // ==========================================
+  // תיקון מפתחות הצפנה ו-Anti-Waiting לשיחות וואטסאפ (Signal Ratchet Repair)
+  // ==========================================
+  app.post("/api/bot/repair-encryption", requireAuth, async (req, res) => {
+    try {
+      const phone = req.body?.phone;
+      let result;
+      if (phone && runtime.repairContactSession) {
+        result = runtime.repairContactSession(phone);
+        recordEvent("system", `🔧 אופסו מפתחות הצפנה תקועים עבור נהג ${phone}`);
+      } else if (runtime.resetAllContactSessions) {
+        result = runtime.resetAllContactSessions();
+        recordEvent("system", "🔧 אופסו כל מפתחות ההצפנה הישנים (Signal Ratchet) - הבוט מוכן לקבלת הודעות גלויות ללא המתנה");
+      } else {
+        result = { ok: true, deletedCount: 0 };
+      }
+
+      return res.json({
+        ok: true,
+        success: true,
+        deletedCount: result?.deletedCount || 0,
+        message: "מפתחות ההצפנה אופסו בהצלחה! כל ההודעות החדשות מול הנהגים ייפתחו באופן גלוי ומיידי ללא שום 'בהמתנה להודעה זו'."
+      });
+    } catch (err) {
+      recordError("repair_encryption_error", err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // יומן שגיאות ובאגים ייעודי (Live Error Tracker API) - מוגן באבטחה מלאה
   app.get("/api/errors", requireAuth, (_req, res) => {
     res.json({ ok: true, errors: errorReports });

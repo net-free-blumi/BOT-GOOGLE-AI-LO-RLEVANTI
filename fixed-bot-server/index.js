@@ -76,6 +76,8 @@ import {
   ensureDriverSessionForQr,
   getDriverSession,
   cacheMessageForRetry,
+  repairContactSession,
+  resetAllContactSessions,
 } from "./session-manager.js";
 import {
   detectNeighborhood,
@@ -1160,6 +1162,11 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
   if (!messages || !messages.length) return;
 
   for (const m of messages) {
+    // שמירת כל הודעה נכנסת במאגר ה-Retry למניעת שגיאות פענוח
+    if (m?.key?.id && m?.message) {
+      cacheMessageForRetry(m.key.id, m.message);
+    }
+
     // 0. טיפול בתגובות אימוג'י (דיסלייק 👎 על הודעות הבוט להעברה לקבוצת התיקונים)
     if (m.message?.reactionMessage) {
       const rm = m.message.reactionMessage;
@@ -1407,6 +1414,27 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
         await sendHelpMenu(sock, jid, senderPhone);
+        continue;
+      }
+
+      if (norm === "היי" || norm === "שלום" || norm === "אהלן" || norm === "בוקר טוב" || norm === "ערב טוב" || norm === "צהריים טובים") {
+        await sendHelpMenu(sock, jid, senderPhone);
+        continue;
+      }
+
+      if (norm === "תקן" || norm === "ריסט" || norm === "תיקון" || norm === "איפוס הצפנה" || norm === "מפתחות" || norm === "סדר הצפנה" || norm === "תיקון הודעות") {
+        repairContactSession(senderPhone);
+        await sock.sendMessage(jid, {
+          text: `🔧 *מפתחות ההצפנה אופסו וחודשו בהצלחה!* (Anti-Waiting Fix 🚀)\n\n` +
+            `ערוץ ההצפנה מול הבוט חובר מחדש עם מפתחות Signal נקיים.\n` +
+            `מעכשיו כל ההודעות, הפקודות והנסיעות יופיעו אצלך מיד ללא שום 'בהמתנה להודעה זו'! 🚕\n\n` +
+            `🔍 *שלח כעת פקודת חיפוש להפעלה:*\n` +
+            `• *פנוי שמש פנימי* (פנימי בית שמש בלבד)\n` +
+            `• *פנוי שמש* (פנימי ויוצא מבית שמש)\n` +
+            `• *פ ים שמש* (ירושלים לבית שמש)\n` +
+            `• *תפריט* (לכל האפשרויות)`
+        });
+        recordEvent("system", `בוצע איפוס מפתחות הצפנה (Anti-Waiting) עבור נהג ${senderPhone}`);
         continue;
       }
 
@@ -2024,6 +2052,12 @@ startDashboard({
   },
   notifyAdminVersionUpdate: async (ver) => {
     return await notifyAdminVersionUpdate(ver);
+  },
+  repairContactSession: (phone) => {
+    return repairContactSession(phone);
+  },
+  resetAllContactSessions: () => {
+    return resetAllContactSessions();
   }
 });
 

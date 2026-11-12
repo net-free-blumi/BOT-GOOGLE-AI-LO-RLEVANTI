@@ -17,10 +17,11 @@ import {
   CheckCircle2,
   BellRing,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Wrench
 } from 'lucide-react';
 import { WhatsAppState } from '../types.ts';
-import { syncFromGitHubApi, pushToGitHubApi, requestPairingCodeApi, resetMainBotAuthApi } from '../services/api.ts';
+import { syncFromGitHubApi, pushToGitHubApi, repairEncryptionApi, requestPairingCodeApi, resetMainBotAuthApi } from '../services/api.ts';
 import { DriverQrPanel } from './DriverQrPanel.tsx';
 
 interface BotControlCardProps {
@@ -127,6 +128,8 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [pushingGit, setPushingGit] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const [repairingEncryption, setRepairingEncryption] = useState(false);
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
 
   const handleSyncGit = async () => {
     setSyncingGit(true);
@@ -155,6 +158,21 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
       setTimeout(() => setPushMessage(null), 6000);
     } finally {
       setPushingGit(false);
+    }
+  };
+
+  const handleRepairEncryption = async () => {
+    setRepairingEncryption(true);
+    setRepairMessage(null);
+    try {
+      const res = await repairEncryptionApi();
+      setRepairMessage(res.message || 'מפתחות ההצפנה אופסו בהצלחה!');
+      setTimeout(() => setRepairMessage(null), 7000);
+    } catch (e: any) {
+      setRepairMessage(e.message || 'שגיאה באיפוס מפתחות הצפנה');
+      setTimeout(() => setRepairMessage(null), 7000);
+    } finally {
+      setRepairingEncryption(false);
     }
   };
 
@@ -462,6 +480,33 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
             )}
           </button>
         </div>
+
+        {/* Repair Broken WhatsApp Encryption Keys (Anti-Waiting Fix) */}
+        <button
+          onClick={handleRepairEncryption}
+          disabled={loading || repairingEncryption}
+          className="w-full p-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-rose-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/40 text-amber-200 hover:text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-98 disabled:opacity-50"
+          title="איפוס מפתחות הצפנה ישנים עבור הנהגים ומחיקת שגיאת 'בהמתנה להודעה זו' ללא צורך בסריקת QR מחדש"
+        >
+          {repairingEncryption ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+              <span>מאפס ומחדש מפתחות הצפנה...</span>
+            </>
+          ) : (
+            <>
+              <Wrench className="w-4 h-4 text-amber-400" />
+              <span>תיקון מפתחות הצפנה (סיום 'בהמתנה להודעה זו') 🔧</span>
+            </>
+          )}
+        </button>
+
+        {repairMessage && (
+          <div className="text-center text-xs font-bold text-amber-300 bg-amber-500/15 border border-amber-500/40 rounded-lg py-2 px-3 animate-in fade-in flex items-center justify-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{repairMessage}</span>
+          </div>
+        )}
 
         {pushMessage && (
           <div className="text-center text-xs font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 rounded-lg py-2 px-3 animate-in fade-in flex items-center justify-center gap-1.5">

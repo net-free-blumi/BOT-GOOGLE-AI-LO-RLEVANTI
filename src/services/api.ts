@@ -1258,3 +1258,16 @@ export async function pushToGitHubApi(): Promise<{ ok: boolean; success?: boolea
   return await request('/api/deploy/push-github', { method: 'POST' });
 }
 
+// 1-Click Anti-Waiting / Signal Ratchet Repair
+export async function repairEncryptionApi(phone?: string): Promise<{ ok: boolean; success?: boolean; message?: string; deletedCount?: number; error?: string }> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, success: true, message: '(מצב הדגמה) מפתחות ההצפנה אופסו בהצלחה!' };
+  }
+  return await request('/api/bot/repair-encryption', {
+    method: 'POST',
+    body: JSON.stringify({ phone }),
+  });
+}
+
+

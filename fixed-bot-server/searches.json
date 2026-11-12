@@ -3,17 +3,16 @@
     "active": true,
     "searches": [
       {
-        "id": "s_test_1",
-        "mode": "internal",
-        "origin": "בית שמש",
-        "displayText": "פנימי בבית שמש"
+        "mode": "internal_only",
+        "city": "בית שמש",
+        "displayText": "בית שמש (פנימי)"
       }
     ],
     "pendingSearch": null,
-    "mode": "internal",
-    "origin": "בית שמש",
+    "mode": "internal_only",
+    "origin": null,
     "destination": null,
-    "displayText": "פנימי בבית שמש"
+    "displayText": "בית שמש (פנימי)"
   },
   "972599999999": {
     "active": false,

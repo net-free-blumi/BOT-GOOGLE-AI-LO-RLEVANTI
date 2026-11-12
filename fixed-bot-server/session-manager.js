@@ -4,6 +4,7 @@
 
 import makeWASocket, { 
   useMultiFileAuthState, 
+  makeCacheableSignalKeyStore,
   DisconnectReason, 
   fetchLatestBaileysVersion 
 } from "@whiskeysockets/baileys";
@@ -21,22 +22,124 @@ const AUTH_BASE_DIR = path.join(__dirname, "auth");
 const BOT_AUTH_DIR = path.join(AUTH_BASE_DIR, "bot");
 const SESSIONS_DIR = path.join(AUTH_BASE_DIR, "sessions");
 const BOT_ALERT_MARKER_FILE = path.join(BOT_AUTH_DIR, "alert-sent.json");
+const MESSAGE_STORE_FILE = path.join(AUTH_BASE_DIR, "messages-store.json");
 
-// מאגר הודעות מהיר לפתרון מוחלט של שגיאת "בהמתנה להודעה זו" (Waiting for this message retry)
+// מאגר הודעות מהיר ומגובה בדיסק לפתרון מוחלט של שגיאת "בהמתנה להודעה זו" (Waiting for this message retry)
 const recentMessagesMap = new Map();
+
+// טעינת הודעות שמורות מהדיסק עם עליית השרת (כדי שריסטארטים לא ישברו בקשות retry של וואטסאפ)
+try {
+  if (fs.existsSync(MESSAGE_STORE_FILE)) {
+    const raw = fs.readFileSync(MESSAGE_STORE_FILE, "utf8");
+    const data = JSON.parse(raw);
+    for (const [k, v] of Object.entries(data)) {
+      recentMessagesMap.set(k, v);
+    }
+  }
+} catch (e) {}
+
+let persistStoreTimer = null;
+function persistMessageStore() {
+  if (persistStoreTimer) return;
+  persistStoreTimer = setTimeout(() => {
+    persistStoreTimer = null;
+    try {
+      const keys = Array.from(recentMessagesMap.keys()).slice(-3000);
+      const obj = {};
+      for (const k of keys) obj[k] = recentMessagesMap.get(k);
+      fs.writeFileSync(MESSAGE_STORE_FILE, JSON.stringify(obj), "utf8");
+    } catch (e) {}
+  }, 2500);
+}
 
 export function cacheMessageForRetry(id, msg) {
   if (!id || !msg) return;
   recentMessagesMap.set(id, msg);
-  if (recentMessagesMap.size > 3000) {
+  if (recentMessagesMap.size > 6000) {
     const oldestKey = recentMessagesMap.keys().next().value;
     recentMessagesMap.delete(oldestKey);
   }
+  persistMessageStore();
 }
 
 export function getCachedMessageForRetry(id) {
   if (!id) return undefined;
   return recentMessagesMap.get(id);
+}
+
+// עטיפת כל סוקט כך שכל הודעה שנשלחת ע"י הבוט נשמרת אוטומטית במאגר ה-Retry
+export function wrapSocketForRetry(sock) {
+  if (!sock || sock.__retryWrapped) return sock;
+  sock.__retryWrapped = true;
+
+  const originalSendMessage = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (jid, content, options) => {
+    const sentMsg = await originalSendMessage(jid, content, options);
+    if (sentMsg?.key?.id && sentMsg?.message) {
+      cacheMessageForRetry(sentMsg.key.id, sentMsg.message);
+    }
+    return sentMsg;
+  };
+
+  return sock;
+}
+
+// מעקב מונה ניסיונות retry גלובלי השורד ריסטארט של סוקט (מונע לולאות retry אינסופיות)
+const globalMsgRetryCounters = new Map();
+
+// איפוס מפתחות הצפנה תקועים של איש קשר ספציפי (מחדש Signal Pre-Key Ratchet ללא ניתוק מהבוט)
+export function repairContactSession(contactPhoneOrJid) {
+  const clean = cleanPhone(contactPhoneOrJid);
+  const dirs = [BOT_AUTH_DIR];
+  for (const [phone] of driverSessions.entries()) {
+    dirs.push(path.join(SESSIONS_DIR, cleanPhone(phone)));
+  }
+
+  let deletedCount = 0;
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        if (file === "creds.json" || file.startsWith("app-state")) continue;
+        if (clean && (file.startsWith("session-") || file.startsWith("sender-key-")) && file.includes(clean)) {
+          try {
+            fs.unlinkSync(path.join(dir, file));
+            deletedCount++;
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+  console.log(`🧹 [Signal Session Repair] אופסו ${deletedCount} מפתחות הצפנה ישנים עבור ${cleanPhone(contactPhoneOrJid) || "כללי"}`);
+  return { ok: true, deletedCount };
+}
+
+// איפוס מלא של כל ה-Sessions התקועים (משמר את creds.json כך שהבוט נשאר מחובר 100%)
+export function resetAllContactSessions() {
+  let deletedCount = 0;
+  const dirs = [BOT_AUTH_DIR];
+  for (const [phone] of driverSessions.entries()) {
+    dirs.push(path.join(SESSIONS_DIR, cleanPhone(phone)));
+  }
+
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        if (file === "creds.json" || file.startsWith("app-state")) continue;
+        if (file.startsWith("session-") || file.startsWith("sender-key-")) {
+          try {
+            fs.unlinkSync(path.join(dir, file));
+            deletedCount++;
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+  console.log(`🧹 [Signal Full Reset] אופסו ${deletedCount} מפתחות הצפנה של שיחות (הבוט נשאר מחובר ב-100%)`);
+  return { ok: true, deletedCount };
 }
 
 // יצירת תיקיות בסיס אם אינן קיימות
@@ -242,11 +345,12 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
   const { state, saveCreds } = await useMultiFileAuthState(BOT_AUTH_DIR);
   const version = await getWaVersion();
 
-  const msgRetryCounters = new Map();
-
   const sock = makeWASocket({
     ...(version ? { version } : {}),
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+    },
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
     keepAliveIntervalMs: 25000,
@@ -256,19 +360,20 @@ export async function startMainBot({ onMessage, onReaction, onStatusChange, onEv
     browser: ["Ubuntu", "Chrome", "20.0.04"],
     syncFullHistory: false,
     msgRetryCounterCache: {
-      get: (key) => msgRetryCounters.get(key),
-      set: (key, value) => msgRetryCounters.set(key, value),
-      del: (key) => msgRetryCounters.delete(key),
+      get: (key) => globalMsgRetryCounters.get(key),
+      set: (key, value) => globalMsgRetryCounters.set(key, value),
+      del: (key) => globalMsgRetryCounters.delete(key),
     },
     getMessage: async (key) => {
       if (key?.id) {
         const cached = getCachedMessageForRetry(key.id);
         if (cached) return cached;
       }
-      return { conversation: "🚕 נסיעות בוט איכותי" };
+      return undefined;
     },
   });
 
+  wrapSocketForRetry(sock);
   mainBotSock = sock;
   mainBotStatus.registered = wasAlreadyRegisteredOnDisk || Boolean(sock.authState?.creds?.registered);
 
@@ -496,11 +601,12 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
   const { state, saveCreds } = await useMultiFileAuthState(driverAuthDir);
   const version = await getWaVersion();
 
-  const driverRetryCounters = new Map();
-
   const sock = makeWASocket({
     ...(version ? { version } : {}),
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+    },
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
     keepAliveIntervalMs: 25000,
@@ -510,18 +616,20 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
     browser: ["Ubuntu", "Chrome", "20.0.04"],
     syncFullHistory: false,
     msgRetryCounterCache: {
-      get: (key) => driverRetryCounters.get(key),
-      set: (key, value) => driverRetryCounters.set(key, value),
-      del: (key) => driverRetryCounters.delete(key),
+      get: (key) => globalMsgRetryCounters.get(key),
+      set: (key, value) => globalMsgRetryCounters.set(key, value),
+      del: (key) => globalMsgRetryCounters.delete(key),
     },
     getMessage: async (key) => {
       if (key?.id) {
         const cached = getCachedMessageForRetry(key.id);
         if (cached) return cached;
       }
-      return { conversation: "🚕 נסיעות בוט איכותי" };
+      return undefined;
     },
   });
+
+  wrapSocketForRetry(sock);
 
   const sessionObj = {
     phone: driverPhone,
