@@ -3,16 +3,25 @@
     "active": true,
     "searches": [
       {
-        "mode": "internal_only",
-        "city": "בית שמש",
-        "displayText": "בית שמש (פנימי)"
+        "id": "s_1794488268174",
+        "mode": "city_all",
+        "origin": "בית שמש",
+        "displayText": "בית שמש",
+        "addedAt": "2026-11-12T12:57:48.174Z"
+      },
+      {
+        "id": "p_1794488268181",
+        "mode": "city_all",
+        "origin": "ירושלים",
+        "displayText": "ירושלים",
+        "stagedAt": "2026-11-12T12:57:48.181Z"
       }
     ],
     "pendingSearch": null,
-    "mode": "internal_only",
-    "origin": null,
+    "mode": "city_all",
+    "origin": "בית שמש",
     "destination": null,
-    "displayText": "בית שמש (פנימי)"
+    "displayText": "2 חיפושים פעילים במקביל (1. בית שמש | 2. ירושלים)"
   },
   "972599999999": {
     "active": false,

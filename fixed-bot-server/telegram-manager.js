@@ -519,6 +519,19 @@ ${cleaned}
   };
 }
 
+// קבלת סטטוס טלגרם מפורט עבור נהג
+export function getDriverTelegramInfo(driverPhone) {
+  const clean = cleanPhone(driverPhone);
+  const conf = telegramState.driverConfigs[clean] || {};
+  return {
+    connected: Boolean(conf.connected),
+    telegramPhone: conf.telegramPhone || clean,
+    groups: conf.groups || DEFAULT_RIDE_GROUPS,
+    groupsCount: (conf.groups || DEFAULT_RIDE_GROUPS).length,
+    matchedCount: conf.matchedCount || 0,
+  };
+}
+
 // מענה להודעת טלגרם מנהג בוואטסאפ (מדריך חיבור לפי מספר טלפון וקוד)
 export function buildDriverTelegramInfoMessage(driverPhone) {
   const clean = cleanPhone(driverPhone);

@@ -25,7 +25,8 @@ import {
   hasPendingTelegramAuth,
   requestDriverTelegramCode,
   verifyDriverTelegramCode,
-  cancelPendingTelegramAuth
+  cancelPendingTelegramAuth,
+  getDriverTelegramInfo
 } from "./telegram-manager.js";
 import {
   extractInteractiveResponse,
@@ -611,11 +612,26 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
     attempts.push({ via: "driver-self", sock: driverSock });
   }
 
+  const quoteObj = originalMsg || (rideData?.originalMsgKey ? {
+    key: rideData.originalMsgKey,
+    message: rideData.originalMessage || { conversation: rideData.rawText || rideData.cleanedText }
+  } : null);
+
   let lastError = null;
   for (const a of attempts) {
     try {
-      // שליחת התראת נסיעה עצמאית ונקייה בוואטסאפ ללא ציטוט בין-צ'אטים שעלול להידחות
-      const sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg });
+      let sentMsg = null;
+      // ניסיון שליחה עם ציטוט מדויק של הודעת הקבוצה והסדרן
+      if (quoteObj) {
+        try {
+          sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg }, { quoted: quoteObj });
+        } catch (quoteErr) {
+          console.warn(`ציטוט ישיר לנהג ${driverPhone} דרך ${a.via} נכשל (${quoteErr.message}), שולח ללא ציטוט...`);
+        }
+      }
+      if (!sentMsg) {
+        sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg });
+      }
       if (!sentMsg) continue;
 
       if (sentMsg.key?.id) {
@@ -790,7 +806,10 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
 // שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות (100% הגעה ישירה)
 async function sendHelpMenu(sock, jid, driverPhone) {
   const search = getUserSearch(driverPhone);
+  const tgInfo = getDriverTelegramInfo(driverPhone);
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
+
+  // 1. סטטוס חיפושים פעילים
   if (search.active && search.searches.length > 0) {
     menuText += `📊 *סטטוס החיפושים הפעילים שלך במקביל:*\n`;
     search.searches.forEach((s, idx) => {
@@ -798,8 +817,17 @@ async function sendHelpMenu(sock, jid, driverPhone) {
     });
     menuText += `\n`;
   } else {
-    menuText += `📊 *סטטוס נוכחי שלך:* 🔴 מופסק (תפוס)\n\n`;
+    menuText += `📊 *סטטוס חיפוש נוכחי:* 🔴 מופסק (תפוס)\n\n`;
   }
+
+  // 2. סטטוס סריקת טלגרם מקבילה
+  if (tgInfo.connected) {
+    menuText += `✈️ *ערוץ טלגרם מקבילי:* 🟢 מחובר ופעיל (${tgInfo.telegramPhone})\n`;
+    menuText += `📡 סורק ${tgInfo.groupsCount} קבוצות נסיעות מובילות בטלגרם במקביל לוואטסאפ!\n\n`;
+  } else {
+    menuText += `✈️ *ערוץ טלגרם מקבילי:* ⚪ טרם חובר (שלח *"טלגרם"* לחיבור במספר פלאפון)\n\n`;
+  }
+
   menuText += `🔍 *פקודות חיפוש נפוצות:*\n`;
   menuText += `• *פנוי שמש* / *פנוי ים* / *פנוי מירון* (בתוך ומחוץ לעיר)\n`;
   menuText += `• *פנוי שמש פנימי* / *פנימי ים* (פנימי בלבד בעיר)\n`;
@@ -810,7 +838,11 @@ async function sendHelpMenu(sock, jid, driverPhone) {
   menuText += `🛑 *תפוס* (עצירת כל החיפושים)\n\n`;
   menuText += `📖 *למדריך שימוש מפורט ומקצועי:* השב *"מדריך"*\n`;
   menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*\n`;
-  menuText += `✈️ *לסריקה מקבילה מטלגרם:* השב *"טלגרם"*`;
+  menuText += `✈️ *לניהול חיבור טלגרם:* השב *"טלגרם"*`;
+
+  if (isUserAdmin(driverPhone)) {
+    menuText += `\n\n🛠️ *לניהול נהגים במערכת:* השב *"ניהול"*`;
+  }
 
   await sock.sendMessage(jid, { text: menuText });
 }
@@ -1253,7 +1285,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
       const isApproved = isUserApproved(senderPhone);
       const norm = normalizeText(text);
 
-      // 2. מספר המנהל משמש לניהול בלבד
+      // 2. פקודות ניהול (מנהל מערכת בלבד)
       if (isAdmin) {
         // אישור שקט ללא שליחת הודעה לנהג: "אשר ללא 0556706325", "אשר שקט 0556706325", "אשר ללא הודעה 0556706325"
         const silentApproveMatch = text.match(/^(?:אשר\s+ללא(?:\s+הודעה)?|אשר\s+שקט)\s+([0-9+\s-]+)$/);
@@ -1284,7 +1316,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           continue;
         }
 
-        const sendGuideMatch = text.match(/^(?:שלח\s+מדריך|מדריך|שלח\s+הדרכה|הדרכה|אישור|חבר)\s+([0-9+\s-]+)$/);
+        const sendGuideMatch = text.match(/^(?:שלח\s+מדריך|שלח\s+הדרכה|הדרכה)\s+([0-9+\s-]+)$/);
         if (sendGuideMatch) {
           const targetPhone = cleanPhone(sendGuideMatch[1]);
           await sendApprovalAndOnboarding(targetPhone, "נהג");
@@ -1302,12 +1334,13 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           continue;
         }
 
-        if (norm === "תפריט" || norm === "menu" || norm === "עזרה") {
+        if (norm === "ניהול" || norm === "תפריט ניהול" || norm === "admin") {
           await sock.sendMessage(jid, {
-            text: `🛠️ *תפריט ניהול מערכת*\n\nפקודות זמינות למנהל:\n• *אשר 0501234567* ⬅️ אישור נהג חדש ושליחת מדריך\n• *דחה 0501234567* ⬅️ דחיית בקשת הצטרפות\n• *שלח מדריך 0501234567* ⬅️ שליחה חוזרת של הודעת אישור ומדריך חיבור ווב\n• *עדכן 0501234567 ל 0507654321* ⬅️ עדכון מספר טלפון של נהג`
+            text: `🛠️ *תפריט ניהול מערכת*\n\nפקודות זמינות למנהל:\n• *אשר 0501234567* ⬅️ אישור נהג חדש ושליחת מדריך\n• *דחה 0501234567* ⬅️ דחיית בקשת הצטרפות\n• *שלח מדריך 0501234567* ⬅️ שליחה חוזרת של הודעת אישור ומדריך חיבור ווב\n• *עדכן 0501234567 ל 0507654321* ⬅️ עדכון מספר טלפון של נהג\n\n💡 *כנהג במערכת:* שלח *"תפריט"* או כל פקודת חיפוש (כמו *"פנוי שמש"*) כדי לפעול כנהג!`
           }, { quoted: m });
+          continue;
         }
-        continue;
+        // הודעות שאינן פקודת ניהול מפורשת ממשיכות לטיפול כנהג רגיל (תפריט, 1 לאישור, חיפושים וכו')
       }
 
       // 3. משתמש שטרם אושר
@@ -1929,6 +1962,30 @@ startDashboard({
   simulateLiveRide: (sim) => simulateLiveRide(sim),
   getDriverLocation: (phone) => getDriverLocation(phone),
   setDriverLocation: (phone, loc) => setDriverLocation(phone, loc),
+  notifyDriver: async (phone, text) => {
+    let clean = cleanPhone(phone);
+    if (clean.startsWith("0")) clean = "972" + clean.slice(1);
+    const jid = `${clean}@s.whatsapp.net`;
+    const sock = getMainBotSock();
+    if (sock && getMainBotStatus().connected) {
+      try {
+        await sock.sendMessage(jid, { text });
+        return true;
+      } catch (e) {
+        console.error(`שגיאה בשליחת הודעה לנהג ${phone} דרך בוט ראשי:`, e.message);
+      }
+    }
+    const driverSock = getDriverSession(phone)?.sock;
+    if (driverSock) {
+      try {
+        await driverSock.sendMessage(jid, { text });
+        return true;
+      } catch (e) {
+        console.error(`שגיאה בשליחת הודעה לנהג דרך סוקט עצמי ${phone}:`, e.message);
+      }
+    }
+    return false;
+  },
   notifyOwner: async (text) => {
     const sock = getMainBotSock();
     if (!sock) return;
@@ -2062,22 +2119,23 @@ startDashboard({
 });
 
 // שליחת הודעת וואטסאפ רשמית למנהל (0515157166) על שחרור גרסה חדשה בגיט
-export async function notifyAdminVersionUpdate(version = "3.4.0") {
+export async function notifyAdminVersionUpdate(version = "3.4.1") {
   const adminPhone = "972515157166";
   const mainSock = getMainBotSock();
   const text = `🚀 *עדכון מערכת חדש שוחרר בהצלחה!* (גרסה v${version}) 🚕\n\n` +
     `שלום מנהל המערכת,\n` +
-    `כל השינויים והשיפורים עודכנו ונדחפו ל-GitHub (ענף main):\n\n` +
-    `✅ *תיקון מוחלט לשגיאת 'בהמתנה להודעה זו' בוואטסאפ:*\n` +
-    `   • סינון עמוק של תווי יוניקוד סמויים (Bidi / Zero-width) המונע הופעת הודעות המתנה.\n` +
-    `   • השלמת פרוטוקול ההצפנה והחלפת מפתחות (Signal Ratchet) ללא תקיעת הודעות.\n\n` +
-    `✅ *חיבור טלגרם אמיתי וישיר במספר פלאפון בלבד (בדיוק כמו וואטסאפ ווב):*\n` +
-    `   • קוד אימות רשמי נשלח משרתי טלגרם (MTProto) ישירות לאפליקציה או SMS.\n` +
-    `   • בדיקה קפדנית של הקוד (קוד שגוי נדחה מיידית עם הודעת שגיאה ברורה).\n` +
-    `   • אפשרות ביטול והחלפת מספר בכל שלב בתהליך.\n` +
-    `   • סגירת חלון החיבור בלחיצה מחוץ לתיבה (Backdrop) או בלחיצה על Escape.\n\n` +
-    `📦 *חבילת הפריסה המעודכנת זמינה בגיט ובקובץ: fixed-bot-server-v${version}.tar.gz*\n` +
-    `כל המערכות פועלות ומסונכרנות ב-100%! בהצלחה!`;
+    `כל השינויים והשיפורים עודכנו, נבדקו ונדחפו ל-GitHub (ענף main):\n\n` +
+    `✅ *חיפושים מקביליים ומענה מיידי לכל הודעת נהג:*\n` +
+    `   • אישור הוספת עיר במקביל במענה *"1"* או *"הוסף"* פועל כעת באופן מיידי ומתחיל לסרוק את כל הערים בו-זמנית!\n` +
+    `   • הבוט מגיב לכל פקודה (חיפוש, תפריט, תפוס, 1 לאישור) ללא שום דילוג או בליעת הודעות.\n\n` +
+    `✅ *ציטוט מלא של הקבוצה והסדרן בכל נסיעה:*\n` +
+    `   • שוחזר הציטוט המדויק (Quote card) של הודעת הסדרן והקבוצה המקורית כפי שהיה מקודם.\n\n` +
+    `✅ *סטטוס טלגרם מחובר בתפריט הוואטסאפ:*\n` +
+    `   • תפריט הבוט מציג כעת בבירור: *סריקת טלגרם מקבילה: 🟢 מחובר ופעיל* וכמה קבוצות נסרקות עבורך!\n\n` +
+    `✅ *סנכרון מלא מהאתר לוואטסאפ:*\n` +
+    `   • הפעלה או עצירה של חיפוש מלוח הבק באתר שולחת מיד הודעת אישור מפורטת לוואטסאפ של הנהג.\n\n` +
+    `📦 *חבילת הפריסה המעודכנת: fixed-bot-server-v${version}.tar.gz*\n` +
+    `כל המערכות פועלות ומסונכרנות ב-100%!`;
 
   if (mainSock && getMainBotStatus().connected) {
     try {

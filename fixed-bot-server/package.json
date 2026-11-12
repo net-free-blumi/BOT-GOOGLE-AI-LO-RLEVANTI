@@ -1,6 +1,6 @@
 {
   "name": "wa-rides-bot",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "WhatsApp Rides Bot Server with Multi-Session Baileys",
   "main": "index.js",
   "type": "module",

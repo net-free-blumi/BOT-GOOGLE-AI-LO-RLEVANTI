@@ -981,6 +981,14 @@ export function startDashboard(runtime) {
       if (!code) return res.status(400).json({ ok: false, error: "נדרש קוד אימות בן 5 ספרות" });
       if (ctx?.verifyDriverTelegramCode) {
         const result = await ctx.verifyDriverTelegramCode(phone, code);
+        try {
+          ctx.notifyDriver?.(
+            phone,
+            `✈️ *חשבון הטלגרם שלך (${result.telegramPhone || phone}) חובר בהצלחה!* 🎉\n\n` +
+            `✅ המערכת זיהתה ${result.groupsCount || 5} קבוצות נסיעות בחשבונך וסורקת אותן במקביל לוואטסאפ!\n` +
+            `נסיעות מתאימות יישלחו אליך לכאן ישירות עם קישור פתיחה בטלגרם.\n\n≡ תפריט`
+          );
+        } catch (e) {}
         return res.json({ ok: true, success: true, ...result });
       }
       res.json({ ok: true, success: true, connected: true });
@@ -1007,6 +1015,13 @@ export function startDashboard(runtime) {
       if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
       if (ctx?.updateDriverTelegram) {
         const result = ctx.updateDriverTelegram(phone, { telegramPhone, groups, forwardToWa, connected: true });
+        try {
+          ctx.notifyDriver?.(
+            phone,
+            `✈️ *חשבון הטלגרם שלך (${telegramPhone || phone}) חובר בהצלחה מהאתר!* 🎉\n\n` +
+            `סורק קבוצות נסיעות בטלגרם במקביל לוואטסאפ.\n\n≡ תפריט`
+          );
+        } catch (e) {}
         return res.json({ ok: true, success: true, ...result });
       }
       res.json({ ok: true, success: true });
@@ -1021,6 +1036,12 @@ export function startDashboard(runtime) {
       if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון נהג" });
       if (ctx?.disconnectDriverTelegram) {
         const result = ctx.disconnectDriverTelegram(phone);
+        try {
+          ctx.notifyDriver?.(
+            phone,
+            `🛑 *חשבון הטלגרם שלך נותק מהמערכת.* הבוט ימשיך לסרוק עבורך נסיעות מקבוצות הוואטסאפ כרגיל.\n\n≡ תפריט`
+          );
+        } catch (e) {}
         return res.json({ ok: true, ...result });
       }
       res.json({ ok: true });
@@ -1169,6 +1190,18 @@ export function startDashboard(runtime) {
     ctx?.setUserSearch?.(cleanP, nextState);
     recordEvent("command", `הופעל חיפוש עבור ${cleanP}: ${nextState.displayText}`);
 
+    // שליחת התראת וואטסאפ מיידית לנהג שהחיפוש הופעל דרך האתר!
+    if (ctx?.notifyDriver) {
+      try {
+        const notifyText = `🌐 *חיפוש הופעל דרך האתר!*\n\n` +
+          `🔍 *מסלול מוגדר:* ${nextState.displayText}\n` +
+          `⚡ הבוט סורק עבורך כעת את כל הקבוצות בזמן אמת.\n` +
+          `ברגע שתפורסם נסיעה מתאימה תקבל כאן התראה מיידית! 🚕\n\n` +
+          `💡 *לעצירה:* שלח *"תפוס"* או כבה באתר.`;
+        ctx.notifyDriver(cleanP, notifyText).catch(() => {});
+      } catch (e) {}
+    }
+
     res.json({ ok: true, success: true, message: `חיפוש הופעל: ${nextState.displayText}`, search: nextState });
   });
 
@@ -1177,6 +1210,17 @@ export function startDashboard(runtime) {
     const cleanP = cleanPhone(phone);
     const empty = ctx?.stopUserSearch ? ctx.stopUserSearch(cleanP) : {};
     recordEvent("command", `חיפוש הופסק מהאתר עבור ${cleanP}`);
+
+    // שליחת הודעת וואטסאפ לנהג שהחיפוש הופסק (תפוס) מהאתר
+    if (ctx?.notifyDriver) {
+      try {
+        const stopText = `🛑 *החיפוש הופסק דרך האתר (מצב תפוס)*\n\n` +
+          `הבוט עצר את כל הסינונים. לא יישלחו התראות עד להפעלת חיפוש חדש.\n\n` +
+          `💡 *להפעלה מחדש:* שלח פקודה (כגון *"פנוי שמש"*, *"פנוי שמש פנימי"*) או הפעל מהאתר.`;
+        ctx.notifyDriver(cleanP, stopText).catch(() => {});
+      } catch (e) {}
+    }
+
     res.json({ ok: true, success: true, message: "החיפוש הופסק בהצלחה (תפוס)", search: empty });
   });
 
