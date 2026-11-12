@@ -637,25 +637,48 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
     attempts.push({ via: "driver-self", sock: driverSock });
   }
 
-  const groupJid = rideData?.groupJid || originalMsg?.key?.remoteJid;
-  const participantJid = rideData?.senderJid || originalMsg?.key?.participant || originalMsg?.participant;
-  const quoteObj = originalMsg ? {
+  const groupJid = rideData?.groupJid || originalMsg?.key?.remoteJid || rideData?.originalMsgKey?.remoteJid;
+  let rawParticipant = rideData?.senderJid || originalMsg?.key?.participant || originalMsg?.participant || rideData?.originalMsgKey?.participant;
+
+  if (rawParticipant && rawParticipant.endsWith("@g.us")) {
+    rawParticipant = null;
+  }
+  if (!rawParticipant && rideData?.senderPhone) {
+    let cleanSender = cleanPhone(rideData.senderPhone);
+    if (cleanSender && cleanSender.startsWith("0")) cleanSender = "972" + cleanSender.slice(1);
+    if (cleanSender && cleanSender.length >= 9) {
+      rawParticipant = `${cleanSender}@s.whatsapp.net`;
+    }
+  }
+
+  const cleanParticipant = rawParticipant ? String(rawParticipant).replace(/:\d+@/, "@").trim() : undefined;
+  const msgId = originalMsg?.key?.id || rideData?.originalMsgKey?.id;
+
+  let cleanMsgContent = { conversation: rideData?.rawText || rideData?.cleanedText || "נסיעה" };
+  const rawSourceMsg = originalMsg?.message || rideData?.originalMessage;
+  if (rawSourceMsg) {
+    let inner = rawSourceMsg;
+    for (let i = 0; i < 4; i++) {
+      const unwrapped = inner.ephemeralMessage?.message || inner.viewOnceMessage?.message || inner.viewOnceMessageV2?.message || inner.documentWithCaptionMessage?.message || inner.editedMessage?.message?.protocolMessage?.editedMessage;
+      if (!unwrapped) break;
+      inner = unwrapped;
+    }
+    if (inner.conversation) {
+      cleanMsgContent = { conversation: inner.conversation };
+    } else if (inner.extendedTextMessage?.text) {
+      cleanMsgContent = { extendedTextMessage: { text: inner.extendedTextMessage.text } };
+    }
+  }
+
+  const quoteObj = (msgId && groupJid) ? {
     key: {
-      remoteJid: groupJid || originalMsg.key.remoteJid,
-      id: originalMsg.key.id,
-      participant: participantJid || originalMsg.key.participant,
+      remoteJid: groupJid,
+      id: msgId,
+      participant: cleanParticipant,
       fromMe: false,
     },
-    message: originalMsg.message || { conversation: rideData.rawText || rideData.cleanedText }
-  } : (rideData?.originalMsgKey ? {
-    key: {
-      remoteJid: groupJid || rideData.originalMsgKey.remoteJid,
-      id: rideData.originalMsgKey.id,
-      participant: participantJid || rideData.originalMsgKey.participant,
-      fromMe: false,
-    },
-    message: rideData.originalMessage || { conversation: rideData.rawText || rideData.cleanedText }
-  } : null);
+    message: cleanMsgContent,
+  } : null;
 
   let lastError = null;
   for (const a of attempts) {

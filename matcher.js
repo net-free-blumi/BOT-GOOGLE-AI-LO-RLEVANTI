@@ -836,19 +836,40 @@ export function buildQuotedRideMessage(alertInfo) {
   const rawText = alertInfo.rawText || alertInfo.rideData?.rawText || alertInfo.rideData?.cleanedText || "";
   const origKey = alertInfo.originalMsgKey || {};
   const groupJid = alertInfo.groupJid || origKey.remoteJid;
-  const participant = alertInfo.senderJid || origKey.participant || origKey.remoteJid;
+  let rawParticipant = alertInfo.senderJid || origKey.participant;
+
+  if (rawParticipant && rawParticipant.endsWith("@g.us")) {
+    rawParticipant = null;
+  }
+  if (!rawParticipant && alertInfo.senderPhone) {
+    const cleanSender = String(alertInfo.senderPhone).replace(/\D/g, "");
+    if (cleanSender && cleanSender.length >= 9) {
+      rawParticipant = `${cleanSender.startsWith("0") ? "972" + cleanSender.slice(1) : cleanSender}@s.whatsapp.net`;
+    }
+  }
+
+  const cleanParticipant = rawParticipant ? String(rawParticipant).replace(/:\d+@/, "@").trim() : undefined;
   const id = origKey.id || alertInfo.msgId;
 
   if (!id) return undefined;
 
+  let cleanMsg = alertInfo.originalMessage;
+  if (cleanMsg) {
+    for (let i = 0; i < 4; i++) {
+      const unwrapped = cleanMsg.ephemeralMessage?.message || cleanMsg.viewOnceMessage?.message || cleanMsg.viewOnceMessageV2?.message || cleanMsg.documentWithCaptionMessage?.message || cleanMsg.editedMessage?.message?.protocolMessage?.editedMessage;
+      if (!unwrapped) break;
+      cleanMsg = unwrapped;
+    }
+  }
+
   return {
     key: {
       remoteJid: groupJid,
-      participant: participant,
+      participant: cleanParticipant,
       id: id,
       fromMe: false,
     },
-    message: alertInfo.originalMessage || {
+    message: cleanMsg || {
       conversation: rawText,
     },
   };
