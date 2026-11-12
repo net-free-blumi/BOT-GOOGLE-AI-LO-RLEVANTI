@@ -1342,6 +1342,8 @@ export function startDashboard(runtime) {
       recordError("broadcast_api", err);
       return res.status(500).json({ ok: false, error: err.message || "שגיאה בשידור הודעה לנהגים" });
     }
+  });
+
   app.post("/api/admin/notify-update", requireAuth, async (req, res) => {
     try {
       const { version = "3.4.0" } = req.body || {};
