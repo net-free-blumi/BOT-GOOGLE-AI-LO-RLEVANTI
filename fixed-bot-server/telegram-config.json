@@ -9,9 +9,9 @@
     "מוניות וספיישלים מרכז"
   ],
   "stats": {
-    "totalScanned": 26,
-    "totalMatched": 16,
-    "lastRideAt": "2026-11-11T19:07:25.755Z"
+    "totalScanned": 27,
+    "totalMatched": 17,
+    "lastRideAt": "2026-11-12T12:02:38.234Z"
   },
   "driverConfigs": {
     "972515157166": {
@@ -26,9 +26,9 @@
       ],
       "forwardToWa": true,
       "connected": true,
-      "connectedAt": "2026-11-11T19:07:25.753Z",
-      "updatedAt": "2026-11-11T19:07:25.753Z",
-      "matchedCount": 16,
+      "connectedAt": "2026-11-12T12:02:38.233Z",
+      "updatedAt": "2026-11-12T12:02:38.233Z",
+      "matchedCount": 17,
       "sessionString": "telegram_user_session_active",
       "scannedCount": 0
     }

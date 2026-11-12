@@ -1249,3 +1249,12 @@ export async function testTelegramRideApi(payload: {
   });
 }
 
+// 1-Click Push to GitHub
+export async function pushToGitHubApi(): Promise<{ ok: boolean; success?: boolean; message?: string; error?: string }> {
+  const cfg = loadConfig();
+  if (cfg.useDemoMode) {
+    return { ok: true, success: true, message: '(מצב הדגמה) השינויים נדחפו בהצלחה ל-GitHub!' };
+  }
+  return await request('/api/deploy/push-github', { method: 'POST' });
+}
+

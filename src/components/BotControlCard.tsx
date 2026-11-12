@@ -13,12 +13,14 @@ import {
   Loader2,
   GitBranch,
   Download,
+  Upload,
+  CheckCircle2,
   BellRing,
   Clock,
   RefreshCw
 } from 'lucide-react';
 import { WhatsAppState } from '../types.ts';
-import { syncFromGitHubApi, requestPairingCodeApi, resetMainBotAuthApi } from '../services/api.ts';
+import { syncFromGitHubApi, pushToGitHubApi, requestPairingCodeApi, resetMainBotAuthApi } from '../services/api.ts';
 import { DriverQrPanel } from './DriverQrPanel.tsx';
 
 interface BotControlCardProps {
@@ -123,6 +125,8 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
 
   const [syncingGit, setSyncingGit] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [pushingGit, setPushingGit] = useState(false);
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
 
   const handleSyncGit = async () => {
     setSyncingGit(true);
@@ -136,6 +140,21 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
       setTimeout(() => setSyncMessage(null), 5000);
     } finally {
       setSyncingGit(false);
+    }
+  };
+
+  const handlePushGit = async () => {
+    setPushingGit(true);
+    setPushMessage(null);
+    try {
+      const res = await pushToGitHubApi();
+      setPushMessage(res.message || 'הקוד נדחף בהצלחה ל-GitHub (ענף main)!');
+      setTimeout(() => setPushMessage(null), 6000);
+    } catch (e: any) {
+      setPushMessage(e.message || 'שגיאה בדחיפה ל-GitHub');
+      setTimeout(() => setPushMessage(null), 6000);
+    } finally {
+      setPushingGit(false);
     }
   };
 
@@ -400,30 +419,61 @@ export const BotControlCard: React.FC<BotControlCardProps> = ({
         </button>
       </div>
 
-      {/* 1-Click Sync from GitHub Button */}
+      {/* 1-Click Push & Pull to GitHub Buttons */}
       <div className="pt-1 space-y-2">
-        <button
-          onClick={handleSyncGit}
-          disabled={loading || syncingGit}
-          className="w-full p-3 rounded-xl bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-teal-500/20 hover:from-indigo-500/30 hover:to-teal-500/30 border border-indigo-500/40 text-indigo-200 hover:text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-98"
-          title="סנכרן את שרת ה-VPS ישירות מול הגרסה העדכנית ב-GitHub בלחיצה אחת"
-        >
-          {syncingGit ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-              <span>מבצע סנכרון ישיר מ-GitHub ומפעיל מחדש...</span>
-            </>
-          ) : (
-            <>
-              <GitBranch className="w-4 h-4 text-indigo-400" />
-              <span>סנכרן שרת מול GitHub עכשיו (1-Click Sync)</span>
-              <Download className="w-3.5 h-3.5 text-teal-400" />
-            </>
-          )}
-        </button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {/* Push to GitHub */}
+          <button
+            onClick={handlePushGit}
+            disabled={loading || pushingGit}
+            className="p-3 rounded-xl bg-gradient-to-r from-emerald-600/25 via-teal-600/25 to-cyan-600/25 hover:from-emerald-600/35 hover:to-cyan-600/35 border border-emerald-500/40 text-emerald-200 hover:text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-98 disabled:opacity-50"
+            title="דחוף את כל השינויים והגרסה הנוכחית ל-GitHub (ענף main) בלחיצה אחת"
+          >
+            {pushingGit ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                <span>דוחף ומעדכן ב-GitHub...</span>
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4 text-emerald-400" />
+                <span>העלה ל-GitHub (1-Click Push) 🚀</span>
+              </>
+            )}
+          </button>
+
+          {/* Pull from GitHub */}
+          <button
+            onClick={handleSyncGit}
+            disabled={loading || syncingGit}
+            className="p-3 rounded-xl bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-teal-500/20 hover:from-indigo-500/30 hover:to-teal-500/30 border border-indigo-500/40 text-indigo-200 hover:text-white text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md active:scale-98 disabled:opacity-50"
+            title="סנכרן את שרת ה-VPS ישירות מול הגרסה העדכנית ב-GitHub בלחיצה אחת"
+          >
+            {syncingGit ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                <span>מבצע סנכרון ישיר מ-GitHub...</span>
+              </>
+            ) : (
+              <>
+                <GitBranch className="w-4 h-4 text-indigo-400" />
+                <span>משוך מ-GitHub (1-Click Pull) ⬇️</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {pushMessage && (
+          <div className="text-center text-xs font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 rounded-lg py-2 px-3 animate-in fade-in flex items-center justify-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{pushMessage}</span>
+          </div>
+        )}
+
         {syncMessage && (
-          <div className="text-center text-xs font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg py-1.5 px-2 animate-in fade-in">
-            {syncMessage}
+          <div className="text-center text-xs font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/40 rounded-lg py-2 px-3 animate-in fade-in flex items-center justify-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>{syncMessage}</span>
           </div>
         )}
       </div>

@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+dashboard.secret
+*.secret
+auth/
+sessions/
+wa_git_token

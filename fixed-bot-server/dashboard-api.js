@@ -1447,6 +1447,79 @@ export function startDashboard(runtime) {
     });
   });
 
+  // ==========================================
+  // 1-Click Push to GitHub Endpoint (ענף main)
+  // ==========================================
+  app.post("/api/deploy/push-github", requireAuth, async (_req, res) => {
+    try {
+      let gitToken = process.env.GITHUB_TOKEN || "";
+      if (!gitToken && fs.existsSync("/tmp/wa_git_token")) {
+        try { gitToken = fs.readFileSync("/tmp/wa_git_token", "utf8").trim(); } catch (e) {}
+      }
+      const gitRepoUrl = gitToken 
+        ? `https://${gitToken}@github.com/net-free-blumi/BOT-GOOGLE-AI-LO-RLEVANTI.git`
+        : `https://github.com/net-free-blumi/BOT-GOOGLE-AI-LO-RLEVANTI.git`;
+
+      const pushScript = `
+        mkdir -p /tmp/git-push-sync &&
+        cd /tmp/git-push-sync &&
+        if [ ! -d ".git" ]; then
+          git clone --depth 1 ${gitRepoUrl} . || true;
+        else
+          git fetch origin main && git reset --hard origin/main || true;
+        fi &&
+        node -e "
+          const fs = require('fs');
+          const path = require('path');
+          function copyRec(src, dest) {
+            const stat = fs.statSync(src);
+            if (stat.isDirectory()) {
+              const base = path.basename(src);
+              if (['.git', 'node_modules', 'dist', '.aistudio', 'auth', 'sessions'].includes(base)) return;
+              if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+              for (const file of fs.readdirSync(src)) copyRec(path.join(src, file), path.join(dest, file));
+            } else {
+              if (src.endsWith('.log')) return;
+              fs.copyFileSync(src, dest);
+            }
+          }
+          const appRoot = '/app/applet';
+          if (fs.existsSync(appRoot)) {
+            copyRec(path.join(appRoot, 'fixed-bot-server'), '/tmp/git-push-sync/fixed-bot-server');
+            copyRec(path.join(appRoot, 'src'), '/tmp/git-push-sync/src');
+            copyRec(path.join(appRoot, 'public'), '/tmp/git-push-sync/public');
+            if (fs.existsSync(path.join(appRoot, 'index.html'))) fs.copyFileSync(path.join(appRoot, 'index.html'), '/tmp/git-push-sync/index.html');
+            if (fs.existsSync(path.join(appRoot, 'package.json'))) fs.copyFileSync(path.join(appRoot, 'package.json'), '/tmp/git-push-sync/package.json');
+          }
+        " &&
+        git config user.name "AI Studio Assistant" &&
+        git config user.email "bot@aistudio.google.com" &&
+        git add -A &&
+        (git commit -m "Auto-sync from dashboard: $(date '+%Y-%m-%d %H:%M:%S')" || true) &&
+        git push origin main
+      `;
+
+      exec(pushScript, { timeout: 35000 }, (err, stdout, stderr) => {
+        if (err) {
+          recordError("github_push_error", err);
+          console.error("❌ שגיאה בדחיפה ל-GitHub:", err.message);
+        } else {
+          recordEvent("system", "🚀 כל הקוד נדחף בהצלחה ל-GitHub (ענף main) ישירות מלוח הבקרה!");
+          console.log("✅ דחיפה ל-GitHub הושלמה:", stdout || stderr);
+        }
+      });
+
+      return res.json({
+        ok: true,
+        success: true,
+        message: "הדחיפה ל-GitHub החלה כעת בהצלחה ברקע (ענף main)!"
+      });
+    } catch (err) {
+      recordError("github_push_error", err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // יומן שגיאות ובאגים ייעודי (Live Error Tracker API) - מוגן באבטחה מלאה
   app.get("/api/errors", requireAuth, (_req, res) => {
     res.json({ ok: true, errors: errorReports });
