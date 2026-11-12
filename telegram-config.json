@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "connected": true,
+  "monitoredGroups": [
+    "מאוחדים תגבור ריידר 👑",
+    "ריידר הפצה בקבוצות",
+    "נסיעות בית שמש ארצי",
+    "נסיעות ירושלים והסביבה",
+    "מוניות וספיישלים מרכז"
+  ],
+  "stats": {
+    "totalScanned": 33,
+    "totalMatched": 23,
+    "lastRideAt": "2026-11-12T14:56:22.303Z"
+  },
+  "driverConfigs": {
+    "972515157166": {
+      "telegramPhone": "972515157166",
+      "username": "driver_auto",
+      "groups": [
+        "מאוחדים תגבור ריידר 👑",
+        "ריידר הפצה בקבוצות",
+        "נסיעות בית שמש ארצי",
+        "נסיעות ירושלים והסביבה",
+        "מוניות וספיישלים מרכז"
+      ],
+      "forwardToWa": true,
+      "connected": true,
+      "connectedAt": "2026-11-12T14:56:22.297Z",
+      "updatedAt": "2026-11-12T14:56:22.297Z",
+      "matchedCount": 23,
+      "sessionString": "telegram_user_session_active",
+      "scannedCount": 0
+    }
+  },
+  "botUsername": null,
+  "botTokenConfigured": false
+}

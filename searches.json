@@ -1,0 +1,49 @@
+{
+  "972515157166": {
+    "active": true,
+    "searches": [
+      {
+        "mode": "internal_only",
+        "city": "בית שמש",
+        "displayText": "בית שמש (פנימי)"
+      }
+    ],
+    "pendingSearch": null,
+    "mode": "internal_only",
+    "origin": null,
+    "destination": null,
+    "displayText": "בית שמש (פנימי)"
+  },
+  "972599999999": {
+    "active": false,
+    "searches": [],
+    "pendingSearch": null,
+    "mode": null,
+    "origin": null,
+    "destination": null,
+    "displayText": "מופסק (תפוס)"
+  },
+  "972539485860": {
+    "active": true,
+    "searches": [
+      {
+        "id": "s1",
+        "displayText": "חיפוש 1",
+        "origin": "עיר 1",
+        "mode": "city_all"
+      },
+      {
+        "id": "p1",
+        "displayText": "חיפוש 2",
+        "origin": "עיר 2",
+        "mode": "city_all",
+        "stagedAt": "2026-11-12T14:56:11.348Z"
+      }
+    ],
+    "pendingSearch": null,
+    "mode": "city_all",
+    "origin": "עיר 1",
+    "destination": null,
+    "displayText": "2 חיפושים פעילים במקביל (1. חיפוש 1 | 2. חיפוש 2)"
+  }
+}
