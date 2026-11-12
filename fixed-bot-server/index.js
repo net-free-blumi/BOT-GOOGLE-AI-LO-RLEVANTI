@@ -58,7 +58,8 @@ import {
   addOrStageUserSearch,
   confirmPendingSearch,
   cancelPendingSearch,
-  removeUserSearchByIndex
+  removeUserSearchByIndex,
+  loadLidMap
 } from "./users-manager.js";
 import {
   startMainBot,
