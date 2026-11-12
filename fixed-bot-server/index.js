@@ -507,7 +507,20 @@ function isStaleMessage(m) {
 }
 
 // פורמט התראת נסיעה נקי, מדויק וללא שורות מיותרות
-function buildRideAlertText(rideData) {
+function buildRideAlertText(rideData, isQuoted = false) {
+  if (!isQuoted) {
+    // פורמט ציטוט ויזואלי ברור ומלא - מבטיח שהנהג יראה תמיד את הקבוצה, הסדרן וההודעה המקורית
+    let msg = `🚕 *נסיעה חדשה מתאימה לחיפוש שלך!*\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `💬 *הודעת הנסיעה המקורית:*\n`;
+    msg += `${rideData.cleanedText || rideData.rawText}\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `📍 *קבוצה:* ${rideData.groupName}\n`;
+    msg += `👤 *סדרן:* ${rideData.senderName} (${rideData.senderPhone})\n\n`;
+    msg += `👉 לתפיסה מהירה השב *"ת"* או *"תן"* (הבוט יגיב בקבוצה ולסדרן בשמך!)`;
+    return msg.trim();
+  }
+
   let alertMsg = `${rideData.cleanedText}\n\n`;
   alertMsg += `📍 ${rideData.groupName}\n`;
   alertMsg += `👤 ${rideData.senderName} · ${rideData.senderPhone}`;
@@ -596,12 +609,19 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
     return { ok: false, error: "הודעת placeholder נפסלה" };
   }
 
-  const alertMsg = buildRideAlertText(rideData);
-
-  // הבטחת JID יעד תקין לחלוטין ברשת וואטסאפ (ללא LID שעלול להיתקע ב'בהמתנה להודעה זו')
   let targetPhone = cleanPhone(driverPhone);
   if (targetPhone.startsWith("0")) targetPhone = "972" + targetPhone.slice(1);
   const driverJid = `${targetPhone}@s.whatsapp.net`;
+
+  // זיהוי JID של הנהג: אם הוא מתכתב מ-LID (וואטסאפ ביזנס), נוסיף גם את ה-LID כדי שההודעה תגיע ישירות לצ'אט הפעיל שלו!
+  const targetJids = [driverJid];
+  const lidMap = loadLidMap();
+  for (const [l, ph] of Object.entries(lidMap)) {
+    if (cleanPhone(ph) === targetPhone) {
+      targetJids.unshift(`${l}@lid`);
+      break;
+    }
+  }
 
   const attempts = [];
   const mainSock = getMainBotSock();
@@ -619,52 +639,59 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
 
   let lastError = null;
   for (const a of attempts) {
-    try {
-      let sentMsg = null;
-      // ניסיון שליחה עם ציטוט מדויק של הודעת הקבוצה והסדרן
-      if (quoteObj) {
-        try {
-          sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg }, { quoted: quoteObj });
-        } catch (quoteErr) {
-          console.warn(`ציטוט ישיר לנהג ${driverPhone} דרך ${a.via} נכשל (${quoteErr.message}), שולח ללא ציטוט...`);
+    for (const targetJid of targetJids) {
+      try {
+        let sentMsg = null;
+        let deliveredText = "";
+        // ניסיון שליחה עם ציטוט מדויק של הודעת הקבוצה והסדרן
+        if (quoteObj) {
+          try {
+            deliveredText = buildRideAlertText(rideData, true);
+            sentMsg = await a.sock.sendMessage(targetJid, { text: deliveredText }, { quoted: quoteObj });
+          } catch (quoteErr) {
+            // אם ציטוט בין-צ'אטים נכשל, נשלח עם בלוק ציטוט ויזואלי מושלם
+            deliveredText = buildRideAlertText(rideData, false);
+            sentMsg = await a.sock.sendMessage(targetJid, { text: deliveredText });
+          }
         }
-      }
-      if (!sentMsg) {
-        sentMsg = await a.sock.sendMessage(driverJid, { text: alertMsg });
-      }
-      if (!sentMsg) continue;
-
-      if (sentMsg.key?.id) {
-        // שמירת ההודעה במאגר השחזור לפתרון מוחלט של שגיאת 'בהמתנה להודעה זו'
-        cacheMessageForRetry(sentMsg.key.id, sentMsg.message || { conversation: alertMsg });
-
-        sentAlertsCache.set(sentMsg.key.id, {
-          msgId: sentMsg.key.id,
-          rideData,
-          rawText: rideData.rawText || rideData.cleanedText,
-          driverPhone,
-          groupName: rideData.groupName,
-          groupJid: rideData.groupJid || originalMsg?.key?.remoteJid || null,
-          senderName: rideData.senderName,
-          senderPhone: rideData.senderPhone,
-          senderJid: rideData.senderJid || originalMsg?.key?.participant || originalMsg?.key?.remoteJid || null,
-          originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
-          originalMessage: originalMsg?.message || null,
-          searchDesc: rideData.searchDesc,
-          matchedReason: rideData.matchedReason || null,
-          matchedSearch: rideData.matchedSearch || null,
-          activeSearchesSnapshot: rideData.activeSearchesSnapshot || null,
-          sentAt: Date.now(),
-        });
-        if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
-          sentAlertsCache.delete(sentAlertsCache.keys().next().value);
+        if (!sentMsg) {
+          deliveredText = buildRideAlertText(rideData, false);
+          sentMsg = await a.sock.sendMessage(targetJid, { text: deliveredText });
         }
-        persistAlertsCacheSoon();
+        if (!sentMsg) continue;
+
+        if (sentMsg.key?.id) {
+          // שמירת ההודעה במאגר השחזור לפתרון מוחלט של שגיאת 'בהמתנה להודעה זו'
+          cacheMessageForRetry(sentMsg.key.id, sentMsg.message || { conversation: deliveredText });
+
+          sentAlertsCache.set(sentMsg.key.id, {
+            msgId: sentMsg.key.id,
+            rideData,
+            rawText: rideData.rawText || rideData.cleanedText,
+            driverPhone,
+            groupName: rideData.groupName,
+            groupJid: rideData.groupJid || originalMsg?.key?.remoteJid || null,
+            senderName: rideData.senderName,
+            senderPhone: rideData.senderPhone,
+            senderJid: rideData.senderJid || originalMsg?.key?.participant || originalMsg?.key?.remoteJid || null,
+            originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
+            originalMessage: originalMsg?.message || null,
+            searchDesc: rideData.searchDesc,
+            matchedReason: rideData.matchedReason || null,
+            matchedSearch: rideData.matchedSearch || null,
+            activeSearchesSnapshot: rideData.activeSearchesSnapshot || null,
+            sentAt: Date.now(),
+          });
+          if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
+            sentAlertsCache.delete(sentAlertsCache.keys().next().value);
+          }
+          persistAlertsCacheSoon();
+        }
+        return { ok: true, via: a.via };
+      } catch (err) {
+        lastError = err;
+        console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} נכשלה:`, err.message);
       }
-      return { ok: true, via: a.via };
-    } catch (err) {
-      lastError = err;
-      console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} נכשלה:`, err.message);
     }
   }
 
@@ -1252,9 +1279,10 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
     if (!isGroup && sessionContext.isMainBot) {
       const usersData = loadUsersData();
       let senderPhone = cleanPhone(jid);
-      const isSenderLid = isLid(jid) || isLid(senderPhone);
+      const rawJidDigits = String(jid).split("@")[0].split(":")[0].replace(/\D/g, "");
+      const isSenderLid = isLid(jid) || isLid(senderPhone) || isLid(rawJidDigits);
 
-      // 1. זיהוי שקט של מספר אמיתי מתוך מזהה LID
+      // 1. זיהוי מקיף ואוטומטי של מספר אמיתי מתוך מזהה LID
       if (isSenderLid) {
         let detectedPhone = null;
         const key = m.key || {};
@@ -1272,6 +1300,49 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
             const pnFromLid = await sock.signalRepository?.lidMapping?.getPNForLID(jid);
             const num = cleanPhone(pnFromLid);
             if (num && !isLid(num) && num.length >= 9 && num.length <= 12) detectedPhone = num;
+          } catch (e) {}
+        }
+
+        // בדיקה ישירה מתוך lid-map.json
+        if (!detectedPhone) {
+          const lidMap = loadLidMap();
+          if (lidMap[rawJidDigits]) detectedPhone = lidMap[rawJidDigits];
+        }
+
+        // בדיקה מתוך המשתמשים המאושרים במערכת
+        if (!detectedPhone) {
+          const uMatch = (usersData.approvedUsers || []).find(
+            (u) => (u.lid && u.lid === rawJidDigits) || (u.phone && cleanPhone(u.phone) === rawJidDigits)
+          );
+          if (uMatch) {
+            detectedPhone = uMatch.mappedPhone || cleanPhone(uMatch.phone);
+          }
+        }
+
+        // בדיקה מתוך שמות נהגים או pushName ("מוישי" / "מוישי ב Bפון עסקי")
+        if (!detectedPhone && pushName && pushName !== "משתמש") {
+          const cleanPush = pushName.trim().toLowerCase();
+          const nameMatch = (usersData.approvedUsers || []).find(
+            (u) => u.name && cleanPush.includes(u.name.trim().toLowerCase()) && !isLid(u.phone)
+          );
+          if (nameMatch) {
+            detectedPhone = cleanPhone(nameMatch.phone);
+          }
+        }
+
+        // בדיקה מתוך סשנים מחוברים של נהגים
+        if (!detectedPhone) {
+          try {
+            for (const s of (getAllSessionsSummary().drivers || [])) {
+              if (s.phone && !isLid(s.phone)) {
+                const dSession = getDriverSession(s.phone);
+                const meLid = dSession?.sock?.authState?.creds?.me?.lid;
+                if (meLid && cleanPhone(meLid) === rawJidDigits) {
+                  detectedPhone = cleanPhone(s.phone);
+                  break;
+                }
+              }
+            }
           } catch (e) {}
         }
 
@@ -1345,7 +1416,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       // 3. משתמש שטרם אושר
       if (!isApproved) {
-        const canReply = canReplyToUnapproved(senderPhone);
+        const canReply = canReplyToUnapproved(senderPhone, text);
         if (!canReply) {
           continue;
         }
@@ -1707,41 +1778,51 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       const currentSearch = getUserSearch(senderPhone);
 
-      // 1. טיפול בתשובה לשאלת אישור הוספת חיפוש במקביל (אם יש חיפוש בהמתנה לאישור)
-      if (currentSearch.pendingSearch) {
+      // 1. טיפול בתשובה לשאלת אישור הוספת חיפוש במקביל (1/כן להוספה, 2/החלף, ביטול/לא)
+      const isConfirm1 = norm === "1" || norm === "כן" || norm === "הוסף" || norm === "אשר" || norm === "אישור" || norm === "תוסיף" || norm === "להוסיף" || /^(?:1|כן|הוסף|אישור|אשר)\b/.test(norm);
+      const isReplace2 = norm === "2" || norm === "החלף" || norm === "רק זה" || norm === "החלפה" || /^(?:2|החלף)\b/.test(norm);
+      const isCancelChoice = norm === "ביטול" || norm === "בטל" || norm === "לא" || norm === "0" || norm === "אל תוסיף" || /^(?:ביטול|בטל|לא)\b/.test(norm);
+
+      if (currentSearch.pendingSearch || isConfirm1 || isReplace2 || isCancelChoice) {
         // אפשרות א': אישור הוספה במקביל
-        if (norm === "1" || norm === "כן" || norm === "הוסף" || norm === "אשר" || norm === "אישור" || norm === "תוסיף" || norm === "להוסיף") {
+        if (isConfirm1) {
           const res = confirmPendingSearch(senderPhone, false);
-          let msg = `✅ *החיפוש נוסף בהצלחה!*\n\n📋 *כל החיפושים הפעילים שלך במקביל:*\n`;
-          res.current.searches.forEach((s, idx) => {
-            msg += `${idx + 1}. ${s.displayText} (${describeMode(s)})\n`;
-          });
-          msg += `\n🚕 הבוט יסנן עבורך נסיעות מכל המסלולים הללו בו-זמנית!\n💡 להפסקת כל החיפושים שלח "תפוס".`;
-          recordEvent("command", `נוסף חיפוש מקבילי עבור ${senderPhone}: ${res.added.displayText}`);
-          await sock.sendMessage(jid, { text: msg }, { quoted: m });
-          continue;
+          if (res.success) {
+            let msg = `✅ *החיפוש נוסף בהצלחה!*\n\n📋 *כל החיפושים הפעילים שלך במקביל:*\n`;
+            res.current.searches.forEach((s, idx) => {
+              msg += `${idx + 1}. ${s.displayText} (${describeMode(s)})\n`;
+            });
+            msg += `\n🚕 הבוט יסנן עבורך נסיעות מכל המסלולים הללו בו-זמנית!\n💡 להפסקת כל החיפושים שלח "תפוס".`;
+            recordEvent("command", `נוסף חיפוש מקבילי עבור ${res.driverPhone || senderPhone}: ${res.added.displayText}`);
+            await sock.sendMessage(jid, { text: msg }, { quoted: m });
+            continue;
+          }
         }
 
         // אפשרות ב': החלפה (רק החיפוש החדש)
-        if (norm === "2" || norm === "החלף" || norm === "רק זה" || norm === "החלפה") {
+        if (isReplace2) {
           const res = confirmPendingSearch(senderPhone, true);
-          const s = res.current.searches[0];
-          let msg = `🔄 *החיפושים הוחלפו בהצלחה!*\n\n🔍 *חיפוש פעיל כעת:*\n1. ${s.displayText} (${describeMode(s)})\n\nברגע שתעלה נסיעה מתאימה - תקבל התראה מיידית.`;
-          recordEvent("command", `הוחלף חיפוש עבור ${senderPhone}: ${s.displayText}`);
-          await sock.sendMessage(jid, { text: msg }, { quoted: m });
-          continue;
+          if (res.success) {
+            const s = res.current.searches[0];
+            let msg = `🔄 *החיפושים הוחלפו בהצלחה!*\n\n🔍 *חיפוש פעיל כעת:*\n1. ${s.displayText} (${describeMode(s)})\n\nברגע שתעלה נסיעה מתאימה - תקבל התראה מיידית.`;
+            recordEvent("command", `הוחלף חיפוש עבור ${res.driverPhone || senderPhone}: ${s.displayText}`);
+            await sock.sendMessage(jid, { text: msg }, { quoted: m });
+            continue;
+          }
         }
 
         // אפשרות ג': ביטול (do nothing / cancel staging)
-        if (norm === "ביטול" || norm === "בטל" || norm === "לא" || norm === "0" || norm === "אל תוסיף") {
+        if (isCancelChoice) {
           const res = cancelPendingSearch(senderPhone);
-          let msg = `👌 *הבקשה בוטלה.* נשארת עם החיפושים הקיימים שלך:\n`;
-          res.current.searches.forEach((s, idx) => {
-            msg += `${idx + 1}. ${s.displayText}\n`;
-          });
-          recordEvent("command", `בוטלה הוספת חיפוש עבור ${senderPhone}`);
-          await sock.sendMessage(jid, { text: msg }, { quoted: m });
-          continue;
+          if (res.success) {
+            let msg = `👌 *הבקשה בוטלה.* נשארת עם החיפושים הקיימים שלך:\n`;
+            res.current.searches.forEach((s, idx) => {
+              msg += `${idx + 1}. ${s.displayText}\n`;
+            });
+            recordEvent("command", `בוטלה הוספת חיפוש עבור ${res.driverPhone || senderPhone}`);
+            await sock.sendMessage(jid, { text: msg }, { quoted: m });
+            continue;
+          }
         }
       }
 
@@ -1965,26 +2046,46 @@ startDashboard({
   notifyDriver: async (phone, text) => {
     let clean = cleanPhone(phone);
     if (clean.startsWith("0")) clean = "972" + clean.slice(1);
-    const jid = `${clean}@s.whatsapp.net`;
+    const jids = new Set();
+    jids.add(`${clean}@s.whatsapp.net`);
+
+    // בדיקה האם יש לנהג מזהה LID מקושר (וואטסאפ ביזנס)
+    const lidMap = loadLidMap();
+    for (const [l, ph] of Object.entries(lidMap)) {
+      if (cleanPhone(ph) === clean) {
+        jids.add(`${l}@lid`);
+      }
+    }
+    const usersData = loadUsersData();
+    const u = (usersData.approvedUsers || []).find((usr) => cleanPhone(usr.phone) === clean);
+    if (u?.lid) {
+      jids.add(`${u.lid}@lid`);
+    }
+
     const sock = getMainBotSock();
-    if (sock && getMainBotStatus().connected) {
-      try {
-        await sock.sendMessage(jid, { text });
-        return true;
-      } catch (e) {
-        console.error(`שגיאה בשליחת הודעה לנהג ${phone} דרך בוט ראשי:`, e.message);
+    let sentAny = false;
+    for (const targetJid of jids) {
+      if (sock && getMainBotStatus().connected) {
+        try {
+          await sock.sendMessage(targetJid, { text });
+          sentAny = true;
+        } catch (e) {
+          console.error(`שגיאה בשליחת הודעה לנהג ${phone} (${targetJid}) דרך בוט ראשי:`, e.message);
+        }
       }
     }
     const driverSock = getDriverSession(phone)?.sock;
-    if (driverSock) {
-      try {
-        await driverSock.sendMessage(jid, { text });
-        return true;
-      } catch (e) {
-        console.error(`שגיאה בשליחת הודעה לנהג דרך סוקט עצמי ${phone}:`, e.message);
+    if (driverSock && !sentAny) {
+      for (const targetJid of jids) {
+        try {
+          await driverSock.sendMessage(targetJid, { text });
+          sentAny = true;
+        } catch (e) {
+          console.error(`שגיאה בשליחת הודעה לנהג דרך סוקט עצמי ${phone} (${targetJid}):`, e.message);
+        }
       }
     }
-    return false;
+    return sentAny;
   },
   notifyOwner: async (text) => {
     const sock = getMainBotSock();

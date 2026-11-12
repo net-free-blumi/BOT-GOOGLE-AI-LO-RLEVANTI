@@ -12,7 +12,7 @@ import pino from "pino";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanPhone, loadUsersData, isLid, removeLidMapping, clearAllLidMappings, approveUser, isUserApproved, getDestinationJid } from "./users-manager.js";
+import { cleanPhone, loadUsersData, isLid, registerLidMapping, removeLidMapping, clearAllLidMappings, approveUser, isUserApproved, getDestinationJid } from "./users-manager.js";
 import { recordError } from "./dashboard-api.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -672,6 +672,19 @@ export async function connectDriverSession(phone, { onRideMessage, onReaction, o
       sessionObj.qrTimestamp = null;
       sessionObj.lastDisconnectReason = "";
       sessionObj.connectedAt = new Date().toISOString();
+
+      // גילוי ומיפוי אוטומטי של מזהה Meta LID עבור הנהג
+      try {
+        const myLid = sock.authState?.creds?.me?.lid;
+        if (myLid) {
+          const cleanLid = String(myLid).split("@")[0].split(":")[0].replace(/\D/g, "");
+          if (cleanLid) {
+            console.log(`🔗 [LID Auto-Discovery] זוהה מזהה LID עבור נהג ${driverPhone}: ${cleanLid}`);
+            registerLidMapping(cleanLid, driverPhone);
+          }
+        }
+      } catch (e) {}
+
       onStatusChange?.(driverPhone, sessionObj);
       onEvent?.("system", `וואטסאפ נהג ${driverPhone} חובר בהצלחה`);
     }
@@ -982,6 +995,19 @@ export async function initSavedDriverSessions(callbacks) {
           console.log(`🛡️ נהג עם חיבור וואטסאפ שמור (${phone}) שוחזר אוטומטית לרשימת המאושרים!`);
           approveUser(phone, `נהג מחובר (${phone})`);
         }
+
+        // גילוי ומיפוי מזהה LID מקובץ creds.json שנשמר בדיסק
+        try {
+          const credRaw = fs.readFileSync(credPath, "utf8");
+          const credData = JSON.parse(credRaw);
+          if (credData.me?.lid) {
+            const cleanLid = String(credData.me.lid).split("@")[0].split(":")[0].replace(/\D/g, "");
+            if (cleanLid) {
+              console.log(`🔗 [Startup LID Mapping] נהג ${phone} קושר ל-LID ${cleanLid}`);
+              registerLidMapping(cleanLid, phone);
+            }
+          }
+        } catch (e) {}
 
         try {
           await connectDriverSession(phone, callbacks);

@@ -7,12 +7,12 @@
       "phone": "972515157166",
       "name": "מנהל ראשי",
       "role": "admin",
-      "addedAt": "2026-11-11T16:10:18.827Z",
-      "id": "appr-972515157166-mwcbf3di",
+      "addedAt": "2026-10-22T08:00:00.000Z",
+      "id": "appr-972515157166-mvkql0w3",
       "telegramPhone": "972515157166",
       "telegramUsername": "driver_auto",
       "telegramConnected": true,
-      "telegramConnectedAt": "2026-11-12T12:57:40.982Z",
+      "telegramConnectedAt": "2026-11-11T14:54:08.867Z",
       "telegramGroups": [
         "מאוחדים תגבור ריידר 👑",
         "ריידר הפצה בקבוצות",
@@ -20,6 +20,38 @@
         "נסיעות ירושלים והסביבה",
         "מוניות וספיישלים מרכז"
       ]
+    },
+    {
+      "id": "appr-972539485860-vp3v",
+      "phone": "972539485860",
+      "name": "מוישי",
+      "lid": "150062449578160",
+      "mappedPhone": "972539485860",
+      "role": "driver",
+      "addedAt": "2026-11-06T08:30:04.330Z",
+      "telegramPhone": "972539485860",
+      "telegramConnected": true,
+      "telegramConnectedAt": "2026-11-12T13:15:08.341Z",
+      "telegramGroups": [
+        "👑 מאוחדים תגבור ריידר👑",
+        "כל הנסיעות",
+        "סרטים",
+        "בדיחות על הטש'אלמערס"
+      ]
+    },
+    {
+      "id": "appr-972533100040-flak",
+      "phone": "972533100040",
+      "name": "ווברמנס טורס",
+      "role": "driver",
+      "addedAt": "2026-11-06T08:30:04.252Z"
+    },
+    {
+      "id": "appr-972555081150-l7hk",
+      "phone": "972555081150",
+      "name": "מספר עסקי ביפון שלי",
+      "role": "driver",
+      "addedAt": "2026-11-06T08:30:04.407Z"
     }
   ],
   "pendingUsers": []

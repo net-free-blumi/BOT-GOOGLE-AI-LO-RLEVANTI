@@ -118,21 +118,61 @@ export function shouldNotifyAdminPhoneProvided(phoneOrLid) {
 }
 
 export function getUserSearch(phone) {
-  const p = cleanPhone(phone);
-  const raw = userSearches.get(p);
+  let p = cleanPhone(phone);
+  let raw = userSearches.get(p);
+  const rawDigits = String(phone).split("@")[0].split(":")[0].replace(/\D/g, "");
+
+  if (!raw && rawDigits) {
+    const lidMap = loadLidMap();
+    const mapped = lidMap[rawDigits] || lidMap[p];
+    if (mapped) {
+      raw = userSearches.get(cleanPhone(mapped));
+      p = cleanPhone(mapped);
+    }
+  }
+
+  // בדיקה הפוכה: אם הפנייה היא לפי טלפון רגיל, בדיקה האם שמור תחת ה-LID שלו
+  if (!raw) {
+    const lidMap = loadLidMap();
+    for (const [l, ph] of Object.entries(lidMap)) {
+      if (cleanPhone(ph) === p) {
+        raw = userSearches.get(l);
+        if (raw) break;
+      }
+    }
+  }
+
   return normalizeSearchState(raw);
 }
 
 export function setUserSearch(phone, searchState) {
-  const p = cleanPhone(phone);
+  let p = cleanPhone(phone);
+  const rawDigits = String(phone).split("@")[0].split(":")[0].replace(/\D/g, "");
+  const lidMap = loadLidMap();
+  const mapped = lidMap[rawDigits] || lidMap[p];
+  if (mapped) {
+    p = cleanPhone(mapped);
+  }
+
   const normalized = normalizeSearchState(searchState);
   userSearches.set(p, normalized);
+
+  // סנכרון דו-כיווני גם תחת מזהה ה-LID אם קיים
+  if (mapped && rawDigits && rawDigits !== p) {
+    userSearches.set(rawDigits, normalized);
+  }
+
   persistSearches();
   return normalized;
 }
 
 export function addOrStageUserSearch(phone, newParsedQuery) {
-  const p = cleanPhone(phone);
+  let p = cleanPhone(phone);
+  const rawDigits = String(phone).split("@")[0].split(":")[0].replace(/\D/g, "");
+  const lidMap = loadLidMap();
+  const mapped = lidMap[rawDigits] || lidMap[p];
+  if (mapped) p = cleanPhone(mapped);
+
   const current = getUserSearch(p);
 
   // בדיקה האם חיפוש זהה לחלוטין כבר קיים ברשימה
@@ -172,8 +212,33 @@ export function addOrStageUserSearch(phone, newParsedQuery) {
 }
 
 export function confirmPendingSearch(phone, replace = false) {
-  const p = cleanPhone(phone);
-  const current = getUserSearch(p);
+  let p = cleanPhone(phone);
+  const rawDigits = String(phone).split("@")[0].split(":")[0].replace(/\D/g, "");
+  const lidMap = loadLidMap();
+  const mapped = lidMap[rawDigits] || lidMap[p];
+  if (mapped) p = cleanPhone(mapped);
+
+  let current = getUserSearch(p);
+
+  // מנגנון הגנה Fail-Safe: אם לא נמצא חיפוש ממתין למספר זה ישירות,
+  // סורקים האם יש נהג כלשהו שביצע חיפוש שנכנס להמתנה ב-15 הדקות האחרונות!
+  if (!current.pendingSearch) {
+    for (const [key, state] of userSearches.entries()) {
+      if (state && state.pendingSearch) {
+        const stagedAt = new Date(state.pendingSearch.stagedAt || 0).getTime();
+        if (Date.now() - stagedAt < 15 * 60 * 1000) {
+          p = key;
+          current = normalizeSearchState(state);
+          // אם הפנייה הגיעה מחשבון LID, רושמים מיפוי קבוע לנהג זה!
+          if (rawDigits && rawDigits !== p) {
+            registerLidMapping(rawDigits, p);
+          }
+          break;
+        }
+      }
+    }
+  }
+
   if (!current.pendingSearch) {
     return { success: false, reason: "no_pending" };
   }
@@ -187,19 +252,40 @@ export function confirmPendingSearch(phone, replace = false) {
   current.pendingSearch = null;
   current.active = true;
   const saved = setUserSearch(p, current);
-  return { success: true, current: saved, added };
+  return { success: true, current: saved, added, driverPhone: p };
 }
 
 export function cancelPendingSearch(phone) {
-  const p = cleanPhone(phone);
-  const current = getUserSearch(p);
+  let p = cleanPhone(phone);
+  const rawDigits = String(phone).split("@")[0].split(":")[0].replace(/\D/g, "");
+  const lidMap = loadLidMap();
+  const mapped = lidMap[rawDigits] || lidMap[p];
+  if (mapped) p = cleanPhone(mapped);
+
+  let current = getUserSearch(p);
+  if (!current.pendingSearch) {
+    for (const [key, state] of userSearches.entries()) {
+      if (state && state.pendingSearch) {
+        const stagedAt = new Date(state.pendingSearch.stagedAt || 0).getTime();
+        if (Date.now() - stagedAt < 15 * 60 * 1000) {
+          p = key;
+          current = normalizeSearchState(state);
+          if (rawDigits && rawDigits !== p) {
+            registerLidMapping(rawDigits, p);
+          }
+          break;
+        }
+      }
+    }
+  }
+
   if (!current.pendingSearch) {
     return { success: false, reason: "no_pending" };
   }
   const cancelled = current.pendingSearch;
   current.pendingSearch = null;
   const saved = setUserSearch(p, current);
-  return { success: true, current: saved, cancelled };
+  return { success: true, current: saved, cancelled, driverPhone: p };
 }
 
 export function removeUserSearchByIndex(phone, index1Based) {
@@ -298,6 +384,13 @@ export function isLid(input) {
   return false;
 }
 
+export function cleanPhoneWithoutLid(input) {
+  if (!input) return "";
+  let str = String(input).split("@")[0].split(":")[0].replace(/\D/g, "");
+  if (str.startsWith("0")) str = "972" + str.slice(1);
+  return str;
+}
+
 export function cleanPhone(input) {
   if (!input) return "";
   let str = String(input).split("@")[0].split(":")[0].replace(/\D/g, "");
@@ -306,6 +399,21 @@ export function cleanPhone(input) {
   if (lidMap[str]) {
     return lidMap[str];
   }
+
+  // בדיקת גיבוי ישירה מתוך קובץ users.json ללא קריאה ל-loadUsersData (מונע רקורסיה)
+  try {
+    if (existsSync(USERS_FILE)) {
+      const raw = readFileSync(USERS_FILE, "utf8");
+      const parsed = JSON.parse(raw);
+      const foundApproved = (parsed.approvedUsers || []).find(
+        (u) => (u.lid && u.lid === str) || (u.phone && cleanPhoneWithoutLid(u.phone) === str)
+      );
+      if (foundApproved) {
+        if (foundApproved.mappedPhone) return foundApproved.mappedPhone;
+        if (foundApproved.phone && !isLid(foundApproved.phone)) return cleanPhoneWithoutLid(foundApproved.phone);
+      }
+    }
+  } catch (e) {}
 
   if (str.startsWith("0")) str = "972" + str.slice(1);
   return str;
@@ -545,11 +653,18 @@ export function isUserApproved(phoneOrLid) {
   const data = loadUsersData();
   if (p === cleanPhone(data.adminPhone)) return true;
   if (p === cleanPhone(data.botPhone)) return true;
+
   const raw = String(phoneOrLid).split("@")[0].split(":")[0].replace(/\D/g, "");
+  const lidMap = loadLidMap();
+  const mapped = lidMap[raw] || lidMap[p];
+  if (mapped && (cleanPhone(mapped) === cleanPhone(data.adminPhone) || cleanPhone(mapped) === cleanPhone(data.botPhone))) return true;
+
   return data.approvedUsers.some(
     (u) => cleanPhone(u.phone) === p || 
-           (u.lid && (u.lid === String(phoneOrLid) || u.lid === raw)) ||
-           (u.id && u.id === String(phoneOrLid))
+           (mapped && cleanPhone(u.phone) === cleanPhone(mapped)) ||
+           (u.lid && (u.lid === String(phoneOrLid) || u.lid === raw || (mapped && u.lid === mapped))) ||
+           (u.mappedPhone && (cleanPhone(u.mappedPhone) === p || (mapped && cleanPhone(u.mappedPhone) === cleanPhone(mapped)))) ||
+           (u.id && (u.id === String(phoneOrLid) || u.id === raw))
   );
 }
 
@@ -559,7 +674,17 @@ export function isUserAdmin(phoneOrLid) {
   return p === cleanPhone(data.adminPhone);
 }
 
-export function canReplyToUnapproved(phoneOrLid) {
+export function canReplyToUnapproved(phoneOrLid, incomingText = "") {
+  const norm = typeof incomingText === "string" ? incomingText.trim().toLowerCase() : "";
+  // אל תחסום לעולם פקודות חיפוש או פקודות אישור במקביל ("1", "כן", "2", "תפוס", "פנוי")
+  if (
+    norm === "1" || norm === "כן" || norm === "2" || norm === "הוסף" || norm === "החלף" ||
+    norm === "ביטול" || norm === "לא" || norm === "תפריט" || norm === "חבר אותי" ||
+    norm.startsWith("פנוי") || norm.startsWith("פ ") || norm === "תפוס" || norm === "עצור"
+  ) {
+    return true;
+  }
+
   const p = cleanPhone(phoneOrLid);
   const data = loadUsersData();
   const cooldownMs = (data.cooldownHours || 24) * 60 * 60 * 1000;

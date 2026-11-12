@@ -3,25 +3,17 @@
     "active": true,
     "searches": [
       {
-        "id": "s_1794488268174",
-        "mode": "city_all",
+        "id": "s_test_1",
+        "mode": "internal",
         "origin": "בית שמש",
-        "displayText": "בית שמש",
-        "addedAt": "2026-11-12T12:57:48.174Z"
-      },
-      {
-        "id": "p_1794488268181",
-        "mode": "city_all",
-        "origin": "ירושלים",
-        "displayText": "ירושלים",
-        "stagedAt": "2026-11-12T12:57:48.181Z"
+        "displayText": "פנימי בבית שמש"
       }
     ],
     "pendingSearch": null,
-    "mode": "city_all",
+    "mode": "internal",
     "origin": "בית שמש",
     "destination": null,
-    "displayText": "2 חיפושים פעילים במקביל (1. בית שמש | 2. ירושלים)"
+    "displayText": "פנימי בבית שמש"
   },
   "972599999999": {
     "active": false,
@@ -31,5 +23,28 @@
     "origin": null,
     "destination": null,
     "displayText": "מופסק (תפוס)"
+  },
+  "972539485860": {
+    "active": true,
+    "searches": [
+      {
+        "id": "s1",
+        "displayText": "חיפוש 1",
+        "origin": "עיר 1",
+        "mode": "city_all"
+      },
+      {
+        "id": "p1",
+        "displayText": "חיפוש 2",
+        "origin": "עיר 2",
+        "mode": "city_all",
+        "stagedAt": "2026-11-12T14:01:45.345Z"
+      }
+    ],
+    "pendingSearch": null,
+    "mode": "city_all",
+    "origin": "עיר 1",
+    "destination": null,
+    "displayText": "2 חיפושים פעילים במקביל (1. חיפוש 1 | 2. חיפוש 2)"
   }
 }

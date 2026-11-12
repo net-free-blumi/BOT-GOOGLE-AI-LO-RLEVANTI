@@ -523,11 +523,28 @@ ${cleaned}
 export function getDriverTelegramInfo(driverPhone) {
   const clean = cleanPhone(driverPhone);
   const conf = telegramState.driverConfigs[clean] || {};
+
+  let connected = Boolean(conf.connected);
+  let tgPhone = conf.telegramPhone || clean;
+  let groups = conf.groups || DEFAULT_RIDE_GROUPS;
+
+  if (!connected) {
+    try {
+      const usersData = loadUsersData();
+      const u = (usersData.approvedUsers || []).find((usr) => cleanPhone(usr.phone) === clean || (usr.lid && usr.lid === clean));
+      if (u && u.telegramConnected) {
+        connected = true;
+        if (u.telegramPhone) tgPhone = u.telegramPhone;
+        if (Array.isArray(u.telegramGroups) && u.telegramGroups.length > 0) groups = u.telegramGroups;
+      }
+    } catch (e) {}
+  }
+
   return {
-    connected: Boolean(conf.connected),
-    telegramPhone: conf.telegramPhone || clean,
-    groups: conf.groups || DEFAULT_RIDE_GROUPS,
-    groupsCount: (conf.groups || DEFAULT_RIDE_GROUPS).length,
+    connected,
+    telegramPhone: tgPhone,
+    groups,
+    groupsCount: groups.length,
     matchedCount: conf.matchedCount || 0,
   };
 }
@@ -535,8 +552,8 @@ export function getDriverTelegramInfo(driverPhone) {
 // מענה להודעת טלגרם מנהג בוואטסאפ (מדריך חיבור לפי מספר טלפון וקוד)
 export function buildDriverTelegramInfoMessage(driverPhone) {
   const clean = cleanPhone(driverPhone);
-  const conf = telegramState.driverConfigs[clean] || {};
-  const isConnected = Boolean(conf.connected);
+  const info = getDriverTelegramInfo(clean);
+  const isConnected = info.connected;
   const hasPending = hasPendingTelegramAuth(clean);
 
   let msg = `✈️ *חיבור חשבון טלגרם לסריקה מקבילה (וואטסאפ + טלגרם)* 🚕\n\n`;
