@@ -474,6 +474,10 @@ async function attachTelegramMessageListener(client, driverPhone) {
       if (!isGroupOrChannel) return;
 
       const groupName = chat?.title || "קבוצת נסיעות בטלגרם";
+      // סינון קבוצת היעד של ההתראות כדי למנוע לולאת סריקה עצמית
+      if (groupName.includes("נסיעות זמינות מהבוט") || groupName.includes("נסיעות זמינות")) {
+        return;
+      }
       let senderName = "סדרן בטלגרם";
       try {
         const sender = await message.getSender();
@@ -596,6 +600,141 @@ async function deliverTelegramRideAlert(driverPhone, rideData, originalTelegramM
     customAlertText: alertText,
     telegramOriginalMessage: originalTelegramMsg,
   }, null);
+}
+
+// ==========================================
+// 6.5. ניתוב והפצת התראות נסיעה לטלגרם של הנהג ("נסיעות זמינות מהבוט" + Saved Messages)
+// ==========================================
+
+// מטמון קבוצת יעד בטלגרם לכל נהג: phone -> entity
+const driverTargetGroupCache = new Map();
+
+// מציאת קבוצת היעד של הנהג בטלגרם (למשל: "נסיעות זמינות מהבוט")
+export async function findDriverAlertGroup(client, phone) {
+  const p = cleanPhone(phone);
+  const cached = driverTargetGroupCache.get(p);
+  if (cached) return cached;
+
+  const targetName = process.env.TELEGRAM_GROUP_NAME || "נסיעות זמינות מהבוט";
+
+  try {
+    const dialogs = await client.getDialogs({ limit: 100 });
+    for (const d of dialogs) {
+      const title = (d.title || d.name || "").trim();
+      if (title.includes(targetName) || title.includes("נסיעות זמינות")) {
+        console.log(`✈️ [טלגרם נהג ${p}] נמצאה קבוצת היעד: "${title}" (ID: ${d.id})`);
+        const targetEntity = d.inputEntity || d.entity || d.id;
+        driverTargetGroupCache.set(p, targetEntity);
+        return targetEntity;
+      }
+    }
+  } catch (err) {
+    console.error(`שגיאה באיתור קבוצת טלגרם עבור ${p}:`, err.message);
+  }
+  return null;
+}
+
+// קבלת רשימת הדיאלוגים והקבוצות של הנהג (לבדיקה, סנכרון ואימות)
+export async function getTelegramDialogs(phone) {
+  const p = cleanPhone(phone);
+  const client = activeTelegramClients.get(p);
+  if (!client || !client.connected) return [];
+  try {
+    const dialogs = await client.getDialogs({ limit: 100 });
+    return dialogs.map((d) => ({
+      id: String(d.id),
+      title: d.title || d.name || "",
+      isGroup: Boolean(d.isGroup),
+      isChannel: Boolean(d.isChannel),
+      isUser: Boolean(d.isUser),
+    }));
+  } catch (err) {
+    console.error(`שגיאה במשיכת דיאלוגים עבור ${p}:`, err.message);
+    return [];
+  }
+}
+
+// שליחת התראת נסיעה (מוואטסאפ או מטלגרם) ישירות לטלגרם של הנהג
+export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg = null) {
+  const p = cleanPhone(driverPhone);
+  const client = activeTelegramClients.get(p);
+
+  if (!client || !client.connected) {
+    return { ok: false, reason: "חשבון טלגרם אינו מחובר כרגע" };
+  }
+
+  try {
+    const isFromTelegram = Boolean(rideData.isTelegram);
+    const targetGroup = await findDriverAlertGroup(client, p);
+
+    let tgText = "";
+    if (isFromTelegram) {
+      tgText = `🚕 *נסיעה מטלגרם*\n\n` +
+        `${rideData.cleanedText || rideData.rawText}\n\n` +
+        `━━━━━━━━━━━━━\n` +
+        `📍 *קבוצה:* ${rideData.groupName || "קבוצת טלגרם"}\n` +
+        `👤 *סדרן:* ${rideData.senderName || "זמין בטלגרם"}\n` +
+        (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
+
+      if (rideData.telegramUrl) {
+        tgText += `\n🔗 *מעבר ישיר להודעה המקורית ולתפיסה:*\n${rideData.telegramUrl}`;
+      }
+    } else {
+      tgText = `🚕 *נסיעה מוואטסאפ*\n\n` +
+        `${rideData.cleanedText || rideData.rawText}\n\n` +
+        `━━━━━━━━━━━━━\n` +
+        `📍 *קבוצת וואטסאפ:* ${rideData.groupName || "קבוצת וואטסאפ"}\n` +
+        `👤 *סדרן:* ${rideData.senderName || "סדרן"} · ${rideData.senderPhone || ""}\n` +
+        (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
+
+      const cleanSenderPhone = cleanPhone(rideData.senderPhone);
+      if (cleanSenderPhone && cleanSenderPhone.length >= 9 && !isLid(cleanSenderPhone)) {
+        tgText += `\n💬 *פנייה ישירה לסדרן בוואטסאפ:*\nhttps://wa.me/${cleanSenderPhone}`;
+      }
+    }
+
+    // יעדי השליחה:
+    // 1. קבוצת "נסיעות זמינות מהבוט" (אם קיימת אצל הנהג)
+    // 2. "me" - הודעות שמורות של הנהג (Saved Messages), להתראה פרטית מיידית בטלגרם!
+    const destinations = [];
+    if (targetGroup) {
+      destinations.push({ type: "group", target: targetGroup, name: "נסיעות זמינות מהבוט" });
+    }
+    destinations.push({ type: "direct", target: "me", name: "הודעות שמורות (פרטי)" });
+
+    let sentCount = 0;
+    for (const dest of destinations) {
+      try {
+        let sentAsForward = false;
+        // אם הנסיעה מטלגרם, מבצעים העברה (Forward) המהווה ציטוט טלגרם מובנה - לחיצה קופצת למקור!
+        if (isFromTelegram && rideData.telegramMsgId && rideData.telegramChatId) {
+          try {
+            await client.forwardMessages(dest.target, {
+              messages: [rideData.telegramMsgId],
+              fromPeer: rideData.telegramChatId,
+            });
+            sentAsForward = true;
+            console.log(`✈️ [טלגרם -> ${dest.name}] נסיעה הועברה בהצלחה כציטוט מקורי עבור נהג ${p}`);
+          } catch (fwdErr) {
+            // אם ההעברה נחסמה ע"י הגדרות הקבוצה המקורית (noforwards), נשלח כהודעה מעוצבת
+          }
+        }
+
+        if (!sentAsForward) {
+          await client.sendMessage(dest.target, { message: tgText, linkPreview: false });
+          console.log(`✈️ [טלגרם -> ${dest.name}] נשלחה התראה מעוצבת עבור נהג ${p}`);
+        }
+        sentCount++;
+      } catch (err) {
+        console.error(`שגיאה בשליחת התראת טלגרם ל-${dest.name} עבור ${p}:`, err.message);
+      }
+    }
+
+    return { ok: true, sentCount };
+  } catch (err) {
+    console.error(`שגיאה בשליחת התראה לטלגרם עבור ${p}:`, err.message);
+    return { ok: false, error: err.message };
+  }
 }
 
 // ==========================================

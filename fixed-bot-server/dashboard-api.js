@@ -987,6 +987,21 @@ export function startDashboard(runtime) {
     }
   });
 
+  // רשימת קבוצות ודיאלוגים של הנהג בטלגרם (לווידוא זיהוי קבוצת היעד "נסיעות זמינות מהבוט")
+  app.get("/api/telegram/dialogs/:phone", requireAuth, async (req, res) => {
+    const phone = req.params?.phone;
+    if (!phone) return res.status(400).json({ ok: false, error: "נדרש מספר טלפון" });
+    try {
+      if (ctx?.getTelegramDialogs) {
+        const dialogs = await ctx.getTelegramDialogs(phone);
+        return res.json({ ok: true, dialogs });
+      }
+      res.status(501).json({ ok: false, error: "מודול טלגרם אינו זמין כרגע" });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // לוגים בזמן אמת (כולל סינון לפי נהג ספציפי) - מוגן באבטחה מלאה
   app.get("/api/logs", requireAuth, (req, res) => {
     const type = String(req.query.type || "all");

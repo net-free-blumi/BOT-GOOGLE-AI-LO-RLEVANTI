@@ -98,6 +98,8 @@ import {
   setTelegramSystemCallbacks,
   claimTelegramRide,
   hasPendingTelegramVerification,
+  sendRideAlertToTelegram,
+  getTelegramDialogs,
 } from "./telegram-manager.js";
 
 const DEBUG_FILTER = true;
@@ -661,6 +663,15 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
   // ציטוט הודעת הקבוצה המקורית (לחיצה על הציטוט קופצת להודעה בקבוצה)
   const quotedGroupMsg = buildSafeGroupQuote(originalMsg, rideData.cleanedText || "נסיעה");
 
+  // שליחת ההתראה במקביל גם לטלגרם של הנהג (לקבוצה "נסיעות זמינות מהבוט" ולהודעות השמורות בפרטי)
+  let tgResultPromise = null;
+  try {
+    tgResultPromise = sendRideAlertToTelegram(driverPhone, rideData, originalMsg).catch((tgErr) => {
+      console.log(`ℹ️ [טלגרם] שליחה לנהג ${driverPhone} דולגה:`, tgErr.message);
+      return { ok: false };
+    });
+  } catch (e) {}
+
   let lastError = null;
   for (const a of attempts) {
     try {
@@ -702,6 +713,14 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
       lastError = err;
       console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} נכשלה:`, err.message);
       console.log("🔎 QUOTE-KEY", rideData.groupName, JSON.stringify({ key: originalMsg?.key, type: Object.keys(originalMsg?.message || {})[0] }));
+    }
+  }
+
+  // אם שליחה בוואטסאפ לא הצליחה (למשל סוקט מנותק), בודקים האם נשלח בהצלחה לטלגרם
+  if (tgResultPromise) {
+    const tgRes = await tgResultPromise;
+    if (tgRes?.ok && tgRes.sentCount > 0) {
+      return { ok: true, via: "telegram" };
     }
   }
 
@@ -2238,6 +2257,7 @@ startDashboard({
   disconnectTelegram: (phone) => disconnectTelegram(phone),
   getTelegramStatus: (phone) => getTelegramStatus(phone),
   getAllTelegramStatuses: () => getAllTelegramStatuses(),
+  getTelegramDialogs: (phone) => getTelegramDialogs(phone),
 });
 
 // הפעלת הבוט הראשי ושחזור סשנים שמורים של נהגים
