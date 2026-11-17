@@ -88,9 +88,25 @@ function detachSock(sock) {
 }
 
 // מאגר הודעות יוצאות - נדרש ל-getMessage כדי ש-Baileys יוכל לשלוח מחדש הודעה שהנמען לא הצליח לפענח
-const SENT_STORE_LIMIT = 3000;
+const SENT_STORE_LIMIT = 5000;
 const SENT_STORE_FILE = path.join(AUTH_BASE_DIR, "sent-messages.json");
 const sentStore = new Map(); // msgId -> message
+
+// שחזור אובייקטי Buffer לאחר טעינה מ-JSON (מונע קריסות של proto.Message.encode בניסיונות שליחה חוזרים)
+function reviveBuffers(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (obj.type === "Buffer" && Array.isArray(obj.data)) {
+    return Buffer.from(obj.data);
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(reviveBuffers);
+  }
+  const res = {};
+  for (const [k, v] of Object.entries(obj)) {
+    res[k] = reviveBuffers(v);
+  }
+  return res;
+}
 
 // טעינת הודעות שמורות מהדיסק בעליית השרת
 try {
@@ -100,7 +116,7 @@ try {
     if (Array.isArray(arr)) {
       for (const item of arr) {
         if (item && item.id && item.message) {
-          sentStore.set(item.id, item.message);
+          sentStore.set(item.id, reviveBuffers(item.message));
         }
       }
       console.log(`📦 שוחזרו ${sentStore.size} הודעות יוצאות מ-sent-messages.json (לפענוח והצפנה חוזרת)`);
@@ -135,30 +151,30 @@ function rememberSent(id, message) {
   persistSentStoreSoon();
 }
 
-// ניקוי מפתחות ישנים שעלולים לגרום ל-Bad MAC בלולאות
+// ניקוי מפתחות ישנים - מוחק אך ורק קבצי sender-key-memory זמניים שנוטים לדלוף או קבצים ריקים מושחתים
+// אזהרה קריטית: לעולם לא מוחקים קבצי pre-key או session! מחיקתם הורסת את מפתחות ההצפנה וגורמת להודעות ממתינות!
 export function cleanOldSenderKeyFiles() {
   try {
     const cleanDir = (dirPath) => {
       if (!fs.existsSync(dirPath)) return;
       const files = fs.readdirSync(dirPath);
-      const now = Date.now();
       let cleanedCount = 0;
       for (const f of files) {
         if (f === "creds.json") continue; // לעולם לא מוחקים creds.json!
-        if (f.startsWith("sender-key-") || f.startsWith("pre-key-") || f.startsWith("session-")) {
-          const filePath = path.join(dirPath, f);
-          try {
-            const stat = fs.statSync(filePath);
-            // מחיקה אם הקובץ מעל 24 שעות או שהוא sender-key-memory ישן
-            if (f.includes("sender-key-memory") || (now - stat.mtimeMs > 24 * 3600 * 1000)) {
-              fs.unlinkSync(filePath);
-              cleanedCount++;
-            }
-          } catch (e) {}
-        }
+        // לעולם לא מוחקים pre-key או session!
+        if (f.startsWith("pre-key-") || f.startsWith("session-")) continue;
+
+        const filePath = path.join(dirPath, f);
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.size === 0 || f.includes("sender-key-memory")) {
+            fs.unlinkSync(filePath);
+            cleanedCount++;
+          }
+        } catch (e) {}
       }
       if (cleanedCount > 0) {
-        console.log(`🧹 נוקו ${cleanedCount} קבצי מפתחות ישנים מ-${path.basename(dirPath)} למניעת Bad MAC`);
+        console.log(`🧹 נוקו ${cleanedCount} קבצי מפתחות זמניים מ-${path.basename(dirPath)}`);
       }
     };
 
@@ -188,16 +204,28 @@ function createRetryCache() {
   };
 }
 
-// עטיפת sendMessage כך שכל הודעה יוצאת נשמרת אוטומטית (בלי לגעת ב-index.js)
+// עטיפת sendMessage ו-relayMessage כך שכל הודעה יוצאת נשמרת אוטומטית למענה לבקשות Retry
 function wrapSendStore(sock) {
-  const orig = sock.sendMessage.bind(sock);
+  const origSend = sock.sendMessage.bind(sock);
   sock.sendMessage = async (...args) => {
-    const res = await orig(...args);
+    const res = await origSend(...args);
     try {
       if (res?.key?.id && res.message) rememberSent(res.key.id, res.message);
     } catch (e) {}
     return res;
   };
+
+  if (sock.relayMessage) {
+    const origRelay = sock.relayMessage.bind(sock);
+    sock.relayMessage = async (jid, message, options = {}) => {
+      const res = await origRelay(jid, message, options);
+      try {
+        const id = options.messageId;
+        if (id && message) rememberSent(id, message);
+      } catch (e) {}
+      return res;
+    };
+  }
 }
 
 // יצירת סוקט אחידה לבוט הראשי ולנהגים
@@ -212,7 +240,19 @@ function buildSocket(version, state) {
     logger,
     printQRInTerminal: false,
     msgRetryCounterCache: createRetryCache(),
-    getMessage: async (key) => (key?.id ? sentStore.get(key.id) : undefined),
+    getMessage: async (key) => {
+      if (!key?.id) return undefined;
+      const msg = sentStore.get(key.id);
+      if (!msg) return undefined;
+      return reviveBuffers(msg);
+    },
+    shouldIgnoreJid: (jid) => {
+      if (!jid) return true;
+      if (jid.endsWith("@broadcast") || jid.endsWith("@newsletter") || jid === "status@broadcast") {
+        return true;
+      }
+      return false;
+    },
     markOnlineOnConnect: false,
     syncFullHistory: false,
   });

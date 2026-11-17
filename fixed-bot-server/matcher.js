@@ -803,6 +803,12 @@ export function buildQuotedRideMessage(alertInfo) {
 
   if (!id) return undefined;
 
+  let cleanText = rawText;
+  if (!cleanText && alertInfo.originalMessage) {
+    const orig = alertInfo.originalMessage;
+    cleanText = orig.conversation || orig.extendedTextMessage?.text || orig.imageMessage?.caption || "נסיעה";
+  }
+
   return {
     key: {
       remoteJid: groupJid,
@@ -810,8 +816,8 @@ export function buildQuotedRideMessage(alertInfo) {
       id: id,
       fromMe: false,
     },
-    message: alertInfo.originalMessage || {
-      conversation: rawText,
+    message: {
+      conversation: cleanText || "נסיעה",
     },
   };
 }

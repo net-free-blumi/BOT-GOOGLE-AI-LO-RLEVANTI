@@ -607,6 +607,41 @@ export async function sendRideClaimReply(sock, targetJid, text, quoteObj) {
 
 
 
+// ניקוי ובניית ציטוט בטוח של הודעת הקבוצה המקורית (לחיצה על הציטוט קופצת להודעה בקבוצה ללא שגיאות הצפנה)
+function buildSafeGroupQuote(originalMsg, fallbackText = "נסיעה") {
+  const origKey = originalMsg?.key;
+  if (!origKey?.id || !originalMsg?.message) return null;
+
+  let msg = originalMsg.message;
+  while (msg) {
+    if (msg.ephemeralMessage?.message) msg = msg.ephemeralMessage.message;
+    else if (msg.viewOnceMessage?.message) msg = msg.viewOnceMessage.message;
+    else if (msg.viewOnceMessageV2?.message) msg = msg.viewOnceMessageV2.message;
+    else if (msg.documentWithCaptionMessage?.message) msg = msg.documentWithCaptionMessage.message;
+    else break;
+  }
+
+  const quoteText = (
+    msg?.conversation ||
+    msg?.extendedTextMessage?.text ||
+    msg?.imageMessage?.caption ||
+    msg?.videoMessage?.caption ||
+    fallbackText
+  ).trim();
+
+  return {
+    key: {
+      remoteJid: origKey.remoteJid,
+      id: origKey.id,
+      fromMe: false,
+      participant: origKey.participant || (origKey.remoteJid?.endsWith("@g.us") ? undefined : origKey.remoteJid),
+    },
+    message: {
+      conversation: quoteText || "נסיעה",
+    },
+  };
+}
+
 // שליחת התראת נסיעה לנהג עם ציטוט הודעת הקבוצה המקורית
 async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
   const alertMsg = rideData.customAlertText || buildRideAlertText(rideData);
@@ -624,16 +659,7 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
   }
 
   // ציטוט הודעת הקבוצה המקורית (לחיצה על הציטוט קופצת להודעה בקבוצה)
-  const origKey = originalMsg?.key;
-  const quotedGroupMsg = origKey?.id && originalMsg?.message ? {
-    key: {
-      remoteJid: origKey.remoteJid,
-      id: origKey.id,
-      fromMe: false,
-      participant: origKey.participant || (origKey.fromMe ? `${cleanPhone(driverPhone)}@s.whatsapp.net` : undefined),
-    },
-    message: originalMsg.message,
-  } : null;
+  const quotedGroupMsg = buildSafeGroupQuote(originalMsg, rideData.cleanedText || "נסיעה");
 
   let lastError = null;
   for (const a of attempts) {

@@ -311,7 +311,7 @@ export function cleanPhone(input) {
   return str;
 }
 
-// קביעת JID יעד מדויק לשליחת הודעת וואטסאפ
+// קביעת JID יעד מדויק לשליחת הודעת וואטסאפ (עם תמיכה מושלמת במזהי LID)
 export function getDestinationJid(input) {
   if (!input) return "";
   const raw = String(input).trim();
@@ -320,18 +320,39 @@ export function getDestinationJid(input) {
   }
 
   const digits = raw.replace(/\D/g, "");
-  const lidMap = loadLidMap();
+  if (!digits) return "";
 
-  if (lidMap[digits]) {
-    let p = lidMap[digits];
-    if (p.startsWith("0")) p = "972" + p.slice(1);
-    return `${p}@s.whatsapp.net`;
-  }
-
+  // 1. אם הקלט עצמו הוא מזהה LID
   if (isLid(raw) || isLid(digits)) {
     return `${digits}@lid`;
   }
 
+  // 2. בדיקה האם למשתמש יש מזהה LID פעיל שמור ב-users.json (כדי שלא נשלח ל-s.whatsapp.net כשהצ'אט מתנהל ב-LID!)
+  try {
+    const users = loadUsersData();
+    const clean = cleanPhone(digits);
+    const allUsers = [...(users.approvedUsers || []), ...(users.pendingUsers || [])];
+    const match = allUsers.find((u) => 
+      u.lid === digits || 
+      (clean && (cleanPhone(u.phone) === clean || cleanPhone(u.mappedPhone) === clean))
+    );
+    if (match?.lid && isLid(match.lid)) {
+      return `${match.lid}@lid`;
+    }
+  } catch (e) {}
+
+  // 3. בדיקה ב-lidMap האם קיים מיפוי הפוך (טלפון -> LID)
+  try {
+    const lidMap = loadLidMap();
+    const clean = cleanPhone(digits);
+    for (const [lid, phone] of Object.entries(lidMap)) {
+      if (clean && cleanPhone(phone) === clean && isLid(lid)) {
+        return `${lid}@lid`;
+      }
+    }
+  } catch (e) {}
+
+  // 4. משתמש רגיל ללא LID: שליחה למספר הטלפון הרגיל
   let p = digits;
   if (p.startsWith("0")) p = "972" + p.slice(1);
   return `${p}@s.whatsapp.net`;
@@ -351,8 +372,8 @@ export function registerLidMapping(rawLid, realPhone) {
   const users = loadUsersData();
   let changed = false;
 
-  for (const u of users.approvedUsers) {
-    if (u.phone === lid || u.phone === rawLid || u.lid === lid) {
+  for (const u of (users.approvedUsers || [])) {
+    if (u.phone === lid || u.phone === rawLid || u.lid === lid || cleanPhone(u.phone) === clean) {
       u.lid = lid;
       u.phone = clean;
       u.mappedPhone = clean;
@@ -360,8 +381,8 @@ export function registerLidMapping(rawLid, realPhone) {
     }
   }
 
-  for (const u of users.pendingUsers) {
-    if (u.phone === lid || u.phone === rawLid || u.lid === lid) {
+  for (const u of (users.pendingUsers || [])) {
+    if (u.phone === lid || u.phone === rawLid || u.lid === lid || cleanPhone(u.phone) === clean) {
       u.lid = lid;
       u.phone = clean;
       u.mappedPhone = clean;
