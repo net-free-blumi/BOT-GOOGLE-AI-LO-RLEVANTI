@@ -38,8 +38,8 @@ if (!fs.existsSync(TELEGRAM_AUTH_DIR)) {
 }
 
 // מפתחות Telegram API הרשמיים (ניתן לדריסה ע"י משתני סביבה)
-const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID || 0);
-const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH || "";
+const TELEGRAM_API_ID = Number(process.env.TELEGRAM_API_ID || 31336167);
+const TELEGRAM_API_HASH = process.env.TELEGRAM_API_HASH || "465c772d7f2e13a2b27f316dec8f5111";
 
 // לקוחות טלגרם פעילים: phone -> TelegramClient
 const activeTelegramClients = new Map();
