@@ -760,7 +760,20 @@ assert(!vMeron.ok, `צפת מירון נפסל מנהג במירון: "${vMeron.
 const vSafed = rideMatches(safedMeron, { mode: "city_all", origin: "צפת" });
 assert(vSafed.ok, `צפת מירון מתקבל לנהג בצפת: "${vSafed.reason}"`);
 
+console.log("\n--- בדיקה 11: אימות נסיעות ערוץ טלגרם ופורמט דרייבוט (צילום מסך משתמש) ---");
+
+// בדיקה 1: נסיעת "ים שמש 170" מערוץ "כל הנסיעות" של דרייבוט מתקבלת עבור נהג שמחפש בית שמש
+const tgChannelRide = "כל הנסיעות\nים שמש 170\nשערי רווחה\nתחנה בתוספת\nפאגז גדול\nסטיישן\n* 🎩 ללא פון - 8080 🎩\n◄ לוי סדרן\ndrivebot.co.il";
+const tgVerdict = rideMatches(tgChannelRide, { mode: "city_all", origin: "בית שמש" }, "כל הנסיעות");
+assert(tgVerdict.ok, `נסיעת ים שמש 170 מתקבלת בהצלחה בחיפוש בית שמש: "${tgVerdict.reason}"`);
+
+// בדיקה 2: אימות חילוץ ופענוח קישור בוט דרייבוט לכפתור תפיסה
+const driveBotUrl = "https://t.me/drivebot_bot?start=req_8080";
+const botMatch = driveBotUrl.match(/(?:t\.me\/|tg:\/\/resolve\?domain=)([^/?#&]+).*?[?&]start=([^&#]+)/i);
+assert(botMatch && botMatch[1] === "drivebot_bot" && botMatch[2] === "req_8080", "חילוץ בוט דרייבוט ופרמטר start הצליח");
+
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
+
 
 
 

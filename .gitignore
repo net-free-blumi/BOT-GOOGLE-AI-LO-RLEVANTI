@@ -3,3 +3,8 @@ dist
 .env
 auth
 *.session
+searches.json
+users.json
+users.backup.json
+lid-map.json
+.aistudio

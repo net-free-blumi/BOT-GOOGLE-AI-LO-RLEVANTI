@@ -545,9 +545,9 @@ export function createMatcher(citiesData, streetsData = {}) {
       const roles = resolveRoles(places, matchText);
       if (roles.cities.includes(home)) {
         // הגנה 1: אם ההודעה פותחת בכינוי מובהק של עיר אחרת (כמו "בב 70" או "שמש 50"),
-        // עיר המוצא היא אותה עיר ולא עיר הבית!
+        // עיר המוצא היא אותה עיר ולא עיר הבית! (חריג: נסיעות קו ים-שמש המבוקשות ביותר)
         const firstAlias = places.find((p) => p.kind === "alias");
-        if (firstAlias && firstAlias.start <= 1 && firstAlias.city !== home) {
+        if (firstAlias && firstAlias.start <= 1 && firstAlias.city !== home && !(home === "בית שמש" && firstAlias.city === "ירושלים")) {
           return no(`ההודעה פותחת בכינוי של עיר אחרת (${firstAlias.city})`);
         }
 
@@ -559,7 +559,11 @@ export function createMatcher(citiesData, streetsData = {}) {
 
         if (roles.from === home) {
           return yes(`${home} (מחוץ לעיר): יוצאת ל${roles.to || "יעד חיצוני"}`);
-        } else {
+        } else if (roles.to === home) {
+          // חריג מבוקש: נסיעה בין ירושלים לבית שמש ("ים שמש" / חזור מהבירה לעיר)
+          if ((home === "בית שמש" && roles.from === "ירושלים") || (home === "ירושלים" && roles.from === "בית שמש")) {
+            return yes(`${home} (חזור מ-${roles.from}): יוצאת מ-${roles.from}`);
+          }
           return no(`${home} מופיעה כיעד ולא כמוצא (נסיעה נכנסת)`);
         }
       }

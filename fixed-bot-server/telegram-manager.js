@@ -271,8 +271,8 @@ export async function verifyTelegramCode(phone, code, password = "") {
     activeTelegramClients.set(p, client);
     pendingVerifications.delete(p);
 
-    // משיכת דיאלוגים ראשונית - הכרחי ב-GramJS כדי להתחיל לקבל עדכונים שוטפים מקבוצות
-    await client.getDialogs({ limit: 50 }).catch(() => {});
+    // משיכת דיאלוגים ראשונית - הכרחי ב-GramJS כדי לאכלס את כל הערוצים והקבוצות עם access_hash
+    await client.getDialogs({ limit: 200 }).catch(() => {});
 
     const me = await client.getMe();
     const telegramUsername = me?.username ? `@${me.username}` : (me?.firstName || "נהג");
@@ -397,7 +397,7 @@ export async function initSavedTelegramSessions() {
 
           if (await client.checkAuthorization()) {
             activeTelegramClients.set(phone, client);
-            await client.getDialogs({ limit: 50 }).catch(() => {});
+            await client.getDialogs({ limit: 200 }).catch(() => {});
             await attachTelegramMessageListener(client, phone);
             const me = await client.getMe().catch(() => null);
             const username = me?.username ? `@${me.username}` : (me?.firstName || phone);
@@ -438,139 +438,194 @@ export async function initSavedTelegramSessions() {
 }
 
 // ==========================================
-// 5. מאזין להודעות נכנסות בקבוצות וערוצים בטלגרם
+// 5. מאזין להודעות נכנסות בקבוצות וערוצים בטלגרם (כולל ערוצי שידור כמו "כל הנסיעות")
 // ==========================================
+
+// מעקב הודעות טלגרם שכבר עובדו למניעת כפילויות בין מאזינים
+const processedTgMsgKeys = new Set();
+function markTgMsgProcessed(key) {
+  if (processedTgMsgKeys.has(key)) return false;
+  processedTgMsgKeys.add(key);
+  if (processedTgMsgKeys.size > 3000) {
+    const first = processedTgMsgKeys.values().next().value;
+    processedTgMsgKeys.delete(first);
+  }
+  return true;
+}
+
+async function handleIncomingTelegramMessage(client, driverPhone, message, sourceEvent = "new_message") {
+  try {
+    if (!message) return;
+    const rawContent = message.text || message.message || "";
+    const text = String(rawContent).trim();
+    if (text.length < 5) return;
+
+    // חילוץ מזהה צ'אט/ערוץ והודעה
+    const peer = message.peerId;
+    const rawChatId = message.chatId || peer?.channelId || peer?.chatId || peer?.userId;
+    const msgId = message.id;
+    const dedupKey = `${rawChatId}_${msgId}`;
+
+    if (!markTgMsgProcessed(dedupKey)) {
+      return; // כבר עובד במאזין המקביל
+    }
+
+    // בדיקה האם לנהג זה יש חיפוש פעיל
+    const driverSearch = systemCallbacks.getUserSearch(driverPhone);
+    if (!driverSearch || !driverSearch.active) {
+      return;
+    }
+
+    // חילוץ פרטי הקבוצה/ערוץ
+    let chat = null;
+    try {
+      chat = await message.getChat();
+    } catch (e) {}
+
+    // בדיקה האם זו קבוצה או ערוץ (כולל ערוצי שידור עם אלפי מנויים כמו "כל הנסיעות")
+    const isChannelOrGroup = Boolean(
+      chat?.title ||
+      message.isGroup ||
+      message.isChannel ||
+      peer?.channelId ||
+      peer?.chatId
+    );
+
+    if (!isChannelOrGroup) return;
+
+    const groupName = (chat?.title || (peer?.channelId ? `ערוץ טלגרם (${peer.channelId})` : "קבוצת טלגרם")).trim();
+
+    // סינון קבוצת היעד של ההתראות כדי למנוע לולאת סריקה עצמית
+    if (
+      groupName.includes("נסיעות זמינות מהבוט") ||
+      groupName.includes("נסיעות זמינות") ||
+      String(rawChatId).includes("5442068385")
+    ) {
+      return;
+    }
+
+    let senderName = "סדרן בטלגרם";
+    try {
+      const sender = await message.getSender();
+      if (sender) {
+        senderName = [sender.firstName, sender.lastName].filter(Boolean).join(" ") ||
+                     (sender.username ? `@${sender.username}` : "סדרן");
+      }
+    } catch (e) {}
+
+    // ניקוי ספאם וכותרות ערוצים
+    const cleanedText = systemCallbacks.cleanSpamFromRide(text);
+
+    // תיעוד הודעה שנסרקה בטלגרם ללוג המערכת (שיופיע בלוח הבקרה בדיוק כמו הודעות וואטסאפ)
+    systemCallbacks.recordEvent?.("group_msg", `הודעה בטלגרם (${groupName}): "${cleanedText.slice(0, 35)}"`, {
+      group: groupName,
+      text: cleanedText.slice(0, 80),
+      source: "telegram",
+      session: driverPhone,
+    });
+
+    const junk = systemCallbacks.detectNonRide(cleanedText);
+    if (junk) {
+      console.log(`ℹ️ [טלגרם נהג ${driverPhone}] נפסל כספאם/לא נסיעה (${junk}) מקבוצה "${groupName}": "${cleanedText.slice(0, 40)}"`);
+      return;
+    }
+
+    // בדיקת התאמה לחיפוש הפעיל של הנהג
+    const verdict = systemCallbacks.matchesAnySearch(cleanedText, driverSearch, groupName);
+    if (!verdict.ok) {
+      return;
+    }
+
+    // בדיקת כפילות ייעודית לטלגרם (וואטסאפ לא חוסם טלגרם)
+    const dup = systemCallbacks.deduper.check(cleanedText, `tg_${driverPhone}`);
+    if (dup.duplicate) {
+      console.log(`ℹ️ [טלגרם נהג ${driverPhone}] נסיעה כפולה (נשלחה כבר לאחרונה) מקבוצה "${groupName}"`);
+      return;
+    }
+
+    // יצירת קישור ישיר מדויק להודעה בטלגרם (פותח את ההודעה ישירות ומדגיש אותה!)
+    let telegramUrl = "";
+    const cleanChannelId = String(peer?.channelId || chat?.id || message.chatId || "")
+      .replace("-100", "")
+      .replace("-", "");
+
+    if (chat?.username) {
+      telegramUrl = `https://t.me/${chat.username}/${msgId}`;
+    } else if (cleanChannelId) {
+      telegramUrl = `https://t.me/c/${cleanChannelId}/${msgId}`;
+    }
+
+    // בדיקת כפתורי Inline בטלגרם (כמו [ 🙋‍♂️ | בקשת הנסיעה ↗️ ] של דרייבוט)
+    const hasInlineButtons = Boolean(message.replyMarkup?.rows?.length);
+    const buttonsList = [];
+    if (hasInlineButtons) {
+      for (const row of message.replyMarkup.rows) {
+        for (const btn of row.buttons || []) {
+          buttonsList.push({
+            text: btn.text || "",
+            url: btn.url || null,
+            hasCallback: Boolean(btn.data),
+          });
+        }
+      }
+    }
+
+    const rideData = {
+      cleanedText,
+      rawText: text,
+      driverPhone,
+      groupName,
+      senderName,
+      senderPhone: "זמין בטלגרם",
+      searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
+      matchedReason: verdict.reason,
+      isTelegram: true,
+      telegramChatId: chat?.id || message.chatId || (peer?.channelId ? `-100${peer.channelId}` : null),
+      telegramMsgId: msgId,
+      telegramUrl,
+      hasInlineButtons,
+      buttonsList,
+    };
+
+    console.log(`✈️ [טלגרם -> נהג ${driverPhone}] נסיעה מתאימה מ-${groupName}! "${cleanedText.slice(0, 50)}..."`);
+    systemCallbacks.recordEvent?.("sent", `טלגרם (${groupName}) ⬅️ ${driverPhone}`, {
+      text: cleanedText.slice(0, 80),
+      reason: verdict.reason,
+      driver: driverPhone,
+      source: "telegram",
+    });
+
+    // שליחת ההתראה לנהג (בוואטסאפ ובטלגרם עם כפתור קפיצה ישיר!)
+    await deliverTelegramRideAlert(driverPhone, rideData, message);
+  } catch (err) {
+    console.error(`שגיאה בטיפול בהודעת טלגרם עבור ${driverPhone}:`, err.message);
+  }
+}
+
 async function attachTelegramMessageListener(client, driverPhone) {
   const { NewMessage } = await getTelegramModules();
+  const { Api } = await import("telegram");
+
+  // מאזין 1: NewMessage סטנדרטי
   client.addEventHandler(async (event) => {
-    try {
-      const message = event.message;
-      if (!message || !message.text) return;
-
-      const text = String(message.text || "").trim();
-      if (text.length < 5) return;
-
-      // בדיקה האם לנהג זה יש חיפוש פעיל
-      const driverSearch = systemCallbacks.getUserSearch(driverPhone);
-      if (!driverSearch || !driverSearch.active) {
-        console.log(`ℹ️ [טלגרם נהג ${driverPhone}] הודעה דולגה: אין חיפוש פעיל`);
-        return;
-      }
-
-      // חילוץ פרטי הקבוצה והסדרן בטלגרם
-      let chat = null;
-      try {
-        chat = await message.getChat();
-      } catch (e) {}
-
-      // התעלמות מהודעות פרטיות אישיות (1 על 1) אלא אם זו קבוצה או ערוץ
-      const isGroupOrChannel = Boolean(
-        chat?.title ||
-        message.isGroup ||
-        message.isChannel ||
-        (message.peerId && (message.peerId.chatId || message.peerId.channelId))
-      );
-
-      if (!isGroupOrChannel) return;
-
-      const groupName = chat?.title || "קבוצת נסיעות בטלגרם";
-      // סינון קבוצת היעד של ההתראות כדי למנוע לולאת סריקה עצמית
-      if (groupName.includes("נסיעות זמינות מהבוט") || groupName.includes("נסיעות זמינות")) {
-        return;
-      }
-      let senderName = "סדרן בטלגרם";
-      try {
-        const sender = await message.getSender();
-        if (sender) {
-          senderName = [sender.firstName, sender.lastName].filter(Boolean).join(" ") ||
-                       (sender.username ? `@${sender.username}` : "סדרן");
-        }
-      } catch (e) {}
-
-      // ניקוי ספאם
-      const cleanedText = systemCallbacks.cleanSpamFromRide(text);
-      const junk = systemCallbacks.detectNonRide(cleanedText);
-      if (junk) {
-        console.log(`ℹ️ [טלגרם נהג ${driverPhone}] נפסל כספאם/לא נסיעה (${junk}) מקבוצה "${groupName}": "${cleanedText.slice(0, 40)}"`);
-        return;
-      }
-
-      // בדיקת התאמה לחיפוש הפעיל של הנהג
-      const verdict = systemCallbacks.matchesAnySearch(cleanedText, driverSearch, groupName);
-      if (!verdict.ok) {
-        console.log(`ℹ️ [טלגרם נהג ${driverPhone}] אין התאמה לחיפוש (${verdict.reason || 'ללא התאמה'}) מקבוצה "${groupName}": "${cleanedText.slice(0, 40)}"`);
-        return;
-      }
-
-      // בדיקת כפילות ייעודית לטלגרם:
-      // דרישת משתמש מפורשת: "ואל תתיחס אם יש אותו נסיעה גם בוואטסאפ וגם בטלגרם שאני יקבל את שניהם תכלס"
-      // המפתח נפרד לחלוטין (קידומת tg_) כך שוואטסאפ לא חוסם טלגרם!
-      const dup = systemCallbacks.deduper.check(cleanedText, `tg_${driverPhone}`);
-      if (dup.duplicate) {
-        console.log(`ℹ️ [טלגרם נהג ${driverPhone}] נסיעה כפולה (נשלחה כבר לאחרונה) מקבוצה "${groupName}"`);
-        return;
-      }
-
-      // יצירת קישור ישיר להודעה בטלגרם
-      let telegramUrl = "";
-      const chatIdStr = String(chat?.id || message.chatId || "").replace("-100", "").replace("-", "");
-      if (chat?.username) {
-        telegramUrl = `https://t.me/${chat.username}/${message.id}`;
-      } else if (chatIdStr) {
-        telegramUrl = `https://t.me/c/${chatIdStr}/${message.id}`;
-      }
-
-      // בדיקת כפתורי Inline בטלגרם (כמו "לחצו כאן לבקשת הנסיעה")
-      const hasInlineButtons = Boolean(message.replyMarkup?.rows?.length);
-      const buttonsList = [];
-      if (hasInlineButtons) {
-        for (const row of message.replyMarkup.rows) {
-          for (const btn of row.buttons || []) {
-            buttonsList.push({
-              text: btn.text || "",
-              url: btn.url || null,
-              hasCallback: Boolean(btn.data),
-            });
-          }
-        }
-      }
-
-      const rideData = {
-        cleanedText,
-        rawText: text,
-        driverPhone,
-        groupName,
-        senderName,
-        senderPhone: "זמין בטלגרם",
-        searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
-        matchedReason: verdict.reason,
-        isTelegram: true,
-        telegramChatId: chat?.id || message.chatId,
-        telegramMsgId: message.id,
-        telegramUrl,
-        hasInlineButtons,
-        buttonsList,
-      };
-
-      console.log(`✈️ [טלגרם -> וואטסאפ] נסיעה מתאימה מטלגרם לנהג ${driverPhone}! קבוצה: ${groupName} | "${cleanedText.slice(0, 50)}..."`);
-      systemCallbacks.recordEvent?.("sent", `טלגרם (${groupName}) ⬅️ ${driverPhone}`, {
-        text: cleanedText.slice(0, 80),
-        reason: verdict.reason,
-        driver: driverPhone,
-        source: "telegram",
-      });
-
-      // שליחת ההתראה לוואטסאפ של הנהג בפורמט הרשמי של טלגרם (כמו בצילום המסך!)
-      await deliverTelegramRideAlert(driverPhone, rideData, message);
-    } catch (err) {
-      console.error(`שגיאה בסריקת הודעת טלגרם עבור ${driverPhone}:`, err.message);
+    if (event?.message) {
+      await handleIncomingTelegramMessage(client, driverPhone, event.message, "new_message");
     }
   }, new NewMessage({}));
+
+  // מאזין 2: מאזין לעדכוני ערוצי שידור גלמיים (UpdateNewChannelMessage)
+  // חיוני לערוצים כמו "כל הנסיעות" (2.7K מנויים) שאחרת עשויים להיעצר בגלל הגדרות MTProto
+  client.addEventHandler(async (update) => {
+    try {
+      if (update instanceof Api.UpdateNewChannelMessage && update.message) {
+        await handleIncomingTelegramMessage(client, driverPhone, update.message, "channel_raw");
+      }
+    } catch (e) {}
+  });
 }
 
 // ==========================================
 // 6. פורמט ושליחת התראת נסיעה מטלגרם לוואטסאפ של הנהג
-// בדיוק לפי צילום המסך שהמשתמש צירף!
 // ==========================================
 export function buildTelegramAlertText(rideData) {
   let msg = `🔹 *נסיעה מטלגרם*\n`;
@@ -594,7 +649,6 @@ export function buildTelegramAlertText(rideData) {
 async function deliverTelegramRideAlert(driverPhone, rideData, originalTelegramMsg) {
   const alertText = buildTelegramAlertText(rideData);
 
-  // קריאה לפונקציית שליחת ההתראות המרכזית (ללא ציטוט קבוצה, בדיוק כמו בהתראות הרגילות)
   return await systemCallbacks.deliverRideAlert(null, driverPhone, {
     ...rideData,
     customAlertText: alertText,
@@ -606,10 +660,9 @@ async function deliverTelegramRideAlert(driverPhone, rideData, originalTelegramM
 // 6.5. ניתוב והפצת התראות נסיעה לטלגרם של הנהג ("נסיעות זמינות מהבוט" + Saved Messages)
 // ==========================================
 
-// מטמון קבוצת יעד בטלגרם לכל נהג: phone -> entity
 const driverTargetGroupCache = new Map();
 
-// מציאת קבוצת היעד של הנהג בטלגרם (למשל: "נסיעות זמינות מהבוט")
+// מציאת קבוצת היעד של הנהג בטלגרם
 export async function findDriverAlertGroup(client, phone) {
   const p = cleanPhone(phone);
   const cached = driverTargetGroupCache.get(p);
@@ -618,7 +671,7 @@ export async function findDriverAlertGroup(client, phone) {
   const targetName = process.env.TELEGRAM_GROUP_NAME || "נסיעות זמינות מהבוט";
 
   try {
-    const dialogs = await client.getDialogs({ limit: 100 });
+    const dialogs = await client.getDialogs({ limit: 200 });
     for (const d of dialogs) {
       const title = (d.title || d.name || "").trim();
       if (title.includes(targetName) || title.includes("נסיעות זמינות")) {
@@ -634,13 +687,13 @@ export async function findDriverAlertGroup(client, phone) {
   return null;
 }
 
-// קבלת רשימת הדיאלוגים והקבוצות של הנהג (לבדיקה, סנכרון ואימות)
+// קבלת רשימת הדיאלוגים והקבוצות של הנהג
 export async function getTelegramDialogs(phone) {
   const p = cleanPhone(phone);
   const client = activeTelegramClients.get(p);
   if (!client || !client.connected) return [];
   try {
-    const dialogs = await client.getDialogs({ limit: 100 });
+    const dialogs = await client.getDialogs({ limit: 200 });
     return dialogs.map((d) => ({
       id: String(d.id),
       title: d.title || d.name || "",
@@ -654,7 +707,7 @@ export async function getTelegramDialogs(phone) {
   }
 }
 
-// שליחת התראת נסיעה (מוואטסאפ או מטלגרם) ישירות לטלגרם של הנהג
+// שליחת התראת נסיעה (מוואטסאפ או מטלגרם) ישירות לטלגרם של הנהג עם כפתור מעבר ישיר והתראת צליל/נעיצה
 export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg = null) {
   const p = cleanPhone(driverPhone);
   const client = activeTelegramClients.get(p);
@@ -664,6 +717,7 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
   }
 
   try {
+    const { Api } = await import("telegram");
     const isFromTelegram = Boolean(rideData.isTelegram);
     const targetGroup = await findDriverAlertGroup(client, p);
 
@@ -675,10 +729,6 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
         `📍 *קבוצה:* ${rideData.groupName || "קבוצת טלגרם"}\n` +
         `👤 *סדרן:* ${rideData.senderName || "זמין בטלגרם"}\n` +
         (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
-
-      if (rideData.telegramUrl) {
-        tgText += `\n🔗 *מעבר ישיר להודעה המקורית ולתפיסה:*\n${rideData.telegramUrl}`;
-      }
     } else {
       tgText = `🚕 *נסיעה מוואטסאפ*\n\n` +
         `${rideData.cleanedText || rideData.rawText}\n\n` +
@@ -686,16 +736,62 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
         `📍 *קבוצת וואטסאפ:* ${rideData.groupName || "קבוצת וואטסאפ"}\n` +
         `👤 *סדרן:* ${rideData.senderName || "סדרן"} · ${rideData.senderPhone || ""}\n` +
         (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
+    }
 
+    // בניית כפתורי Inline מתקדמים בטלגרם (קפיצה ישירה להודעה המקורית בדיוק כמו ציטוט בוואטסאפ!)
+    const keyboardRows = [];
+
+    if (isFromTelegram && rideData.telegramUrl) {
+      keyboardRows.push(
+        new Api.KeyboardButtonRow({
+          buttons: [
+            new Api.KeyboardButtonUrl({
+              text: "🚕 מעבר ישיר לנסיעה ולתפיסה ↗️",
+              url: rideData.telegramUrl,
+            }),
+          ],
+        })
+      );
+
+      // שכפול כפתורי URL מקוריים של דרייבוט (למשל: [ 🙋‍♂️ | בקשת הנסיעה ↗️ ])
+      // מאפשר לנהג לתפוס את הנסיעה בלחיצה אחת מתוך "נסיעות זמינות מהבוט" בלי לצאת מהקבוצה!
+      if (Array.isArray(rideData.buttonsList) && rideData.buttonsList.length > 0) {
+        const extraButtons = [];
+        for (const b of rideData.buttonsList) {
+          if (b.url && b.text && b.url !== rideData.telegramUrl) {
+            extraButtons.push(
+              new Api.KeyboardButtonUrl({
+                text: b.text,
+                url: b.url,
+              })
+            );
+          }
+        }
+        if (extraButtons.length > 0) {
+          keyboardRows.push(new Api.KeyboardButtonRow({ buttons: extraButtons.slice(0, 2) }));
+        }
+      }
+    } else if (!isFromTelegram) {
       const cleanSenderPhone = cleanPhone(rideData.senderPhone);
       if (cleanSenderPhone && cleanSenderPhone.length >= 9 && !isLid(cleanSenderPhone)) {
-        tgText += `\n💬 *פנייה ישירה לסדרן בוואטסאפ:*\nhttps://wa.me/${cleanSenderPhone}`;
+        keyboardRows.push(
+          new Api.KeyboardButtonRow({
+            buttons: [
+              new Api.KeyboardButtonUrl({
+                text: "💬 פנייה ישירה לסדרן בוואטסאפ ↗️",
+                url: `https://wa.me/${cleanSenderPhone}`,
+              }),
+            ],
+          })
+        );
       }
     }
 
+    const replyMarkup = keyboardRows.length > 0 ? new Api.ReplyInlineMarkup({ rows: keyboardRows }) : undefined;
+
     // יעדי השליחה:
-    // 1. קבוצת "נסיעות זמינות מהבוט" (אם קיימת אצל הנהג)
-    // 2. "me" - הודעות שמורות של הנהג (Saved Messages), להתראה פרטית מיידית בטלגרם!
+    // 1. קבוצת "נסיעות זמינות מהבוט"
+    // 2. "me" - הודעות שמורות של הנהג (Saved Messages)
     const destinations = [];
     if (targetGroup) {
       destinations.push({ type: "group", target: targetGroup, name: "נסיעות זמינות מהבוט" });
@@ -705,25 +801,22 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
     let sentCount = 0;
     for (const dest of destinations) {
       try {
-        let sentAsForward = false;
-        // אם הנסיעה מטלגרם, מבצעים העברה (Forward) המהווה ציטוט טלגרם מובנה - לחיצה קופצת למקור!
-        if (isFromTelegram && rideData.telegramMsgId && rideData.telegramChatId) {
+        // שליחת ההודעה המעוצבת עם הכפתורים הישירים (במקום Forward שהיה פותח פרופיל ולא קופץ להודעה!)
+        const sentMsg = await client.sendMessage(dest.target, {
+          message: tgText,
+          buttons: replyMarkup,
+          linkPreview: false,
+        });
+
+        // פתרון בעיית "במצב נקרא":
+        // נעיצת ההודעה עם התראה (pin with notify) מקפיצה התראת פוש עם צליל ובאנר בטלפון של הנהג!
+        if (dest.type === "group" && sentMsg?.id) {
           try {
-            await client.forwardMessages(dest.target, {
-              messages: [rideData.telegramMsgId],
-              fromPeer: rideData.telegramChatId,
-            });
-            sentAsForward = true;
-            console.log(`✈️ [טלגרם -> ${dest.name}] נסיעה הועברה בהצלחה כציטוט מקורי עבור נהג ${p}`);
-          } catch (fwdErr) {
-            // אם ההעברה נחסמה ע"י הגדרות הקבוצה המקורית (noforwards), נשלח כהודעה מעוצבת
-          }
+            await client.pinMessage(dest.target, sentMsg.id, { notify: true });
+          } catch (pinErr) {}
         }
 
-        if (!sentAsForward) {
-          await client.sendMessage(dest.target, { message: tgText, linkPreview: false });
-          console.log(`✈️ [טלגרם -> ${dest.name}] נשלחה התראה מעוצבת עבור נהג ${p}`);
-        }
+        console.log(`✈️ [טלגרם -> ${dest.name}] נשלחה התראה עם כפתורי מעבר ישירים עבור נהג ${p}`);
         sentCount++;
       } catch (err) {
         console.error(`שגיאה בשליחת התראת טלגרם ל-${dest.name} עבור ${p}:`, err.message);
@@ -738,8 +831,7 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
 }
 
 // ==========================================
-// 7. תפיסת נסיעה בטלגרם (לחיצה על כפתור Inline או מענה)
-// דרישת משתמש: "תמצא דרך לתפוס נסיעה שמאפשר רק בטלגרם"
+// 7. תפיסת נסיעה בטלגרם (לחיצה על כפתור Inline, קישורי דרייבוט או מענה)
 // ==========================================
 export async function claimTelegramRide(driverPhone, alertInfo) {
   const p = cleanPhone(driverPhone);
@@ -760,34 +852,104 @@ export async function claimTelegramRide(driverPhone, alertInfo) {
   }
 
   try {
-    // 1. נסיון לחיצה על כפתור Inline ראשון (אם קיים כפתור "בקש נסיעה")
-    if (alertInfo.hasInlineButtons && alertInfo.telegramOriginalMessage?.click) {
-      console.log(`🎯 [תפיסת טלגרם] לוחץ על כפתור Inline בהודעה ${msgId}...`);
-      await alertInfo.telegramOriginalMessage.click(0);
-      return {
-        ok: true,
-        action: "button_clicked",
-        message: "✅ נלחץ בהצלחה כפתור בקשת הנסיעה בטלגרם! 🚕",
-      };
+    const { Api } = await import("telegram");
+
+    // 1. הבאת ההודעה המקורית מחשבון הטלגרם
+    let targetMsg = alertInfo.telegramOriginalMessage || null;
+    if (!targetMsg || !targetMsg.replyMarkup) {
+      try {
+        const msgs = await client.getMessages(chatId, { ids: [msgId] });
+        targetMsg = msgs?.[0] || targetMsg;
+      } catch (e) {}
     }
 
-    // 2. הבאת ההודעה המקורית מחשבון הטלגרם
-    const msgs = await client.getMessages(chatId, { ids: [msgId] });
-    const targetMsg = msgs?.[0];
+    // 2. בדיקה האם קיימים כפתורי Inline (למשל של דרייבוט, ריידרבוט, בוטים וכו')
+    if (targetMsg?.replyMarkup?.rows?.length) {
+      let chosenBtn = null;
+      let chosenRow = 0;
+      let chosenCol = 0;
 
-    if (targetMsg && targetMsg.replyMarkup?.rows?.length) {
-      console.log(`🎯 [תפיסת טלגרם] נמצאו כפתורי Inline, לוחץ על כפתור 0...`);
-      await targetMsg.click(0);
-      return {
-        ok: true,
-        action: "button_clicked",
-        message: "✅ נלחץ בהצלחה כפתור בקשת הנסיעה בטלגרם! 🚕",
-      };
+      for (let r = 0; r < targetMsg.replyMarkup.rows.length; r++) {
+        const row = targetMsg.replyMarkup.rows[r];
+        for (let c = 0; c < (row.buttons || []).length; c++) {
+          const btn = row.buttons[c];
+          const btnText = String(btn.text || "").trim();
+          if (/בקש|נסיעה|תפוס|קח|אישור/i.test(btnText)) {
+            chosenBtn = btn;
+            chosenRow = r;
+            chosenCol = c;
+            break;
+          }
+        }
+        if (chosenBtn) break;
+      }
+
+      // אם לא נמצא כפתור עם מילת מפתח, ניקח את הכפתור הראשון
+      if (!chosenBtn && targetMsg.replyMarkup.rows[0]?.buttons?.[0]) {
+        chosenBtn = targetMsg.replyMarkup.rows[0].buttons[0];
+        chosenRow = 0;
+        chosenCol = 0;
+      }
+
+      if (chosenBtn) {
+        // מקרה א': כפתור עם קישור URL (כמו כפתור [ 🙋‍♂️ | בקשת הנסיעה ↗️ ] של דרייבוט)
+        if (chosenBtn.url) {
+          const btnUrl = chosenBtn.url;
+          console.log(`🎯 [תפיסת טלגרם נהג ${p}] זוהה כפתור URL: "${chosenBtn.text}" -> ${btnUrl}`);
+
+          // בדיקה האם הקישור הוא קישור Deep Link של בוט טלגרם (t.me/<bot>?start=<payload>)
+          const botStartMatch = btnUrl.match(/(?:t\.me\/|tg:\/\/resolve\?domain=)([^/?#&]+).*?[?&]start=([^&#]+)/i);
+          if (botStartMatch) {
+            const botUsername = botStartMatch[1];
+            const startPayload = botStartMatch[2];
+            console.log(`🎯 [תפיסת טלגרם נהג ${p}] שולח /start ${startPayload} ישירות לבוט @${botUsername}...`);
+            await client.sendMessage(botUsername, { message: `/start ${startPayload}` });
+            return {
+              ok: true,
+              action: "bot_start_sent",
+              message: `✅ נשלחה בקשת תפיסה מיידית לבוט @${botUsername}! 🚕`,
+            };
+          }
+
+          // אם זה קישור אינטרנט רגיל לתפיסה (Web Claim)
+          try {
+            fetch(btnUrl, { headers: { "User-Agent": "Mozilla/5.0" } }).catch(() => {});
+          } catch (e) {}
+
+          return {
+            ok: true,
+            action: "url_opened",
+            message: `🔗 פתח את קישור התפיסה בטלגרם:\n${btnUrl}`,
+          };
+        }
+
+        // מקרה ב': כפתור עם Callback Data
+        if (chosenBtn.data) {
+          console.log(`🎯 [תפיסת טלגרם נהג ${p}] לוחץ על כפתור Callback "${chosenBtn.text}"...`);
+          try {
+            await targetMsg.click(chosenRow, chosenCol);
+          } catch (clkErr) {
+            await client.invoke(
+              new Api.messages.GetBotCallbackAnswer({
+                peer: chatId,
+                msgId: targetMsg.id,
+                data: chosenBtn.data,
+              })
+            );
+          }
+          return {
+            ok: true,
+            action: "button_clicked",
+            message: `✅ נלחץ בהצלחה כפתור "${chosenBtn.text || 'בקשת הנסיעה'}" בטלגרם! 🚕`,
+          };
+        }
+      }
     }
 
-    // 3. שליחת מענה "תן" / "ת" כהודעה בקבוצה/ערוץ
+    // 3. אם אין כפתורי Inline, או שזו קבוצה רגילה (מענה "תן" / "ת")
     if (targetMsg) {
-      await targetMsg.reply({ message: "תן" });
+      console.log(`🎯 [תפיסת טלגרם נהג ${p}] שולח מענה 'תן' להודעה ${msgId} בקבוצה...`);
+      await client.sendMessage(chatId, { message: "תן", replyTo: targetMsg.id });
       return {
         ok: true,
         action: "replied",
@@ -796,16 +958,15 @@ export async function claimTelegramRide(driverPhone, alertInfo) {
     }
 
     return {
-      ok: true,
-      action: "opened",
-      message: `🔗 פתח את הנסיעה בטלגרם לתפיסה מיידית:\n${alertInfo.telegramUrl || "פתח באפליקציה"}`,
+      ok: false,
+      reason: "לא ניתן היה לאתר את ההודעה המקורית בטלגרם לתפיסה",
     };
   } catch (err) {
-    console.error(`❌ שגיאה בתפיסת נסיעה בטלגרם:`, err.message);
+    console.error(`❌ שגיאה בתפיסת נסיעה בטלגרם עבור ${p}:`, err.message);
     return {
       ok: false,
       error: err.message,
-      reason: `שגיאה בתפיסת הנסיעה בטלגרם: ${err.message}. פתח את ההודעה ישירות:\n${alertInfo.telegramUrl || ""}`,
+      reason: `שגיאה בתפיסת נסיעה בטלגרם: ${err.message}`,
     };
   }
 }
