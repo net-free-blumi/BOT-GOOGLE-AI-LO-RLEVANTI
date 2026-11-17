@@ -383,8 +383,14 @@ export async function initSavedTelegramSessions() {
           if (!sessionString) continue;
 
           const client = new TelegramClient(new StringSession(sessionString), TELEGRAM_API_ID, TELEGRAM_API_HASH, {
-            connectionRetries: 5,
+            connectionRetries: 10,
+            autoReconnect: true,
             useWSS: false,
+            deviceModel: "Samsung Galaxy S24 Ultra",
+            systemVersion: "Android 14",
+            appVersion: "11.2.2",
+            langCode: "he",
+            systemLangCode: "he-IL",
           });
 
           await client.connect();
