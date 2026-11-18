@@ -1008,9 +1008,23 @@ export async function sendApprovalAndOnboarding(targetPhone, targetName = "נה�
   }
 }
 
-// שליחת הודעת תפריט / עזרה ברורה עם פקודות מהירות (100% הגעה ישירה)
+// שליחת הודעת תפריט / עזרה עם תפריט נפתח (Single Select) וגיבוי מלא בטקסט
 async function sendHelpMenu(sock, jid, driverPhone) {
   const search = getUserSearch(driverPhone);
+  const useInteractive = process.env.USE_INTERACTIVE_MENU !== "false";
+
+  if (useInteractive && sock && typeof sendFullInteractiveMenu === "function") {
+    try {
+      const res = await sendFullInteractiveMenu(sock, jid, {
+        activeSearches: search.searches || [],
+        describeMode,
+      });
+      if (res?.key?.id) return res;
+    } catch (e) {
+      console.log(`ℹ️ שליחת תפריט נפתח נכשלה (${e.message}), ממשיך לתפריט טקסט מלא`);
+    }
+  }
+
   let menuText = `🚕 *תפריט נסיעות בוט איכותי*\n\n`;
   if (search.active && search.searches.length > 0) {
     menuText += `📊 *סטטוס החיפושים הפעילים שלך במקביל:*\n`;
@@ -1033,7 +1047,7 @@ async function sendHelpMenu(sock, jid, driverPhone) {
   menuText += `✈️ *למדריך חיבור טלגרם:* השב *"מדריך טלגרם"* או *"חבר טלגרם"*\n`;
   menuText += `🔗 *לקישור הוואטסאפ שלך:* השב *"חבר אותי"*`;
 
-  await sock.sendMessage(jid, { text: menuText });
+  return await sock.sendMessage(jid, { text: menuText });
 }
 
 // שליחת מדריך שימוש מפורט, קצר ומקצועי לנהג

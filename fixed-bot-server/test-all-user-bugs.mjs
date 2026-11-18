@@ -595,6 +595,10 @@ const mockSockMenu = {
   sendMessage: async (jid, payload) => {
     capturedMenu = payload;
     return { key: { id: "MSG_MENU_123" } };
+  },
+  relayMessage: async (jid, message, options) => {
+    capturedMenu = message;
+    return { key: { id: "MSG_MENU_123" } };
   }
 };
 
@@ -602,7 +606,10 @@ await sendFullInteractiveMenu(mockSockMenu, "123@s.whatsapp.net", {
   activeSearches: [{ displayText: "בית שמש", mode: "city_all", origin: "בית שמש" }],
   describeMode: () => "בתוך ומחוץ לעיר"
 });
-const menuSections = capturedMenu?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons;
+const menuSections =
+  capturedMenu?.viewOnceMessage?.message?.interactiveMessage?.nativeFlowMessage?.buttons ||
+  capturedMenu?.interactiveMessage?.nativeFlowMessage?.buttons ||
+  capturedMenu?.sections;
 assert(Boolean(menuSections), "תפריט נפתח מלא נוצר בהצלחה עם אפשרויות בחירה נוחות");
 
 // ==========================================

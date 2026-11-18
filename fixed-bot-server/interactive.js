@@ -48,6 +48,8 @@ export function extractInteractiveResponse(rawMsg) {
       const parsed = JSON.parse(msg.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
       if (parsed.id) return String(parsed.id).trim();
       if (parsed.selected_id) return String(parsed.selected_id).trim();
+      if (parsed.row_id) return String(parsed.row_id).trim();
+      if (parsed.selected_row_id) return String(parsed.selected_row_id).trim();
       if (parsed.text) return String(parsed.text).trim();
     } catch (e) {}
   }
@@ -140,8 +142,28 @@ export async function sendInteractiveButtons(sock, jid, {
         }
       );
 
+      const isGroup = typeof baileys.isJidGroup === "function"
+        ? baileys.isJidGroup(jid)
+        : String(jid || "").endsWith("@g.us");
+      const additionalNodes = [
+        {
+          tag: "biz",
+          attrs: {},
+          content: [
+            {
+              tag: "interactive",
+              attrs: { type: "native_flow", v: "1" },
+              content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }],
+            },
+          ],
+        },
+      ];
+      if (!isGroup) {
+        additionalNodes.push({ tag: "bot", attrs: { biz_bot: "1" } }); // נדרש בצ'אט פרטי בוואטסאפ!
+      }
+
       if (sock.relayMessage && waMsg?.key?.id) {
-        await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id });
+        await sock.relayMessage(jid, waMsg.message, { messageId: waMsg.key.id, additionalNodes });
         return waMsg;
       }
     }
@@ -207,42 +229,92 @@ export async function sendInteractiveList(sock, jid, {
 }) {
   if (!sock) return null;
 
-  // ניסיון 1: שליחה כ-Native Flow Single Select
+  // ניסיון 1: שליחה כ-Native Flow Single Select באמצעות generateWAMessageFromContent + relayMessage + additionalNodes
   try {
-    const nativeListPayload = {
-      viewOnceMessage: {
-        message: {
-          interactiveMessage: {
-            header: { title, hasMediaAttachment: false },
-            body: { text: body },
-            footer: { text: footer },
-            nativeFlowMessage: {
-              buttons: [
-                {
-                  name: "single_select",
-                  buttonParamsJson: JSON.stringify({
-                    title: buttonText,
-                    sections: sections.map((sec) => ({
-                      title: sec.title,
-                      rows: sec.rows.map((r) => ({
-                        header: r.header || "",
-                        title: r.title,
-                        description: r.description || "",
-                        id: r.id || r.rowId || r.title,
-                      })),
-                    })),
-                  }),
-                },
-              ],
+    const baileys = await import("@whiskeysockets/baileys").catch(() => null);
+    if (baileys && baileys.generateWAMessageFromContent && baileys.proto) {
+      const { generateWAMessageFromContent, proto, isJidGroup } = baileys;
+
+      const formattedSections = sections.map((sec) => ({
+        title: String(sec.title || "").slice(0, 24),
+        rows: (sec.rows || []).map((r) => ({
+          header: String(r.header || "").slice(0, 24),
+          title: String(r.title || "").slice(0, 24),
+          description: String(r.description || "").slice(0, 72),
+          id: String(r.id || r.rowId || r.title || "").slice(0, 50),
+        })).slice(0, 10),
+      })).slice(0, 10);
+
+      const content = {
+        viewOnceMessage: {
+          message: {
+            messageContextInfo: {
+              deviceListMetadata: {},
+              deviceListMetadataVersion: 2,
             },
+            interactiveMessage: proto.Message.InteractiveMessage.create({
+              header: title
+                ? proto.Message.InteractiveMessage.Header.create({ title: String(title).slice(0, 24), hasMediaAttachment: false })
+                : undefined,
+              body: proto.Message.InteractiveMessage.Body.create({ text: body }),
+              footer: footer
+                ? proto.Message.InteractiveMessage.Footer.create({ text: String(footer).slice(0, 30) })
+                : undefined,
+              nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                buttons: [
+                  {
+                    name: "single_select",
+                    buttonParamsJson: JSON.stringify({
+                      title: String(buttonText || "תפריט").slice(0, 24),
+                      sections: formattedSections,
+                    }),
+                  },
+                ],
+              }),
+            }),
           },
         },
-      },
-    };
+      };
 
-    const res = await sock.sendMessage(jid, nativeListPayload, quoted ? { quoted } : {});
-    if (res?.key?.id) return res;
-  } catch (errNativeList) {}
+      const waMsg = generateWAMessageFromContent(
+        jid,
+        content,
+        {
+          userJid: sock.user?.id || sock.authState?.creds?.me?.id,
+          quoted: quoted || undefined,
+        }
+      );
+
+      const isGroup = typeof isJidGroup === "function" ? isJidGroup(jid) : String(jid || "").endsWith("@g.us");
+      const additionalNodes = [
+        {
+          tag: "biz",
+          attrs: {},
+          content: [
+            {
+              tag: "interactive",
+              attrs: { type: "native_flow", v: "1" },
+              content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }],
+            },
+          ],
+        },
+      ];
+      if (!isGroup) {
+        additionalNodes.push({ tag: "bot", attrs: { biz_bot: "1" } }); // נדרש בצ'אט פרטי בוואטסאפ!
+      }
+
+      if (sock.relayMessage && waMsg?.key?.id) {
+        console.log(`📋 [תפריט נפתח] שולח תפריט Native Flow single_select ל-${jid} (ID: ${waMsg.key.id})`);
+        await sock.relayMessage(jid, waMsg.message, {
+          messageId: waMsg.key.id,
+          additionalNodes,
+        });
+        return waMsg;
+      }
+    }
+  } catch (errNativeList) {
+    console.log(`ℹ️ [תפריט נפתח] Native Flow נכשל (${errNativeList?.message}), מנסה מבנה קלאסי`);
+  }
 
   // ניסיון 2: מבנה רשימה קלאסי של Baileys
   try {
@@ -365,12 +437,18 @@ export async function sendFullInteractiveMenu(sock, jid, { activeSearches = [], 
   if (activeSearches.length > 0) {
     body += `🟢 ${activeSearches.length} חיפושים פעילים במקביל:\n`;
     activeSearches.forEach((s, idx) => {
-      body += `${idx + 1}. ${s.displayText} (${describeMode(s)})\n`;
+      body += `${idx + 1}. ${s.displayText} (${describeMode ? describeMode(s) : s.displayText})\n`;
     });
   } else {
     body += `🔴 מופסק (תפוס / לא מחפש כרגע)\n`;
   }
-  body += `\nבחר פעולה מהירה מתוך התפריט הנפתח:`;
+  body += `\n💡 *קיצורים מהירים להקלדה:*\n` +
+    `• *פנוי שמש* / *פנוי ים* / *פנוי מירון*\n` +
+    `• *פנוי שמש פנימי* / *פנימי ים*\n` +
+    `• *פ ים שמש* (ירושלים לבית שמש)\n` +
+    `• *פ שמש ים* (בית שמש לירושלים)\n` +
+    `• *תפוס* (עצירת כל החיפושים)\n\n` +
+    `📋 *בחר מהתפריט הנפתח למטה או הקלד פקודה:*`;
 
   const sections = [
     {
