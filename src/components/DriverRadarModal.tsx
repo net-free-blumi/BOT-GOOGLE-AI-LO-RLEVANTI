@@ -336,10 +336,16 @@ export function DriverRadarModal({
           isFirstLoadRef.current = false;
         } else {
           let hasBrandNewRide = false;
+          const now = Date.now();
           for (const s of incoming) {
             if (!seenRideIdsRef.current.has(s.id)) {
-              hasBrandNewRide = true;
               seenRideIdsRef.current.add(s.id);
+              // צלצול יופעל אך ורק עבור נסיעות חדשות שהגיעו ב-3 הדקות האחרונות!
+              // זה מונע צלצולים מבלבלים על נסיעות היסטוריות כשהדפדפן מתעורר
+              const rideTime = s.timestamp || s.createdAt || 0;
+              if (rideTime > 0 && (now - rideTime) <= 3 * 60 * 1000) {
+                hasBrandNewRide = true;
+              }
             }
           }
           if (hasBrandNewRide) {
@@ -359,7 +365,12 @@ export function DriverRadarModal({
             map.set(s.id, s);
           });
 
-          const merged = Array.from(map.values());
+          // סינון נסיעות ישנות (מעל 25 דקות) כדי שרדאר הנסיעות יישאר רלוונטי ונקי
+          const cutoff = Date.now() - 25 * 60 * 1000;
+          const merged = Array.from(map.values()).filter((r) => {
+            const t = r.createdAt || r.timestamp || 0;
+            return t === 0 || t >= cutoff;
+          });
 
           // מיון קפדני: הנסיעה האחרונה שנשלחה (הכי עדכנית) תמיד ראשונה בראש הרשימה!
           merged.sort((a, b) => {

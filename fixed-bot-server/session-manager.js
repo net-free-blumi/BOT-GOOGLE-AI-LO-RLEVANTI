@@ -208,27 +208,43 @@ function createRetryCache() {
 function wrapSendStore(sock) {
   const origSend = sock.sendMessage.bind(sock);
   sock.sendMessage = async (...args) => {
-    const res = await origSend(...args);
     try {
-      if (res?.key?.id && res.message) rememberSent(res.key.id, res.message);
-    } catch (e) {}
-    return res;
+      const res = await origSend(...args);
+      try {
+        if (res?.key?.id && res.message) rememberSent(res.key.id, res.message);
+      } catch (e) {}
+      return res;
+    } catch (err) {
+      const msg = err?.message || String(err);
+      if (msg.includes("Connection Closed") || msg.includes("QR refs attempts ended") || msg.includes("Timed Out")) {
+        console.warn("⚠️ [Baileys] שגיאת חיבור זמנית ב-sendMessage (ממתין להתחברות מחדש):", msg);
+      }
+      throw err;
+    }
   };
 
   if (sock.relayMessage) {
     const origRelay = sock.relayMessage.bind(sock);
     sock.relayMessage = async (jid, message, options = {}) => {
-      const res = await origRelay(jid, message, options);
       try {
-        const id = options.messageId;
-        if (id && message) rememberSent(id, message);
-      } catch (e) {}
-      return res;
+        const res = await origRelay(jid, message, options);
+        try {
+          const id = options.messageId;
+          if (id && message) rememberSent(id, message);
+        } catch (e) {}
+        return res;
+      } catch (err) {
+        const msg = err?.message || String(err);
+        if (msg.includes("Connection Closed") || msg.includes("Timed Out")) {
+          console.warn("⚠️ [Baileys] שגיאת חיבור זמנית ב-relayMessage:", msg);
+        }
+        throw err;
+      }
     };
   }
 }
 
-// יצירת סוקט אחידה לבוט הראשי ולנהגים
+// יצירת סוקט אחידה לבוט הראשי ולנהגים עם KeepAlive עמיד למניעת ניתוקי סרק
 function buildSocket(version, state) {
   const logger = pino({ level: "silent" });
   const sock = makeWASocket({
@@ -240,6 +256,9 @@ function buildSocket(version, state) {
     logger,
     printQRInTerminal: false,
     msgRetryCounterCache: createRetryCache(),
+    keepAliveIntervalMs: 25000,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
     getMessage: async (key) => {
       if (!key?.id) return undefined;
       const msg = sentStore.get(key.id);

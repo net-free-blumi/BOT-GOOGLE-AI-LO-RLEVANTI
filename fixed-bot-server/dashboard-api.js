@@ -1415,7 +1415,14 @@ export function startDashboard(runtime) {
   });
 
   process.on("unhandledRejection", (reason) => {
-    recordError("unhandled_rejection", reason instanceof Error ? reason : new Error(String(reason)));
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    const msg = String(err.message || reason || "");
+    // ניתוק רשת זמני של Baileys (כמו Connection Closed או מעבר רשת) אינו באג מערכת אלא מהלך חיבור מחדש טבעי
+    if (msg.includes("Connection Closed") || msg.includes("QR refs attempts ended") || msg.includes("Timed Out") || msg.includes("unexpected server response")) {
+      console.warn("⚠️ [Network Notice] ניתוק רשת זמני (מתחבר מחדש באופן אוטומטי):", msg);
+      return;
+    }
+    recordError("unhandled_rejection", err);
     console.error("🔴 Unhandled Rejection:", reason);
   });
 

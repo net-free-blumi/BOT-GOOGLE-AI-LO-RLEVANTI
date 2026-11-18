@@ -162,14 +162,22 @@ export function setDriverLocation(phone, loc) {
   driverLocations.set(clean, loc);
 }
 
-// קבלת נסיעות אחרונות עבור רדאר הנסיעות החי באתר
+// קבלת נסיעות אחרונות עבור רדאר הנסיעות החי באתר (נסיעות עד 25 דקות בלבד!)
 export function getLiveRides(driverPhone = null) {
   const clean = driverPhone ? cleanPhone(driverPhone) : null;
   const list = [];
   const entries = Array.from(sentAlertsCache.entries()).reverse();
+  const now = Date.now();
+  const MAX_RADAR_AGE_MS = 25 * 60 * 1000; // 25 דקות מקסימום לרדאר חי
 
   for (const [id, info] of entries) {
     if (clean && info.driverPhone && cleanPhone(info.driverPhone) !== clean) {
+      continue;
+    }
+
+    // סינון קריטי: נסיעה ישנה מ-25 דקות (למשל מאתמול או לפני 15 שעות) אינה רלוונטית עוד לרדאר
+    const rideAge = now - (info.sentAt || 0);
+    if (rideAge > MAX_RADAR_AGE_MS) {
       continue;
     }
 
@@ -540,6 +548,10 @@ function buildRideAlertText(rideData) {
 // שליחת הודעה עם ניסיון ציטוט, ובמקרה כשל - בלי ציטוט
 async function trySend(sock, jid, content, quoted) {
   if (!sock) return null;
+  // בדיקה מקדימה האם חיבור ה-WebSocket פתוח (מונע זריקת שגיאות Connection Closed בעת ניתוק רגעי)
+  if (sock.ws && typeof sock.ws.readyState === "number" && sock.ws.readyState !== 1) {
+    return null;
+  }
   if (quoted) {
     try {
       return await sock.sendMessage(jid, content, { quoted });
@@ -547,7 +559,12 @@ async function trySend(sock, jid, content, quoted) {
       console.log(`שליחה עם ציטוט נכשלה (${e.message}), מנסה בלי ציטוט`);
     }
   }
-  return await sock.sendMessage(jid, content);
+  try {
+    return await sock.sendMessage(jid, content);
+  } catch (e) {
+    console.log(`שליחה ללא ציטוט נכשלה (${e.message})`);
+    return null;
+  }
 }
 
 
@@ -649,7 +666,18 @@ function buildSafeGroupQuote(originalMsg, fallbackText = "נסיעה") {
 // שליחת התראת נסיעה לנהג עם ציטוט הודעת הקבוצה המקורית
 async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) {
   const alertMsg = rideData.customAlertText || buildRideAlertText(rideData);
-  const driverJid = getDestinationJid(driverPhone);
+  // בניית רשימת יעדי שליחה עם גיבוי:
+  // 1. יעד ראשי (LID או מזהה מותאם)
+  // 2. יעד טלפון ישיר רגיל (@s.whatsapp.net) כגיבוי בטוח אם ה-LID נכשל או מנותק!
+  const targetJids = [];
+  const primaryJid = getDestinationJid(driverPhone);
+  if (primaryJid) targetJids.push(primaryJid);
+  const cleanP = cleanPhone(driverPhone);
+  if (cleanP) {
+    const directJid = `${cleanP}@s.whatsapp.net`;
+    if (!targetJids.includes(directJid)) targetJids.push(directJid);
+  }
+
   const attempts = [];
 
   const mainSock = getMainBotSock();
@@ -676,45 +704,47 @@ async function deliverRideAlert(driverSock, driverPhone, rideData, originalMsg) 
 
   let lastError = null;
   for (const a of attempts) {
-    try {
-      const sentMsg = await trySend(a.sock, driverJid, { text: alertMsg }, quotedGroupMsg);
-      if (!sentMsg) continue;
+    for (const jid of targetJids) {
+      try {
+        const sentMsg = await trySend(a.sock, jid, { text: alertMsg }, quotedGroupMsg);
+        if (!sentMsg) continue;
 
-      if (sentMsg.key?.id) {
-        sentAlertsCache.set(sentMsg.key.id, {
-          msgId: sentMsg.key.id,
-          rideData,
-          rawText: rideData.rawText || rideData.cleanedText,
-          driverPhone,
-          groupName: rideData.groupName,
-          groupJid: rideData.groupJid || originalMsg?.key?.remoteJid || null,
-          senderName: rideData.senderName,
-          senderPhone: rideData.senderPhone,
-          senderJid: rideData.senderJid || originalMsg?.key?.participant || originalMsg?.key?.remoteJid || null,
-          originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
-          originalMessage: originalMsg?.message || null,
-          isTelegram: Boolean(rideData.isTelegram),
-          telegramChatId: rideData.telegramChatId || null,
-          telegramMsgId: rideData.telegramMsgId || null,
-          telegramUrl: rideData.telegramUrl || null,
-          hasInlineButtons: Boolean(rideData.hasInlineButtons),
-          telegramOriginalMessage: rideData.telegramOriginalMessage || null,
-          searchDesc: rideData.searchDesc,
-          matchedReason: rideData.matchedReason || null,
-          matchedSearch: rideData.matchedSearch || null,
-          activeSearchesSnapshot: rideData.activeSearchesSnapshot || null,
-          sentAt: Date.now(),
-        });
-        if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
-          sentAlertsCache.delete(sentAlertsCache.keys().next().value);
+        if (sentMsg.key?.id) {
+          sentAlertsCache.set(sentMsg.key.id, {
+            msgId: sentMsg.key.id,
+            rideData,
+            rawText: rideData.rawText || rideData.cleanedText,
+            driverPhone,
+            groupName: rideData.groupName,
+            groupJid: rideData.groupJid || originalMsg?.key?.remoteJid || null,
+            senderName: rideData.senderName,
+            senderPhone: rideData.senderPhone,
+            senderJid: rideData.senderJid || originalMsg?.key?.participant || originalMsg?.key?.remoteJid || null,
+            originalMsgKey: rideData.originalMsgKey || originalMsg?.key || null,
+            originalMessage: originalMsg?.message || null,
+            isTelegram: Boolean(rideData.isTelegram),
+            telegramChatId: rideData.telegramChatId || null,
+            telegramMsgId: rideData.telegramMsgId || null,
+            telegramUrl: rideData.telegramUrl || null,
+            hasInlineButtons: Boolean(rideData.hasInlineButtons),
+            telegramOriginalMessage: rideData.telegramOriginalMessage || null,
+            searchDesc: rideData.searchDesc,
+            matchedReason: rideData.matchedReason || null,
+            matchedSearch: rideData.matchedSearch || null,
+            activeSearchesSnapshot: rideData.activeSearchesSnapshot || null,
+            sentAt: Date.now(),
+          });
+          if (sentAlertsCache.size > ALERTS_CACHE_MAX) {
+            sentAlertsCache.delete(sentAlertsCache.keys().next().value);
+          }
+          persistAlertsCacheSoon();
         }
-        persistAlertsCacheSoon();
+        return { ok: true, via: a.via };
+      } catch (err) {
+        lastError = err;
+        console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} ל-${jid} נכשלה:`, err.message);
+        console.log("🔎 QUOTE-KEY", rideData.groupName, JSON.stringify({ key: originalMsg?.key, type: Object.keys(originalMsg?.message || {})[0] }));
       }
-      return { ok: true, via: a.via };
-    } catch (err) {
-      lastError = err;
-      console.error(`❌ שליחת התראה לנהג ${driverPhone} דרך ${a.via} נכשלה:`, err.message);
-      console.log("🔎 QUOTE-KEY", rideData.groupName, JSON.stringify({ key: originalMsg?.key, type: Object.keys(originalMsg?.message || {})[0] }));
     }
   }
 
