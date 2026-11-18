@@ -1394,28 +1394,30 @@ export async function handleDriverStatusChange(driverPhone, sessionObj) {
   if (sessionObj?.status === "connected") {
     cancelPairingReminder(driverPhone);
 
-    // טעינת כל שמות הקבוצות של הנהג ברקע לזיכרון ולדיסק (מבטיח ששם הקבוצה תמיד יופיע בהתראות)
-    if (sessionObj.sock?.groupFetchAllParticipating) {
-      sessionObj.sock.groupFetchAllParticipating()
-        .then((groups) => {
-          if (groups && typeof groups === "object") {
-            let count = 0;
-            for (const [gJid, meta] of Object.entries(groups)) {
-              if (meta?.subject) {
-                groupMetadataCache.set(gJid, meta);
-                count++;
+    // טעינת כל שמות הקבוצות של הנהג ברקע לזיכרון ולדיסק בהשהיה של 6 שניות (כדי לתת לחיבור הוואטסאפ להתייצב מלא)
+    setTimeout(() => {
+      if (sessionObj?.sock?.groupFetchAllParticipating && sessionObj?.status === "connected") {
+        sessionObj.sock.groupFetchAllParticipating()
+          .then((groups) => {
+            if (groups && typeof groups === "object") {
+              let count = 0;
+              for (const [gJid, meta] of Object.entries(groups)) {
+                if (meta?.subject) {
+                  groupMetadataCache.set(gJid, meta);
+                  count++;
+                }
+              }
+              if (count > 0) {
+                persistGroupMetadataSoon();
+                console.log(`[Group Cache] נטענו ${count} קבוצות מראש עבור נהג ${driverPhone}`);
               }
             }
-            if (count > 0) {
-              persistGroupMetadataSoon();
-              console.log(`[Group Cache] נטענו ${count} קבוצות מראש עבור נהג ${driverPhone}`);
-            }
-          }
-        })
-        .catch((err) => {
-          console.log(`[Group Cache] טעינת קבוצות מקדימה עבור ${driverPhone}: ${err?.message || err}`);
-        });
-    }
+          })
+          .catch((err) => {
+            console.log(`[Group Cache] טעינת קבוצות מקדימה עבור ${driverPhone}: ${err?.message || err}`);
+          });
+      }
+    }, 6000);
 
     // אם מדובר בסשן שנשמר על הדיסק ושוחזר בהפעלת השרת, או התעוררות/התחברות מחדש - אין עניין לשלוח שום הודעה!
     if (sessionObj.isRestoredSession || !sessionObj.isInitialPairing) {
@@ -2516,3 +2518,15 @@ if (isDirectRun) {
     console.error("שגיאה בהפעלת הבוט:", err);
   });
 }
+
+// כיבוי מסודר של כל סוקטי הוואטסאפ בעת הפעלה מחדש של pm2 (מונע שגיאות 401/440 וניתוקי פתע)
+function handleGracefulShutdown(signal) {
+  console.log(`🛑 התקבל אות ${signal} - סוגר סוקטים של וואטסאפ בצורה מסודרת טרם יציאה...`);
+  try {
+    const mainSock = getMainBotSock();
+    if (mainSock?.ws?.close) mainSock.ws.close();
+  } catch (e) {}
+  process.exit(0);
+}
+process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));

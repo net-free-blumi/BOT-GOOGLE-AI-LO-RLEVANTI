@@ -384,12 +384,9 @@ export async function startMainBot(callbacks = {}) {
         }
 
         if (code === DisconnectReason.loggedOut) {
-          console.log("⚠️ הבוט הראשי נותק (401 Logged Out). מאפס רק את auth/bot ומפעיל מחדש...");
-          try {
-            fs.rmSync(BOT_AUTH_DIR, { recursive: true, force: true });
-          } catch (e) {}
-          mainRetryCount = 0;
-          scheduleReconnect(4000);
+          console.log("⚠️ הבוט הראשי נותק (401 Logged Out). שומרים על קובצי האימות ומנסים חיבור מחדש...");
+          mainRetryCount++;
+          scheduleReconnect(backoffDelay(mainRetryCount));
           return;
         }
 
@@ -590,13 +587,17 @@ async function createDriverSocket(driverPhone, callbacks = {}) {
       detachSock(sock);
 
       if (code === DisconnectReason.loggedOut) {
-        console.log(`⚠️ [נהג ${driverPhone}] התנתק (401 Logged Out). מאפס תיקיית אימות של הנהג בלבד!`);
-        try {
-          fs.rmSync(driverAuthDir, { recursive: true, force: true });
-        } catch (e) {}
-        driverSessions.delete(driverPhone);
-        driverRetryCount.delete(driverPhone);
+        console.log(`⚠️ [נהג ${driverPhone}] התקבל קוד 401 Logged Out. שומרים על קובצי האימות ומנסים חיבור מחדש...`);
+        const attempt = (driverRetryCount.get(driverPhone) || 0) + 1;
+        driverRetryCount.set(driverPhone, attempt);
+        const delay = backoffDelay(attempt);
         clearDriverReconnect(driverPhone);
+        driverReconnectTimers.set(driverPhone, setTimeout(() => {
+          driverReconnectTimers.delete(driverPhone);
+          connectDriverSession(driverPhone, { onRideMessage, onReaction, onStatusChange, onEvent }).catch((err) => {
+            console.error(`שגיאה בחיבור מחדש עבור נהג ${driverPhone}:`, err.message);
+          });
+        }, delay));
         return;
       }
 
