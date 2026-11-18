@@ -26,6 +26,10 @@ import {
   Copy,
   ExternalLink,
   Trash2,
+  Send,
+  Zap,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import { LiveRideItem, DriverGeoLocation } from '../types.ts';
 import { fetchLiveRidesApi, claimRideApi, simulateRideApi, sendSearchCommand, stopSearch } from '../services/api.ts';
@@ -515,21 +519,25 @@ export function DriverRadarModal({
     }
   };
 
-  // Handle Instant Claim ("תן" או תפיסה בדרייבוט)
+  // Handle Instant Claim ("תן", תפיסה בטלגרם או בדרייבוט)
   const handleClaimRide = async (ride: LiveRideItem) => {
     setClaimingId(ride.id);
     try {
-      // אם זו נסיעת דרייבוט - פותחים מיד את הקישור הרשמי של דרייבוט בחלון חדש
-      if (ride.drivebotUrl) {
-        window.open(ride.drivebotUrl, '_blank', 'noopener,noreferrer');
+      // 1. פתיחה מיידית ונקייה של קישור התפיסה (דרייבוט / כפתור בוט טלגרם / קישור תפיסה) בלחיצה אחת ללא תוספת מלל!
+      const directTargetUrl = ride.claimUrl || ride.drivebotUrl || (ride.isTelegram ? ride.telegramUrl : null);
+      if (directTargetUrl) {
+        window.open(directTargetUrl, '_blank', 'noopener,noreferrer');
       }
 
+      // 2. הפעלת מנגנון תפיסה ישיר בשרת במקביל (קליק כפתור / שליחת /start לבוט / מענה "תן")
       const claimText = ride.isDriveBot && ride.drivebotCommand ? ride.drivebotCommand : 'תן';
       const res = await claimRideApi(ride.id, selectedDriverPhone, claimText);
       if (res.ok) {
         setClaimedSuccessId(ride.id);
         playLoudChime();
-        if (ride.isDriveBot) {
+        if (ride.isTelegram) {
+          showToast(`✈️ הנסיעה נתפסה בטלגרם! ${res.message || 'הפקודה בוצעה ישירות'}`);
+        } else if (ride.isDriveBot) {
           showToast(`⚡ נסיעת דרייבוט נתפסה! הפקודה נשלחה לבוט דרייבוט הרשמי ללא שליחה לקבוצה.`);
         } else {
           showToast(`🚕 הנסיעה נתפסה בהצלחה! נשלחה תגובת "תן" בקבוצה ולסדרן.`);
@@ -1044,6 +1052,20 @@ export function DriverRadarModal({
 
                     {/* Metadata Sub-bar: Exact timestamp + Group name + Dispatcher */}
                     <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                      {/* Telegram vs WhatsApp Source Badge - מודגש ובולט במיוחד! */}
+                      {ride.isTelegram ? (
+                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-black bg-sky-500/30 border border-sky-400 text-sky-200 flex items-center gap-1.5 shadow-[0_0_12px_rgba(56,189,248,0.45)]">
+                          <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping shrink-0" />
+                          <Send className="w-3 h-3 text-sky-300 shrink-0" />
+                          <span>טלגרם ✈️</span>
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#25D366]/15 border border-[#25D366]/30 text-[#25D366] flex items-center gap-1">
+                          <MessageCircle className="w-3 h-3 text-[#25D366] shrink-0" />
+                          <span>וואטסאפ</span>
+                        </span>
+                      )}
+
                       {/* Internal vs Intercity Tag */}
                       <span
                         className={`px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider ${
@@ -1062,14 +1084,14 @@ export function DriverRadarModal({
                         </span>
                       )}
 
-                      {/* Exact WhatsApp Sent Time */}
+                      {/* Exact Sent Time */}
                       <span className="px-2 py-0.5 rounded-md bg-[#06090f] border border-[#1b2738] text-teal-300 font-mono text-[11px] font-bold">
                         שודר ב-{ride.timeFormatted || 'בזמן אמת'}
                       </span>
 
-                      {/* Group Name */}
-                      <span className="text-[11px] text-slate-300 font-medium truncate max-w-[130px]" title={ride.groupName}>
-                        👥 {ride.groupName}
+                      {/* Group/Channel Name */}
+                      <span className={`text-[11px] font-medium truncate max-w-[140px] ${ride.isTelegram ? 'text-sky-300' : 'text-slate-300'}`} title={ride.groupName}>
+                        {ride.isTelegram ? '📢' : '👥'} {ride.groupName}
                       </span>
 
                       {/* Dispatcher info */}
@@ -1151,12 +1173,14 @@ export function DriverRadarModal({
                     {/* ORIGINAL RAW MESSAGE BOX (פונט נעים, קומפקטי ולא תופס את כל המסך) */}
                     <div
                       onClick={() => setSelectedRideForDetails(ride)}
-                      className="p-2 sm:p-2.5 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border border-[#1a2638] hover:border-teal-500/50 cursor-pointer transition-all group shadow-inner"
-                      title="לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ עם קישורים לחיצים"
+                      className={`p-2 sm:p-2.5 rounded-xl bg-[#060a10] hover:bg-[#0c1420] border cursor-pointer transition-all group shadow-inner ${
+                        ride.isTelegram ? 'border-sky-500/40 hover:border-sky-400' : 'border-[#1a2638] hover:border-teal-500/50'
+                      }`}
+                      title={ride.isTelegram ? "לחץ להצגת פרטי הודעה מטלגרם ומעבר ישיר" : "לחץ להצגת פרטי הודעה מלאים מקבוצת הוואטסאפ עם קישורים לחיצים"}
                     >
                       <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 pb-1 border-b border-[#141e2b]">
-                        <span className="font-sans font-bold text-teal-400 group-hover:text-teal-300 flex items-center gap-1.5">
-                          📄 תוכן הודעה מקורית • {ride.groupName}
+                        <span className={`font-sans font-bold flex items-center gap-1.5 ${ride.isTelegram ? 'text-sky-400 group-hover:text-sky-300' : 'text-teal-400 group-hover:text-teal-300'}`}>
+                          {ride.isTelegram ? '✈️ הודעה מקורית מטלגרם' : '📄 תוכן הודעה מקורית'} • {ride.groupName}
                         </span>
                         <span className="text-[10px] text-teal-400 font-sans group-hover:underline flex items-center gap-1 font-bold">
                           הצג פרטים <ExternalLink className="w-2.5 h-2.5" />
@@ -1169,7 +1193,7 @@ export function DriverRadarModal({
                   </div>
 
                   {/* ========================================= */}
-                  {/* CARD FOOTER ACTIONS: WAZE + הצג בוואטסאפ + תן (כפתורים מוקטנים ונוחים) */}
+                  {/* CARD FOOTER ACTIONS: WAZE + הצג בוואטסאפ / טלגרם + תן */}
                   {/* ========================================= */}
                   <div className={`p-2 sm:p-2.5 bg-[#080d14] border-t border-[#182333] flex items-center gap-1.5 ${
                     isCockpitMode ? 'py-2.5' : 'py-2'
@@ -1186,34 +1210,57 @@ export function DriverRadarModal({
                       <span>Waze</span>
                     </a>
 
-                    {/* WhatsApp Action Button */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const url = getCleanWhatsAppLink(ride);
-                        window.open(url, '_blank', 'noopener,noreferrer');
-                      }}
-                      className="px-2.5 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm active:scale-95"
-                      title={ride.isDriveBot ? 'פתח קישור ישיר לבוט דרייבוט בוואטסאפ' : 'פתח צ\'אט בוואטסאפ עם הסדרן'}
-                    >
-                      <MessageCircle className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
-                      <span>וואטסאפ</span>
-                    </button>
+                    {/* Action Button: Telegram vs WhatsApp */}
+                    {ride.isTelegram ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const tgUrl = ride.telegramUrl || (ride.claimUrl ? ride.claimUrl : 'https://t.me');
+                          window.open(tgUrl, '_blank', 'noopener,noreferrer');
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm active:scale-95"
+                        title="פתח ישירות את ההודעה המקורית בטלגרם"
+                      >
+                        <Send className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
+                        <span>פתח בטלגרם</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = getCleanWhatsAppLink(ride);
+                          window.open(url, '_blank', 'noopener,noreferrer');
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-sm active:scale-95"
+                        title={ride.isDriveBot ? 'פתח קישור ישיר לבוט דרייבוט בוואטסאפ' : 'פתח צ\'אט בוואטסאפ עם הסדרן'}
+                      >
+                        <MessageCircle className="w-3.5 h-3.5 text-slate-950 fill-slate-950" />
+                        <span>וואטסאפ</span>
+                      </button>
+                    )}
 
-                    {/* CLAIM RIDE BUTTON ("תפוס נסיעה - תן" או "תפוס בדרייבוט") - מוקטן מעט כדי לא לחנוק את הכרטיס */}
+                    {/* CLAIM RIDE BUTTON ("תפוס נסיעה - תן", תפיסה בטלגרם או בדרייבוט) */}
                     <button
                       onClick={() => handleClaimRide(ride)}
                       disabled={isClaiming || isClaimedSuccess}
                       className={`flex-1 py-2 px-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md ${
                         isClaimedSuccess
                           ? 'bg-emerald-500 text-slate-950 font-black'
+                          : ride.isTelegram
+                          ? 'bg-gradient-to-r from-sky-400 to-blue-500 hover:from-sky-300 hover:to-blue-400 text-slate-950 font-black shadow-sky-500/25 ring-1 ring-sky-300'
                           : ride.isDriveBot
                           ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 font-black ring-2 ring-amber-400/50'
                           : prox?.isClose
                           ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black shadow-emerald-500/30 ring-1 ring-emerald-300'
                           : 'bg-teal-500 hover:bg-teal-400 text-slate-950 font-black'
                       }`}
-                      title={ride.isDriveBot ? 'תפיסה דרך בוט דרייבוט בלבד - לא שולח הודעה לקבוצה!' : 'שולח הודעת "תן" בקבוצה'}
+                      title={
+                        ride.isTelegram
+                          ? 'תפיסה מיידית בטלגרם - פותח ישירות את הקישור או שולח בקשת תפיסה לבוט ללא תוספת מלל'
+                          : ride.isDriveBot
+                          ? 'תפיסה דרך בוט דרייבוט בלבד - לא שולח הודעה לקבוצה!'
+                          : 'שולח הודעת "תן" בקבוצה'
+                      }
                     >
                       {isClaimedSuccess ? (
                         <>
@@ -1224,6 +1271,11 @@ export function DriverRadarModal({
                         <>
                           <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" />
                           <span>שולח...</span>
+                        </>
+                      ) : ride.isTelegram ? (
+                        <>
+                          <Zap className="w-3.5 h-3.5 text-slate-950" />
+                          <span>{ride.hasInlineButtons ? 'תפוס בטלגרם ⚡' : 'תפוס נסיעה ("תן")'}</span>
                         </>
                       ) : ride.isDriveBot ? (
                         <>
@@ -1260,13 +1312,15 @@ export function DriverRadarModal({
             {/* Header */}
             <div className="p-4 border-b border-[#1b2636] flex items-center justify-between bg-[#0e141f]">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-teal-500/15 border border-teal-500/30 text-teal-300">
-                  <Radio className="w-4 h-4 text-teal-400" />
+                <div className={`p-2 rounded-xl border ${selectedRideForDetails.isTelegram ? 'bg-sky-500/20 border-sky-400 text-sky-300' : 'bg-teal-500/15 border-teal-500/30 text-teal-300'}`}>
+                  {selectedRideForDetails.isTelegram ? <Send className="w-4 h-4 text-sky-300" /> : <Radio className="w-4 h-4 text-teal-400" />}
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-white">הודעה מלאה מקבוצת הוואטסאפ</h3>
+                  <h3 className="text-sm font-black text-white">
+                    {selectedRideForDetails.isTelegram ? '✈️ הודעה מלאה מטלגרם' : 'הודעה מלאה מקבוצת הוואטסאפ'}
+                  </h3>
                   <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                    <span>{selectedRideForDetails.groupName}</span>
+                    <span className={selectedRideForDetails.isTelegram ? 'text-sky-300 font-bold' : ''}>{selectedRideForDetails.groupName}</span>
                     <span>•</span>
                     <span className="text-teal-300 font-mono font-bold flex items-center gap-1">
                       <Clock className="w-3 h-3 text-teal-400" />
@@ -1302,16 +1356,29 @@ export function DriverRadarModal({
               </button>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const url = getCleanWhatsAppLink(selectedRideForDetails);
-                    window.open(url, '_blank', 'noopener,noreferrer');
-                  }}
-                  className="px-3.5 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
-                >
-                  <MessageCircle className="w-4 h-4 text-slate-950 fill-slate-950" />
-                  <span>{selectedRideForDetails.isDriveBot ? 'פתח בוט דרייבוט בוואטסאפ' : 'פתח שיחה בוואטסאפ'}</span>
-                </button>
+                {selectedRideForDetails.isTelegram ? (
+                  <button
+                    onClick={() => {
+                      const url = selectedRideForDetails.telegramUrl || (selectedRideForDetails.claimUrl ? selectedRideForDetails.claimUrl : 'https://t.me');
+                      window.open(url, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                  >
+                    <Send className="w-4 h-4 text-slate-950 fill-slate-950" />
+                    <span>פתח הודעה מקורית בטלגרם ↗️</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      const url = getCleanWhatsAppLink(selectedRideForDetails);
+                      window.open(url, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                  >
+                    <MessageCircle className="w-4 h-4 text-slate-950 fill-slate-950" />
+                    <span>{selectedRideForDetails.isDriveBot ? 'פתח בוט דרייבוט בוואטסאפ' : 'פתח שיחה בוואטסאפ'}</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => setSelectedRideForDetails(null)}

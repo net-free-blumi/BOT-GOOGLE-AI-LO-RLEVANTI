@@ -197,11 +197,17 @@ export interface LiveRideItem {
   distanceKm?: number | null;
   driveTimeMinutes?: number | null;
   wazeUrl?: string;
-  whatsappUrl?: string;
   isDriveBot?: boolean;
   drivebotUrl?: string | null;
   drivebotCommand?: string | null;
   drivebotPhone?: string | null;
+  isTelegram?: boolean;
+  telegramUrl?: string | null;
+  telegramChatId?: string | number | null;
+  telegramMsgId?: number | null;
+  hasInlineButtons?: boolean;
+  buttonsList?: Array<{ text: string; url?: string | null; hasCallback?: boolean }>;
+  claimUrl?: string | null;
   claimed?: boolean;
   claimedAt?: number;
 }

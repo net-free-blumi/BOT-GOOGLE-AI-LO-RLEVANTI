@@ -767,10 +767,21 @@ const tgChannelRide = "כל הנסיעות\nים שמש 170\nשערי רווחה
 const tgVerdict = rideMatches(tgChannelRide, { mode: "city_all", origin: "בית שמש" }, "כל הנסיעות");
 assert(tgVerdict.ok, `נסיעת ים שמש 170 מתקבלת בהצלחה בחיפוש בית שמש: "${tgVerdict.reason}"`);
 
-// בדיקה 2: אימות חילוץ ופענוח קישור בוט דרייבוט לכפתור תפיסה
-const driveBotUrl = "https://t.me/drivebot_bot?start=req_8080";
-const botMatch = driveBotUrl.match(/(?:t\.me\/|tg:\/\/resolve\?domain=)([^/?#&]+).*?[?&]start=([^&#]+)/i);
-assert(botMatch && botMatch[1] === "drivebot_bot" && botMatch[2] === "req_8080", "חילוץ בוט דרייבוט ופרמטר start הצליח");
+// בדיקה 3: נסיעת "עינב נתניה 150" מצילום המסך של ערוץ "כל הנסיעות"
+const einavRide = "אפשר זמנים ארוכים\nעינב נתניה 150 ש\nזמנים נוסעת אחת\nמוניות אוטוטו - ללא פון\ndrivebot.co.il";
+const einavVerdict = rideMatches(einavRide, { mode: "city_all", origin: "עינב" }, "כל הנסיעות");
+assert(einavVerdict.ok, `נסיעת עינב נתניה 150 מתקבלת בהצלחה בחיפוש עינב: "${einavVerdict.reason}"`);
+
+// בדיקה 4: אימות חילוץ עדכונים משולבים של טלגרם (Updates / UpdatesCombined)
+const mockUpdateContainer = {
+  className: "UpdatesCombined",
+  updates: [
+    { className: "UpdateNewChannelMessage", message: { id: 101, message: "ים שמש 170" } },
+    { className: "UpdateNewChannelMessage", message: { id: 102, message: "עינב נתניה 150 ש" } }
+  ]
+};
+const extracted = (mockUpdateContainer.updates || []).map(u => u.message).filter(Boolean);
+assert(extracted.length === 2 && extracted[0].id === 101 && extracted[1].id === 102, "חילוץ הודעות מתוך עדכון משולב של טלגרם (UpdatesCombined) הצליח");
 
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
 

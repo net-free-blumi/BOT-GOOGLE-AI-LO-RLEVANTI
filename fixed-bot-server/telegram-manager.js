@@ -476,24 +476,30 @@ async function handleIncomingTelegramMessage(client, driverPhone, message, sourc
       return;
     }
 
-    // חילוץ פרטי הקבוצה/ערוץ
+    // חילוץ פרטי הקבוצה/ערוץ עם גיבוי ל-getEntity
     let chat = null;
     try {
       chat = await message.getChat();
-    } catch (e) {}
+    } catch (e) {
+      try {
+        if (peer) chat = await client.getEntity(peer);
+      } catch (e2) {}
+    }
 
-    // בדיקה האם זו קבוצה או ערוץ (כולל ערוצי שידור עם אלפי מנויים כמו "כל הנסיעות")
+    // בדיקה האם זו קבוצה או ערוץ (כולל ערוצי שידור עם אלפי מנויים כמו "כל הנסיעות" ופוסטים בערוצים)
     const isChannelOrGroup = Boolean(
       chat?.title ||
+      chat?.name ||
       message.isGroup ||
       message.isChannel ||
+      message.post ||
       peer?.channelId ||
       peer?.chatId
     );
 
     if (!isChannelOrGroup) return;
 
-    const groupName = (chat?.title || (peer?.channelId ? `ערוץ טלגרם (${peer.channelId})` : "קבוצת טלגרם")).trim();
+    const groupName = (chat?.title || chat?.name || (peer?.channelId ? `ערוץ טלגרם (${peer.channelId})` : "קבוצת טלגרם")).trim();
 
     // סינון קבוצת היעד של ההתראות כדי למנוע לולאת סריקה עצמית
     if (
@@ -602,23 +608,43 @@ async function handleIncomingTelegramMessage(client, driverPhone, message, sourc
   }
 }
 
+// חילוץ כל ההודעות מכל עדכון טלגרם אפשרי (כולל חבילות ערוצים מרוכזות: Updates, UpdatesCombined וכו')
+function extractMessagesFromTelegramUpdate(update) {
+  const list = [];
+  if (!update) return list;
+
+  if (update.message && typeof update.message === "object") {
+    list.push(update.message);
+  }
+
+  if (Array.isArray(update.updates)) {
+    for (const sub of update.updates) {
+      if (sub?.message && typeof sub.message === "object") {
+        list.push(sub.message);
+      }
+    }
+  }
+
+  return list;
+}
+
 async function attachTelegramMessageListener(client, driverPhone) {
   const { NewMessage } = await getTelegramModules();
-  const { Api } = await import("telegram");
 
-  // מאזין 1: NewMessage סטנדרטי
+  // מאזין 1: NewMessage סטנדרטי לקבוצות וצ'אטים
   client.addEventHandler(async (event) => {
     if (event?.message) {
       await handleIncomingTelegramMessage(client, driverPhone, event.message, "new_message");
     }
   }, new NewMessage({}));
 
-  // מאזין 2: מאזין לעדכוני ערוצי שידור גלמיים (UpdateNewChannelMessage)
-  // חיוני לערוצים כמו "כל הנסיעות" (2.7K מנויים) שאחרת עשויים להיעצר בגלל הגדרות MTProto
+  // מאזין 2: מאזין לעדכונים גלמיים של כל סוגי הערוצים, קבוצות שידור ו-UpdatesCombined
+  // חיוני לערוצים כמו "כל הנסיעות" (2.7K מנויים) שנשלחים בעדכונים מרוכזים ב-MTProto
   client.addEventHandler(async (update) => {
     try {
-      if (update instanceof Api.UpdateNewChannelMessage && update.message) {
-        await handleIncomingTelegramMessage(client, driverPhone, update.message, "channel_raw");
+      const msgs = extractMessagesFromTelegramUpdate(update);
+      for (const msg of msgs) {
+        await handleIncomingTelegramMessage(client, driverPhone, msg, "raw_channel_update");
       }
     } catch (e) {}
   });
