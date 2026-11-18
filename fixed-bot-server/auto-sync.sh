@@ -4,7 +4,7 @@ echo "Starting auto-sync..."
 
 # Backup dynamic data
 mkdir -p /tmp/wa-safe-bak
-for f in users.json users.backup.json searches.json lid-map.json onboarding-alerts.json dashboard.secret auth; do
+for f in users.json users.backup.json searches.json lid-map.json group-metadata.json onboarding-alerts.json dashboard.secret auth telegram_sessions; do
   [ -e "$f" ] && cp -rf "$f" /tmp/wa-safe-bak/ || true
   [ -e "fixed-bot-server/$f" ] && cp -rf "fixed-bot-server/$f" /tmp/wa-safe-bak/ || true
 done
@@ -24,7 +24,7 @@ fi
 npm install --omit=dev --no-audit --no-fund 2>/dev/null || true
 
 # Restore dynamic data
-for f in users.json users.backup.json searches.json lid-map.json onboarding-alerts.json dashboard.secret auth; do
+for f in users.json users.backup.json searches.json lid-map.json group-metadata.json onboarding-alerts.json dashboard.secret auth telegram_sessions; do
   [ -e "/tmp/wa-safe-bak/$f" ] && cp -rf "/tmp/wa-safe-bak/$f" ./ || true
   [ -d "fixed-bot-server" ] && [ -e "/tmp/wa-safe-bak/$f" ] && cp -rf "/tmp/wa-safe-bak/$f" fixed-bot-server/ || true
 done

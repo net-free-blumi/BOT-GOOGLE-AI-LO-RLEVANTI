@@ -4,6 +4,7 @@ import { createDeduper, isUniqueRideLink } from "./dedupe.js";
 import { addOrStageUserSearch, confirmPendingSearch, cancelPendingSearch, removeUserSearchByIndex, getUserSearch, stopUserSearch } from "./users-manager.js";
 import { extractInteractiveResponse, sendRideAlertWithButtons, sendPendingSearchConfirmationWithButtons, sendFullInteractiveMenu } from "./interactive.js";
 import { extractDispatcherContact, buildQuotedRideMessage } from "./matcher.js";
+import { formatIsraeliPhone, extractPhoneFromText } from "./matcher.js";
 import { readFileSync } from "node:fs";
 
 console.log("🧪 מתחיל בדיקות אימות מעמיקות לכל התרחישים (גרסה 3.0 - חיפושים מקבילים ובתוך/מחוץ לעיר)...\n");
@@ -772,7 +773,6 @@ const einavRide = "אפשר זמנים ארוכים\nעינב נתניה 150 ש\
 const einavVerdict = rideMatches(einavRide, { mode: "city_all", origin: "עינב" }, "כל הנסיעות");
 assert(einavVerdict.ok, `נסיעת עינב נתניה 150 מתקבלת בהצלחה בחיפוש עינב: "${einavVerdict.reason}"`);
 
-// בדיקה 4: אימות חילוץ עדכונים משולבים של טלגרם (Updates / UpdatesCombined)
 const mockUpdateContainer = {
   className: "UpdatesCombined",
   updates: [
@@ -780,10 +780,38 @@ const mockUpdateContainer = {
     { className: "UpdateNewChannelMessage", message: { id: 102, message: "עינב נתניה 150 ש" } }
   ]
 };
-const extracted = (mockUpdateContainer.updates || []).map(u => u.message).filter(Boolean);
-assert(extracted.length === 2 && extracted[0].id === 101 && extracted[1].id === 102, "חילוץ הודעות מתוך עדכון משולב של טלגרם (UpdatesCombined) הצליח");
+const extractedMsgs = (mockUpdateContainer.updates || []).map(u => u.message).filter(Boolean);
+assert(extractedMsgs.length === 2 && extractedMsgs[0].id === 101 && extractedMsgs[1].id === 102, "חילוץ הודעות מתוך עדכון משולב של טלגרם (UpdatesCombined) הצליח");
+
+console.log("\n--- בדיקה 12: אימות חילוץ מספר סדרן, עיצוב טלפונים ושמות קבוצות ---");
+
+// 1. חילוץ מספר טלפון מקישור wa.me
+const waMeText = "שמש פ 50ש\nד להישנה\nשד' האמוראים\nwa.me/972552732722?text=ת+852897622\nאור החיים";
+const pWaMe = extractPhoneFromText(waMeText);
+assert(pWaMe === "0552732722", `חילוץ טלפון סדרן מקישור wa.me הצליח: ${pWaMe}`);
+
+// 2. חילוץ מספר עם מילת הקשר (סדרן/טלפון/לפרטים)
+const ctxText = "שמש ים 150 רמה ד לגבעת שאול\nסדרן: 054-8556165";
+const pCtx = extractPhoneFromText(ctxText);
+assert(pCtx === "0548556165", `חילוץ טלפון סדרן עם מילת הקשר הצליח: ${pCtx}`);
+
+// 3. חילוץ מספר ישראלי ישיר בטקסט
+const directText = "ים שמש 170 שערי רווחה 0528786639 זמין עכשיו";
+const pDirect = extractPhoneFromText(directText);
+assert(pDirect === "0528786639", `חילוץ מספר ישראלי ישיר הצליח: ${pDirect}`);
+
+// 4. חילוץ מספר עם קידומת בינלאומית +972
+const intlText = "עינב נתניה 150 +972 53-948-5860 זמנים נוסעת אחת";
+const pIntl = extractPhoneFromText(intlText);
+assert(pIntl === "0539485860", `חילוץ מספר עם קידומת בינלאומית +972 הצליח: ${pIntl}`);
+
+// 5. עיצוב מספר ישראלי 05X-XXXXXXX
+assert(formatIsraeliPhone("0548556165") === "054-8556165", "עיצוב 0548556165 ל-054-8556165 הצליח");
+assert(formatIsraeliPhone("972528786639") === "052-8786639", "עיצוב 972528786639 ל-052-8786639 הצליח");
+assert(formatIsraeliPhone("053-9485860") === "053-9485860", "עיצוב מספר שכבר מעוצב נשמר תקין");
 
 console.log(`\n🎉 סיום: ${passed}/${total} בדיקות עברו בהצלחה מושלמת!`);
+
 
 
 

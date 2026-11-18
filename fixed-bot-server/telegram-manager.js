@@ -65,6 +65,10 @@ export function setTelegramSystemCallbacks(cbs) {
   systemCallbacks = { ...systemCallbacks, ...cbs };
 }
 
+function isLid(id) {
+  return String(id || "").endsWith("@lid") || (String(id || "").length >= 14 && /^\d+$/.test(String(id || "")));
+}
+
 function cleanPhone(raw) {
   if (!raw) return "";
   let digits = String(raw).replace(/\D/g, "");
@@ -576,13 +580,21 @@ async function handleIncomingTelegramMessage(client, driverPhone, message, sourc
       }
     }
 
+    let tgSenderPhone = "זמין בטלגרם";
+    if (systemCallbacks.extractPhoneFromText) {
+      const extracted = systemCallbacks.extractPhoneFromText(cleanedText) || systemCallbacks.extractPhoneFromText(text);
+      if (extracted) {
+        tgSenderPhone = extracted;
+      }
+    }
+
     const rideData = {
       cleanedText,
       rawText: text,
       driverPhone,
       groupName,
       senderName,
-      senderPhone: "זמין בטלגרם",
+      senderPhone: tgSenderPhone,
       searchDesc: verdict.matchedSearch?.displayText || driverSearch.displayText,
       matchedReason: verdict.reason,
       isTelegram: true,
@@ -658,7 +670,14 @@ export function buildTelegramAlertText(rideData) {
   msg += `${rideData.cleanedText}\n`;
   msg += `━━━━━━━━━━━━━\n`;
   msg += `📍 *קבוצה:* ${rideData.groupName}\n`;
-  msg += `👤 *סדרן:* ${rideData.senderName}\n`;
+  let sInfo = rideData.senderName || "סדרן";
+  if (rideData.senderPhone && rideData.senderPhone !== "זמין בטלגרם") {
+    const formattedPhone = systemCallbacks.formatIsraeliPhone
+      ? systemCallbacks.formatIsraeliPhone(rideData.senderPhone)
+      : rideData.senderPhone;
+    sInfo = (sInfo && sInfo !== "סדרן") ? `${sInfo} · ${formattedPhone}` : formattedPhone;
+  }
+  msg += `👤 *סדרן:* ${sInfo}\n`;
   msg += `🔍 *חיפוש:* ${rideData.searchDesc}\n`;
 
   if (rideData.hasInlineButtons) {
@@ -749,18 +768,31 @@ export async function sendRideAlertToTelegram(driverPhone, rideData, originalMsg
 
     let tgText = "";
     if (isFromTelegram) {
+      let sInfo = rideData.senderName || "זמין בטלגרם";
+      if (rideData.senderPhone && rideData.senderPhone !== "זמין בטלגרם") {
+        const formattedPhone = systemCallbacks.formatIsraeliPhone
+          ? systemCallbacks.formatIsraeliPhone(rideData.senderPhone)
+          : rideData.senderPhone;
+        sInfo = (sInfo && sInfo !== "זמין בטלגרם" && sInfo !== "סדרן") ? `${sInfo} · ${formattedPhone}` : formattedPhone;
+      }
       tgText = `🚕 *נסיעה מטלגרם*\n\n` +
         `${rideData.cleanedText || rideData.rawText}\n\n` +
         `━━━━━━━━━━━━━\n` +
         `📍 *קבוצה:* ${rideData.groupName || "קבוצת טלגרם"}\n` +
-        `👤 *סדרן:* ${rideData.senderName || "זמין בטלגרם"}\n` +
+        `👤 *סדרן:* ${sInfo}\n` +
         (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
     } else {
+      const sPhone = (rideData.senderPhone && rideData.senderPhone !== "זמין בקבוצה")
+        ? (systemCallbacks.formatIsraeliPhone ? systemCallbacks.formatIsraeliPhone(rideData.senderPhone) : rideData.senderPhone)
+        : "זמין בקבוצה";
+      let sName = (rideData.senderName && rideData.senderName !== "סדרן") ? rideData.senderName : "";
+      let sCombined = sName ? `${sName} · ${sPhone}` : sPhone;
+
       tgText = `🚕 *נסיעה מוואטסאפ*\n\n` +
         `${rideData.cleanedText || rideData.rawText}\n\n` +
         `━━━━━━━━━━━━━\n` +
         `📍 *קבוצת וואטסאפ:* ${rideData.groupName || "קבוצת וואטסאפ"}\n` +
-        `👤 *סדרן:* ${rideData.senderName || "סדרן"} · ${rideData.senderPhone || ""}\n` +
+        `👤 *סדרן:* ${sCombined}\n` +
         (rideData.searchDesc ? `🔍 *חיפוש:* ${rideData.searchDesc}\n` : "");
     }
 

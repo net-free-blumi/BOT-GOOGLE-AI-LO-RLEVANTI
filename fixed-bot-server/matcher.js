@@ -826,5 +826,61 @@ export function buildQuotedRideMessage(alertInfo) {
   };
 }
 
+// עיצוב מספר ישראלי בצורה קריאה ונוחה לחיוג (05X-XXXXXXX)
+export function formatIsraeliPhone(raw) {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.startsWith("972") && digits.length >= 11) {
+    digits = "0" + digits.slice(3);
+  }
+  if (digits.length === 10 && digits.startsWith("05")) {
+    return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  }
+  return String(raw);
+}
+
+// חילוץ מספר טלפון מתוך טקסט הודעת הנסיעה (wa.me, אזכורי סדרן, מספרי נייד)
+export function extractPhoneFromText(rawText) {
+  if (!rawText) return null;
+  const s = String(rawText);
+
+  // 1. קישורי wa.me
+  const waMatch = s.match(/(?:wa\.me\/(?:\+?972|0)?|api\.whatsapp\.com\/send\?phone=(?:\+?972|0)?)(5\d{8})/i);
+  if (waMatch && waMatch[1]) {
+    return `0${waMatch[1]}`;
+  }
+
+  // 2. מספרי טלפון ישראליים עם מילת הקשר (סדרן, טלפון, נייד, וכו')
+  const ctxMatch = s.match(/(?:סדרן|טלפון|נייד|פלאפון|וואטסאפ|ווצאפ|לחיוג|פרטי|דברו|ליצירת קשר|בטל|טל)[:\s\-]*([05]\d[- ]?\d{3}[- ]?\d{4}|05\d{8})/i);
+  if (ctxMatch && ctxMatch[1]) {
+    const digits = ctxMatch[1].replace(/\D/g, "");
+    if (digits.length === 10 && digits.startsWith("05")) return digits;
+    if (digits.length === 9 && digits.startsWith("5")) return `0${digits}`;
+  }
+
+  // 3. מספרי טלפון ישראליים סטנדרטיים בטקסט (05X-XXXXXXX או 05XXXXXXXX)
+  const phoneMatches = s.match(/(?:^|[^\d])(05\d[- ]?\d{3}[- ]?\d{4}|05\d{8})(?:$|[^\d])/g);
+  if (phoneMatches && phoneMatches.length > 0) {
+    for (const match of phoneMatches) {
+      const clean = match.replace(/\D/g, "");
+      if (clean.length === 10 && clean.startsWith("05")) {
+        return clean;
+      }
+    }
+  }
+
+  // 4. מספר בינלאומי: +972 5X-XXX-XXXX או 9725XXXXXXXX
+  const intlMatch = s.match(/(?:^|[^\d])(?:\+?972[- ]?)(5\d[- ]?\d{3}[- ]?\d{4}|5\d{8})(?:$|[^\d])/);
+  if (intlMatch && intlMatch[1]) {
+    const clean = intlMatch[1].replace(/\D/g, "");
+    if (clean.length === 9 && clean.startsWith("5")) {
+      return `0${clean}`;
+    }
+  }
+
+  return null;
+}
+
+
 
 

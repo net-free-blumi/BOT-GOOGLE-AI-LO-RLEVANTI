@@ -110,6 +110,41 @@ const NOTIFY_ON_RESET = false;
 export const BUG_REPORT_GROUP_JID = "120363402521442927@g.us";
 
 const groupMetadataCache = new Map();
+const GROUP_METADATA_FILE = new URL("./group-metadata.json", import.meta.url);
+
+// שחזור שמות ומטא-דאטה של כל קבוצות הוואטסאפ מהדיסק (מונע "קבוצת נסיעות" בעליית שרת)
+try {
+  if (fs.existsSync(GROUP_METADATA_FILE)) {
+    const raw = fs.readFileSync(GROUP_METADATA_FILE, "utf8");
+    const saved = JSON.parse(raw);
+    for (const [jid, data] of Object.entries(saved || {})) {
+      if (data && (data.subject || data.name)) {
+        groupMetadataCache.set(jid, data);
+      }
+    }
+    console.log(`📦 שוחזרו ${groupMetadataCache.size} שמות קבוצות מ-group-metadata.json`);
+  }
+} catch (e) {
+  console.log("ℹ️ טעינת group-metadata.json דולגה:", e.message);
+}
+
+let groupMetaTimer = null;
+function persistGroupMetadataSoon() {
+  if (groupMetaTimer) return;
+  groupMetaTimer = setTimeout(() => {
+    groupMetaTimer = null;
+    try {
+      const obj = {};
+      for (const [jid, data] of groupMetadataCache.entries()) {
+        if (data && (data.subject || data.name)) {
+          obj[jid] = { subject: data.subject || data.name, participants: data.participants || [] };
+        }
+      }
+      fs.writeFileSync(GROUP_METADATA_FILE, JSON.stringify(obj, null, 2), "utf8");
+    } catch (e) {}
+  }, 2000);
+}
+
 const recentUnlinkedPrompts = new Map(); // senderPhone -> timestamp (צינון הודעות קישור)
 
 // מטמון התראות שנשלחו למעקב אחרי דיסלייקים (👍 / 👎)
@@ -467,7 +502,7 @@ cron.schedule("0 2 * * *", async () => {
     stopUserSearch(u.phone);
   }
   deduper.clear();
-  groupMetadataCache.clear();
+  // שמות הקבוצות (groupMetadataCache) נשמרים לצמיתות ואינם נמחקים - מונע הודעות ללא שם קבוצה
   console.log("🌙 איפוס יומי (2:00): כל החיפושים הופסקו והזיכרון נוקה");
   recordEvent("system", "איפוס יומי ב-2:00: החיפושים הופסקו");
 }, { timezone: "Asia/Jerusalem" });
@@ -544,11 +579,86 @@ function isStaleMessage(m) {
   return Math.abs(Date.now() / 1000 - tsSec) > MAX_MESSAGE_AGE_SEC;
 }
 
-// פורמט התראת נסיעה נקי, מדויק וללא שורות מיותרות
+// עיצוב מספר ישראלי בצורה קריאה ונוחה לחיוג (05X-XXXXXXX)
+export function formatIsraeliPhone(raw) {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.startsWith("972") && digits.length >= 11) {
+    digits = "0" + digits.slice(3);
+  }
+  if (digits.length === 10 && digits.startsWith("05")) {
+    return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  }
+  return raw;
+}
+
+// חילוץ מספר טלפון מתוך טקסט הודעת הנסיעה (wa.me, אזכורי סדרן, מספרי נייד)
+export function extractPhoneFromText(rawText) {
+  if (!rawText) return null;
+  const s = String(rawText);
+
+  // 1. קישורי wa.me
+  const waMatch = s.match(/(?:wa\.me\/(?:\+?972|0)?|api\.whatsapp\.com\/send\?phone=(?:\+?972|0)?)(5\d{8})/i);
+  if (waMatch && waMatch[1]) {
+    return `0${waMatch[1]}`;
+  }
+
+  // 2. מספרי טלפון ישראליים עם מילת הקשר (סדרן, טלפון, נייד, וכו')
+  const ctxMatch = s.match(/(?:סדרן|טלפון|נייד|פלאפון|וואטסאפ|ווצאפ|לחיוג|פרטי|דברו|ליצירת קשר|בטל|טל)[:\s\-]*([05]\d[- ]?\d{3}[- ]?\d{4}|05\d{8})/i);
+  if (ctxMatch && ctxMatch[1]) {
+    const digits = ctxMatch[1].replace(/\D/g, "");
+    if (digits.length === 10 && digits.startsWith("05")) return digits;
+    if (digits.length === 9 && digits.startsWith("5")) return `0${digits}`;
+  }
+
+  // 3. מספרי טלפון ישראליים סטנדרטיים בטקסט (05X-XXXXXXX או 05XXXXXXXX)
+  const phoneMatches = s.match(/(?:^|[^\d])(05\d[- ]?\d{3}[- ]?\d{4}|05\d{8})(?:$|[^\d])/g);
+  if (phoneMatches && phoneMatches.length > 0) {
+    for (const match of phoneMatches) {
+      const clean = match.replace(/\D/g, "");
+      if (clean.length === 10 && clean.startsWith("05")) {
+        return clean;
+      }
+    }
+  }
+
+  // 4. מספר בינלאומי: +972 5X-XXX-XXXX או 9725XXXXXXXX
+  const intlMatch = s.match(/(?:^|[^\d])(?:\+?972[- ]?)(5\d[- ]?\d{3}[- ]?\d{4}|5\d{8})(?:$|[^\d])/);
+  if (intlMatch && intlMatch[1]) {
+    const clean = intlMatch[1].replace(/\D/g, "");
+    if (clean.length === 9 && clean.startsWith("5")) {
+      return `0${clean}`;
+    }
+  }
+
+  return null;
+}
+
+// פורמט התראת נסיעה נקי, מדויק ומלא (מבטיח שם קבוצה אמיתי ומספר סדרן ברור תמיד)
 function buildRideAlertText(rideData) {
   let alertMsg = `${rideData.cleanedText}\n\n`;
-  alertMsg += `📍 ${rideData.groupName}\n`;
-  alertMsg += `👤 ${rideData.senderName} · ${rideData.senderPhone}`;
+  const grp = (rideData.groupName && rideData.groupName !== "קבוצת נסיעות")
+    ? rideData.groupName
+    : "קבוצת וואטסאפ";
+  alertMsg += `📍 ${grp}\n`;
+
+  let senderInfo = "";
+  if (rideData.senderName && rideData.senderName !== "סדרן") {
+    senderInfo += rideData.senderName;
+  }
+
+  const phone = (rideData.senderPhone && rideData.senderPhone !== "זמין בקבוצה" && rideData.senderPhone !== "0")
+    ? rideData.senderPhone
+    : null;
+
+  if (phone) {
+    const formatted = formatIsraeliPhone(phone);
+    senderInfo = senderInfo ? `${senderInfo} · ${formatted}` : formatted;
+  } else {
+    senderInfo = senderInfo ? `${senderInfo} · זמין בקבוצה` : "סדרן זמין בקבוצה";
+  }
+
+  alertMsg += `👤 ${senderInfo}`;
   return alertMsg.trim();
 }
 
@@ -996,23 +1106,23 @@ export async function sendTelegramGuide(sock, jid) {
   await sock.sendMessage(jid, { text: tgGuide });
 }
 
-// זיהוי ופענוח מספר טלפון אמיתי של סדרן/שולח (מניעת מזהי LID חסויים)
-async function getRealSenderPhone(sock, groupJid, msg) {
-  const key = msg.key || {};
+// זיהוי ופענוח מספר טלפון אמיתי של סדרן/שולח (מניעת מזהי LID חסויים וחילוץ מהטקסט)
+async function getRealSenderPhone(sock, groupJid, msg, rideText = "") {
+  const key = msg?.key || {};
 
   if (key.fromMe) {
     const me = cleanPhone(sock?.user?.id || sock?.user?.phone);
     if (me && !isLid(me)) return me;
   }
 
-  for (const raw of [key.participantAlt, key.participantPN, key.participant, msg.participant]) {
+  for (const raw of [key.participantAlt, key.participantPN, key.participant, msg?.participant]) {
     const num = cleanPhone(raw);
     if (num && num.length >= 9 && num.length <= 12 && !isLid(raw)) {
       return num;
     }
   }
 
-  const lid = [key.participant, key.participantAlt, msg.participant].find((j) => String(j || "").endsWith("@lid"));
+  const lid = [key.participant, key.participantAlt, msg?.participant].find((j) => String(j || "").endsWith("@lid"));
 
   if (lid) {
     try {
@@ -1027,9 +1137,12 @@ async function getRealSenderPhone(sock, groupJid, msg) {
         let metadata = groupMetadataCache.get(groupJid);
         if (!metadata || fresh) {
           metadata = await sock.groupMetadata(groupJid);
-          groupMetadataCache.set(groupJid, metadata);
+          if (metadata?.subject) {
+            groupMetadataCache.set(groupJid, metadata);
+            persistGroupMetadataSoon();
+          }
         }
-        const member = metadata.participants.find(
+        const member = metadata?.participants?.find(
           (p) => String(p.id || "").split("@")[0].split(":")[0] === rawLid ||
                  String(p.lid || "").split("@")[0].split(":")[0] === rawLid
         );
@@ -1037,6 +1150,14 @@ async function getRealSenderPhone(sock, groupJid, msg) {
         if (num && !isLid(num)) return num;
       }
     } catch (e) {}
+  }
+
+  // חילוץ מספר טלפון מתוך תוכן ההודעה (אם פורסם wa.me או מספר 05X-XXXXXXX של הסדרן)
+  if (rideText) {
+    const extracted = extractPhoneFromText(rideText);
+    if (extracted) {
+      return extracted;
+    }
   }
 
   return "זמין בקבוצה";
@@ -1258,6 +1379,29 @@ export function handleMainBotStatusChange(status) {
 export async function handleDriverStatusChange(driverPhone, sessionObj) {
   if (sessionObj?.status === "connected") {
     cancelPairingReminder(driverPhone);
+
+    // טעינת כל שמות הקבוצות של הנהג ברקע לזיכרון ולדיסק (מבטיח ששם הקבוצה תמיד יופיע בהתראות)
+    if (sessionObj.sock?.groupFetchAllParticipating) {
+      sessionObj.sock.groupFetchAllParticipating()
+        .then((groups) => {
+          if (groups && typeof groups === "object") {
+            let count = 0;
+            for (const [gJid, meta] of Object.entries(groups)) {
+              if (meta?.subject) {
+                groupMetadataCache.set(gJid, meta);
+                count++;
+              }
+            }
+            if (count > 0) {
+              persistGroupMetadataSoon();
+              console.log(`[Group Cache] נטענו ${count} קבוצות מראש עבור נהג ${driverPhone}`);
+            }
+          }
+        })
+        .catch((err) => {
+          console.log(`[Group Cache] טעינת קבוצות מקדימה עבור ${driverPhone}: ${err?.message || err}`);
+        });
+    }
 
     // אם מדובר בסשן שנשמר על הדיסק ושוחזר בהפעלת השרת, או התעוררות/התחברות מחדש - אין עניין לשלוח שום הודעה!
     if (sessionObj.isRestoredSession || !sessionObj.isInitialPairing) {
@@ -2075,14 +2219,24 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
 
       if (targetDrivers.length === 0) continue;
       
-      let groupName = "קבוצת נסיעות";
-      const cachedMeta = groupMetadataCache.get(jid);
+      let groupName = "קבוצת וואטסאפ";
+      let cachedMeta = groupMetadataCache.get(jid);
+      if (!cachedMeta?.subject && sock.groupMetadata) {
+        try {
+          cachedMeta = await Promise.race([
+            sock.groupMetadata(jid),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("groupMetadata timeout")), 1500))
+          ]);
+          if (cachedMeta?.subject) {
+            groupMetadataCache.set(jid, cachedMeta);
+            persistGroupMetadataSoon();
+          }
+        } catch (e) {
+          // timeout or error - continue with fallback
+        }
+      }
       if (cachedMeta?.subject) {
         groupName = cachedMeta.subject;
-      } else if (sock.groupMetadata) {
-        sock.groupMetadata(jid)
-          .then((meta) => { if (meta?.subject) groupMetadataCache.set(jid, meta); })
-          .catch(() => {});
       }
 
       // ניקוי פרסומות/פוטר דרייבוט לפני כל בדיקה
@@ -2115,7 +2269,7 @@ async function handleIncomingMessage(sock, upsert, sessionContext) {
           continue;
         }
 
-        const rideSenderPhone = await getRealSenderPhone(sock, jid, m);
+        const rideSenderPhone = await getRealSenderPhone(sock, jid, m, text);
         const rideSenderName = m.key.fromMe ? (sock.user?.name || "אני") : (m.pushName || "סדרן");
 
         const rideData = {
@@ -2318,6 +2472,8 @@ async function boot() {
     recordError,
     loadUsersData,
     saveUsersData,
+    extractPhoneFromText,
+    formatIsraeliPhone,
   });
 
   // 1. הפעלת הבוט הראשי
@@ -2340,6 +2496,9 @@ async function boot() {
   await initSavedTelegramSessions();
 }
 
-boot().catch((err) => {
-  console.error("שגיאה בהפעלת הבוט:", err);
-});
+const isDirectRun = process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || process.argv[1].endsWith("index.js"));
+if (isDirectRun) {
+  boot().catch((err) => {
+    console.error("שגיאה בהפעלת הבוט:", err);
+  });
+}
